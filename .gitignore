@@ -1,0 +1,54 @@
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+*.egg
+
+# Node / Next.js
+node_modules/
+.next/
+out/
+.npm
+*.tsbuildinfo
+.pnp
+.pnp.js
+
+# Docker
+.docker/
+
+# Editors
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+logs/
+
+# DB volumes (local dev)
+postgres_data/
+redis_data/
+
+# Coverage
+.coverage
+htmlcov/
+coverage/
+
+# Build artifacts
+*.pyc
+dist/
