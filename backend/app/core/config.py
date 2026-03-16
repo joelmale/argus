@@ -30,5 +30,24 @@ class Settings(BaseSettings):
 
     NOTIFY_WEBHOOK_URL: str = ""
 
+    # ── AI Agent ─────────────────────────────────────────────────────────────
+    # AI_BACKEND: "ollama" | "anthropic" | "none"
+    AI_BACKEND: str = "ollama"
+    AI_ENABLE_PER_SCAN: bool = True
+    AI_MAX_CONCURRENT_HOSTS: int = 5   # How many hosts the AI investigates in parallel
+
+    # Ollama settings (primary — uses your local RTX A2000)
+    OLLAMA_BASE_URL: str = "http://ollama:11434/v1"
+    # Recommended models for tool use: qwen2.5:7b, llama3.1:8b, qwen2.5:14b
+    OLLAMA_MODEL: str = "qwen2.5:7b"
+
+    # Anthropic settings (optional fallback)
+    ANTHROPIC_API_KEY: str = ""
+    ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
+
+    # ── Scanner profiles ──────────────────────────────────────────────────────
+    SCANNER_DEFAULT_PROFILE: str = "balanced"
+    SCANNER_CONCURRENT_HOSTS: int = 10
+
 
 settings = Settings()
