@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # ── PostgreSQL ──────────────────────────────────────────────
   db:
@@ -62,8 +60,9 @@ services:
   # ── Scanner Worker ──────────────────────────────────────────
   scanner:
     build:
-      context: ./scanner
-      dockerfile: Dockerfile
+      # Context must be project root — Dockerfile needs to reach ./backend
+      context: .
+      dockerfile: scanner/Dockerfile
     container_name: argus_scanner
     restart: unless-stopped
     env_file: .env
