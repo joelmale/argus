@@ -1,0 +1,248 @@
+'use client'
+
+import { useState } from 'react'
+import { AppShell } from '@/components/layout/AppShell'
+import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
+import { ScanHistory } from '@/components/scans/ScanHistory'
+import { useScans, useTriggerScan } from '@/hooks/useScans'
+import { useAppStore } from '@/store'
+import { cn } from '@/lib/utils'
+import {
+  ScanLine, ChevronDown, CheckCircle, XCircle,
+  Cpu, Loader2, Radio, Target, Layers,
+} from 'lucide-react'
+
+const PROFILES = [
+  {
+    value: 'balanced',
+    label: 'Balanced',
+    desc: 'Port scan + OS fingerprint + AI analysis. Recommended.',
+    color: 'sky',
+  },
+  {
+    value: 'polite',
+    label: 'Polite',
+    desc: 'Slow, quiet scan. Safe for fragile or production devices.',
+    color: 'emerald',
+  },
+  {
+    value: 'aggressive',
+    label: 'Aggressive',
+    desc: 'All ports, all NSE scripts. Thorough but loud.',
+    color: 'red',
+  },
+]
+
+export default function ScansPage() {
+  const [targets, setTargets] = useState('')
+  const [profile, setProfile]   = useState('balanced')
+  const [error, setError]        = useState<string | null>(null)
+  const [lastResult, setLastResult] = useState<'success' | 'error' | null>(null)
+
+  const { data: scans = [], isLoading } = useScans()
+  const { mutate: trigger, isPending } = useTriggerScan()
+  const { activeScan } = useAppStore()
+
+  function handleScan(e: React.FormEvent) {
+    e.preventDefault()
+    setError(null)
+    setLastResult(null)
+    if (!targets.trim()) {
+      setError('Please enter a target IP or CIDR range.')
+      return
+    }
+    trigger(
+      { targets: targets.trim(), scan_type: profile },
+      {
+        onSuccess: () => { setLastResult('success'); setTargets('') },
+        onError:   () => { setLastResult('error') },
+      },
+    )
+  }
+
+  const runningScans = scans.filter((s) => s.status === 'running' || s.status === 'pending')
+
+  return (
+    <AppShell>
+      <div className="max-w-6xl mx-auto space-y-6">
+
+        {/* Page header */}
+        <div>
+          <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Scans</h2>
+          <p className="text-sm text-zinc-500 mt-0.5">Trigger network scans and review historical job results.</p>
+        </div>
+
+        {/* Top row: trigger form + active progress */}
+        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+
+          {/* Trigger form — spans 2 cols */}
+          <div className="lg:col-span-2">
+            <Card>
+              <CardHeader>
+                <CardTitle><Target className="w-4 h-4 inline mr-1.5" />New Scan</CardTitle>
+              </CardHeader>
+              <CardBody>
+                <form onSubmit={handleScan} className="space-y-4">
+                  {/* Targets */}
+                  <div>
+                    <label className="text-xs font-medium text-zinc-500 mb-1.5 block">
+                      Target — IP address or CIDR range
+                    </label>
+                    <input
+                      type="text"
+                      value={targets}
+                      onChange={(e) => { setTargets(e.target.value); setError(null) }}
+                      placeholder="192.168.1.0/24  or  10.0.0.1"
+                      className={cn(
+                        'w-full px-3 py-2.5 rounded-lg text-sm font-mono',
+                        'bg-gray-50 dark:bg-zinc-800',
+                        'border placeholder:text-zinc-400',
+                        'text-zinc-900 dark:text-white',
+                        'focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500',
+                        error ? 'border-red-400' : 'border-gray-200 dark:border-zinc-700',
+                      )}
+                    />
+                    {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
+                  </div>
+
+                  {/* Profile selector */}
+                  <div>
+                    <label className="text-xs font-medium text-zinc-500 mb-1.5 block flex items-center gap-1">
+                      <Layers className="w-3.5 h-3.5" /> Scan profile
+                    </label>
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+                      {PROFILES.map((p) => (
+                        <button
+                          key={p.value}
+                          type="button"
+                          onClick={() => setProfile(p.value)}
+                          className={cn(
+                            'text-left px-3 py-2.5 rounded-lg border text-sm transition-all',
+                            profile === p.value
+                              ? p.value === 'balanced'
+                                ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+                                : p.value === 'polite'
+                                ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+                                : 'border-red-500 bg-red-500/10 text-red-700 dark:text-red-300'
+                              : 'border-gray-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500',
+                          )}
+                        >
+                          <p className="font-medium text-xs capitalize">{p.label}</p>
+                          <p className="text-xs opacity-70 mt-0.5 leading-relaxed">{p.desc}</p>
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+
+                  {/* Submit */}
+                  <div className="flex items-center gap-3">
+                    <button
+                      type="submit"
+                      disabled={isPending || !!activeScan || !targets.trim()}
+                      className={cn(
+                        'flex items-center gap-2 py-2.5 px-5 rounded-lg text-sm font-medium',
+                        'transition-all duration-150',
+                        isPending || activeScan || !targets.trim()
+                          ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
+                          : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md hover:shadow-sky-500/20',
+                      )}
+                    >
+                      {isPending
+                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Queuing…</>
+                        : <><ScanLine className="w-4 h-4" /> Start Scan</>
+                      }
+                    </button>
+
+                    {lastResult === 'success' && (
+                      <span className="flex items-center gap-1 text-xs text-emerald-600 dark:text-emerald-400">
+                        <CheckCircle className="w-4 h-4" /> Scan enqueued
+                      </span>
+                    )}
+                    {lastResult === 'error' && (
+                      <span className="flex items-center gap-1 text-xs text-red-500">
+                        <XCircle className="w-4 h-4" /> Failed to enqueue
+                      </span>
+                    )}
+                  </div>
+                </form>
+              </CardBody>
+            </Card>
+          </div>
+
+          {/* Right: active scan status */}
+          <div>
+            <Card className="h-full">
+              <CardHeader>
+                <CardTitle><Radio className="w-4 h-4 inline mr-1.5 text-sky-500" />Live Status</CardTitle>
+              </CardHeader>
+              <CardBody>
+                {activeScan ? (
+                  <div className="space-y-3">
+                    <div className="flex items-center gap-2">
+                      <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse flex-shrink-0" />
+                      <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
+                        {activeScan.stage ? `Stage: ${activeScan.stage}` : 'Scanning…'}
+                      </span>
+                    </div>
+                    {activeScan.current_host && (
+                      <div>
+                        <p className="text-xs text-zinc-500 mb-0.5">Current host</p>
+                        <p className="text-sm font-mono text-zinc-800 dark:text-zinc-200">{activeScan.current_host}</p>
+                      </div>
+                    )}
+                    {activeScan.progress !== undefined && (
+                      <div>
+                        <div className="flex justify-between text-xs text-zinc-500 mb-1">
+                          <span>Progress</span>
+                          <span>{Math.round(activeScan.progress * 100)}%</span>
+                        </div>
+                        <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800">
+                          <div
+                            className="h-1.5 rounded-full bg-sky-500 transition-all duration-500"
+                            style={{ width: `${activeScan.progress * 100}%` }}
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {activeScan.hosts_found !== undefined && (
+                      <p className="text-xs text-zinc-500">
+                        <span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_found}</span> hosts discovered
+                      </p>
+                    )}
+                  </div>
+                ) : runningScans.length > 0 ? (
+                  <div className="flex items-center gap-2">
+                    <Cpu className="w-4 h-4 text-sky-500 animate-pulse" />
+                    <span className="text-sm text-zinc-600 dark:text-zinc-300">
+                      {runningScans.length} scan{runningScans.length > 1 ? 's' : ''} in queue
+                    </span>
+                  </div>
+                ) : (
+                  <div className="flex flex-col items-center justify-center py-6 text-center">
+                    <Radio className="w-8 h-8 text-zinc-300 dark:text-zinc-700 mb-2" />
+                    <p className="text-sm text-zinc-400">No active scans</p>
+                    <p className="text-xs text-zinc-400 mt-0.5">Trigger a scan to see live progress here.</p>
+                  </div>
+                )}
+              </CardBody>
+            </Card>
+          </div>
+        </div>
+
+        {/* Scan history */}
+        <div>
+          <div className="flex items-center justify-between mb-3">
+            <h3 className="text-sm font-semibold text-zinc-700 dark:text-zinc-300">
+              Scan History
+              {scans.length > 0 && (
+                <span className="ml-2 text-xs text-zinc-400 font-normal">{scans.length} jobs</span>
+              )}
+            </h3>
+          </div>
+          <ScanHistory scans={scans} isLoading={isLoading} />
+        </div>
+
+      </div>
+    </AppShell>
+  )
+}

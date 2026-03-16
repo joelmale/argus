@@ -1,0 +1,85 @@
+'use client'
+
+import { useState } from 'react'
+import { AppShell } from '@/components/layout/AppShell'
+import { AssetTable } from '@/components/assets/AssetTable'
+import { useAssets } from '@/hooks/useAssets'
+import { Search, Filter, X } from 'lucide-react'
+import { cn } from '@/lib/utils'
+
+const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
+const TYPE_OPTIONS = ['', 'router', 'switch', 'server', 'workstation', 'nas', 'printer', 'ip_camera', 'iot_device', 'unknown']
+
+export default function AssetsPage() {
+  const [search, setSearch] = useState('')
+  const [status, setStatus] = useState('')
+
+  const { data: assets = [], isLoading, isError } = useAssets({
+    search: search || undefined,
+    status: status || undefined,
+  })
+
+  const clearFilters = () => { setSearch(''); setStatus('') }
+  const hasFilters = search || status
+
+  return (
+    <AppShell>
+      <div className="space-y-4 max-w-7xl mx-auto">
+        {/* Filter bar */}
+        <div className="flex flex-wrap items-center gap-3">
+          {/* Search */}
+          <div className="relative flex-1 min-w-60">
+            <Search className="absolute left-3 top-2.5 w-4 h-4 text-zinc-400 pointer-events-none" />
+            <input
+              type="text"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              placeholder="Search IP, hostname, vendor…"
+              className={cn(
+                'w-full pl-9 pr-3 py-2 rounded-lg text-sm',
+                'bg-white dark:bg-zinc-900',
+                'border border-gray-200 dark:border-zinc-800',
+                'text-zinc-900 dark:text-white placeholder:text-zinc-400',
+                'focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500',
+              )}
+            />
+          </div>
+
+          {/* Status filter */}
+          <select
+            value={status}
+            onChange={(e) => setStatus(e.target.value)}
+            className={cn(
+              'px-3 py-2 rounded-lg text-sm',
+              'bg-white dark:bg-zinc-900',
+              'border border-gray-200 dark:border-zinc-800',
+              'text-zinc-900 dark:text-white',
+              'focus:outline-none focus:ring-2 focus:ring-sky-500/50',
+            )}
+          >
+            <option value="">All statuses</option>
+            {STATUS_OPTIONS.slice(1).map((s) => (
+              <option key={s} value={s}>{s}</option>
+            ))}
+          </select>
+
+          {/* Clear */}
+          {hasFilters && (
+            <button
+              onClick={clearFilters}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+            >
+              <X className="w-3.5 h-3.5" /> Clear
+            </button>
+          )}
+
+          <span className="text-sm text-zinc-500 ml-auto">
+            {isLoading ? '…' : `${assets.length} assets`}
+          </span>
+        </div>
+
+        <AssetTable assets={assets} isLoading={isLoading} isError={isError} />
+      </div>
+    </AppShell>
+  )
+}
