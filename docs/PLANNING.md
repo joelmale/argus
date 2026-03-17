@@ -375,21 +375,24 @@ Target: richer data, smarter topology, notifications.
 - [x] Custom fields editor
 - [x] Export inventory to CSV
 
-### Phase 3 — Enterprise Features
+### Phase 3 — Multi-User, Alerting, and Operator Features
 
-Target: multi-user, alerting rules engine, integrations.
+Target: make Argus usable by a small household, homelab, or trusted team without adding enterprise-weight authorization complexity.
 
-- [ ] Multi-user RBAC (admin, operator, read-only roles)
-- [ ] Alert rules engine: configurable conditions → actions
-- [ ] Vulnerability scan integration (Nessus XML import, OpenVAS)
-- [ ] Network segmentation visualization (subnets as swim lanes)
-- [ ] REST API key authentication (in addition to JWT)
-- [ ] Full API key management UI
-- [ ] Audit log UI (filter by asset, user, change type)
+- [ ] Simple user roles: `admin` and `viewer`
+- [ ] Viewer-safe UI and API permissions
+- [ ] Admin user management UI
+- [ ] Alert rules for common inventory events
+- [ ] REST API key authentication
+- [ ] API key management UI
+- [ ] Audit log UI (asset changes and admin actions)
 - [ ] PDF / HTML report export
-- [ ] Alembic database migrations (replacing create_all)
 - [ ] Prometheus metrics endpoint
-- [ ] Optional Grafana dashboard (pre-built JSON)
+
+Notes:
+- `admin` can manage users, trigger scans, edit inventory, manage notifications, and create API keys.
+- `viewer` can log in and view dashboards, assets, scans, and topology, but cannot modify state.
+- Full multi-role RBAC is intentionally out of scope for a homelab-first product unless real complexity appears later.
 
 ### Phase 4 — Advanced
 

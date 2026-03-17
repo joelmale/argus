@@ -1,24 +1,31 @@
-# Dependency Upgrade Plan
+# Dependency Upgrade Status
 
-Revalidated on March 16, 2026.
+Last updated: March 17, 2026.
 
-## Current Status
+## Status
 
-Phases 0 through 5 are complete.
+All planned dependency-upgrade phases are complete.
 
-Completed stabilization work:
-- The backend syntax error in the SMB probe was fixed.
-- The frontend production build now passes.
-- Frontend type errors that were blocking the build were fixed.
-- `frontend/package-lock.json` and `frontend/next-env.d.ts` are now in the repo.
-- Docker build performance was improved with [frontend/.dockerignore](/Users/JoelN/Coding/argus/frontend/.dockerignore).
-- The dev startup flow and docs were aligned with the current Docker-based workflow.
-- The Python dependency blocker was fixed by moving `pysnmp` from the nonexistent `6.1.2` release to `6.1.4`.
-- Frontend lint, type-check, and build now run as committed, non-interactive checks.
-- Minimal backend smoke tests and backend CI checks are now in the repo.
-- Local runtime targets are now documented and pinned with `.nvmrc` and `.python-version`.
+There are currently no active pending dependency-upgrade items in this plan.
 
-Completed Phase 1 backend upgrades:
+## Completed Work
+
+### Phase 0: Stabilization
+
+Completed:
+- Fixed the backend SMB probe syntax error.
+- Fixed frontend type and build blockers.
+- Added `frontend/package-lock.json` and `frontend/next-env.d.ts` to the repo baseline.
+- Improved Docker build context handling with [frontend/.dockerignore](/Users/JoelN/Coding/argus/frontend/.dockerignore).
+- Aligned startup scripts and documentation with the Docker-based workflow.
+- Resolved the nonexistent `pysnmp==6.1.2` pin by moving to a valid release and then completing the full `pysnmp` upgrade in later phases.
+- Made frontend lint, type-check, and build reproducible project checks.
+- Added minimal backend tests and CI-safe validation.
+- Pinned local runtime targets with `.nvmrc` and `.python-version`.
+
+### Phase 1: Low-Risk Backend Refresh
+
+Completed upgrades:
 - `fastapi 0.111.0 -> 0.135.1`
 - `uvicorn 0.29.0 -> 0.42.0`
 - `sqlalchemy 2.0.30 -> 2.0.48`
@@ -35,7 +42,14 @@ Completed Phase 1 backend upgrades:
 - `scapy 2.5.0 -> 2.7.0`
 - `psycopg2-binary 2.9.9 -> 2.9.11`
 
-Completed Phase 2 backend infrastructure upgrades:
+Left intentionally unchanged:
+- `passlib`
+- `python-nmap`
+- `netaddr`
+
+### Phase 2: Backend Infrastructure and Protocol Stack Majors
+
+Completed upgrades:
 - `websockets 12.0 -> 16.0`
 - `python-multipart 0.0.9 -> 0.0.22`
 - `httpx 0.27.0 -> 0.28.1`
@@ -43,14 +57,18 @@ Completed Phase 2 backend infrastructure upgrades:
 - `pysnmp 6.1.4 -> 7.1.22`
 - `redis 5.0.4 -> 6.4.0`
 
-Note:
-- `redis 7.3.0` was not installable with `celery[redis] 5.6.2` because the current `kombu[redis]` dependency range caps Redis below `6.5`.
+Compatibility note:
+- `redis 7.x` was deferred because the currently resolved `celery[redis]` and `kombu` stack caps Redis below `6.5`.
 
-Completed Phase 3 AI SDK upgrades:
+### Phase 3: AI SDK Upgrades
+
+Completed upgrades:
 - `openai 1.35.0 -> 2.28.0`
 - `anthropic 0.28.0 -> 0.85.0`
 
-Completed Phase 4 frontend framework upgrades:
+### Phase 4: Frontend Framework Majors
+
+Completed upgrades:
 - `next 14.2.3 -> 16.1.7`
 - `react 18.3.1 -> 19.2.4`
 - `react-dom 18.3.1 -> 19.2.4`
@@ -59,7 +77,9 @@ Completed Phase 4 frontend framework upgrades:
 - `eslint-config-next 14.2.3 -> 16.1.7`
 - `eslint 8.x -> 9.39.4`
 
-Completed Phase 5 frontend ecosystem upgrades:
+### Phase 5: Frontend Ecosystem Majors
+
+Completed upgrades:
 - `tailwindcss 3.4.19 -> 4.2.1`
 - `tailwind-merge 2.6.1 -> 3.5.0`
 - `date-fns 3.6.0 -> 4.1.0`
@@ -68,72 +88,16 @@ Completed Phase 5 frontend ecosystem upgrades:
 - `next-themes 0.3.0 -> 0.4.6`
 - `lucide-react 0.383.0 -> 0.577.0`
 
-Still open before the remaining major upgrades:
-- There is still no Alembic migration setup even though `alembic` is installed.
-- `create_all()` is still being used at startup.
+## Post-Upgrade Follow-Up
 
-## Remaining Findings
+Completed after the dependency phases:
+- Alembic is bootstrapped and committed in [backend/alembic.ini](/Users/JoelN/Coding/argus/backend/alembic.ini) and [backend/alembic](/Users/JoelN/Coding/argus/backend/alembic).
+- Startup `create_all()` schema creation has been removed from [backend/app/db/session.py](/Users/JoelN/Coding/argus/backend/app/db/session.py).
 
-1. Database change management is still incomplete.
+Deferred or periodic-review items:
+- Revisit `redis 7.x` only when the Celery/Kombu compatibility range allows it cleanly.
+- Recheck lower-priority libraries during future maintenance windows rather than treating them as active upgrade debt.
 
-   `alembic` is installed, but the application still creates tables on startup and there is no Alembic config or migrations directory.
+## No Active Pending Items
 
-   Reference:
-   - [backend/app/db/session.py](/Users/JoelN/Coding/argus/backend/app/db/session.py)
-
-2. Dependency-upgrade work is complete, but migration and schema-management work still remains.
-
-   The remaining technical debt is operational rather than package-version related.
-
-## Updated Phase Plan
-
-### Phase 0: Stabilization
-
-Status: complete.
-
-### Phase 1: Low-risk backend refresh
-
-Status: complete.
-
-Kept as-is:
-- `passlib`
-- `python-nmap`
-- `netaddr`
-
-### Phase 2: Backend infrastructure and protocol stack majors
-
-Status: complete.
-
-### Phase 3: AI SDK upgrades behind an adapter boundary
-
-Status: complete.
-
-### Phase 4: Frontend framework majors
-
-Status: complete.
-
-### Phase 5: Frontend ecosystem majors
-
-Status: complete.
-
-## Lower-Priority Or Already-Current Packages
-
-These do not show the same immediate pressure:
-- `@tanstack/react-query`
-- `axios`
-- `clsx`
-- `class-variance-authority`
-- `cytoscape`
-- `cytoscape-fcose`
-- `typescript`
-- `postcss`
-- `autoprefixer`
-- `@types/cytoscape`
-- `passlib`
-- `python-nmap`
-- `netaddr`
-
-## Recommended Execution Order
-
-1. Bootstrap Alembic migrations
-2. Remove `create_all()` startup schema creation
+This document is now primarily a completion record. Future changes here should only be added when a new dependency-upgrade campaign starts or a currently deferred compatibility issue becomes actionable.
