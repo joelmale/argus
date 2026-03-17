@@ -1,9 +1,10 @@
 'use client'
 
+import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Brain, Database, Construction } from 'lucide-react'
-import { useCurrentUser } from '@/hooks/useAuth'
+import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus } from 'lucide-react'
+import { useCreateUser, useCurrentUser, useUpdateUser, useUsers } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -35,6 +36,29 @@ const SECTIONS = [
 
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()
+  const { data: users = [] } = useUsers(currentUser?.role === 'admin')
+  const { mutate: createUser, isPending: isCreatingUser } = useCreateUser()
+  const { mutate: updateUser, isPending: isUpdatingUser } = useUpdateUser()
+  const [newUsername, setNewUsername] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [newRole, setNewRole] = useState<'admin' | 'viewer'>('viewer')
+  const [userError, setUserError] = useState<string | null>(null)
+
+  function handleCreateUser(event: React.FormEvent) {
+    event.preventDefault()
+    setUserError(null)
+    createUser(
+      { username: newUsername.trim(), password: newPassword, role: newRole },
+      {
+        onSuccess: () => {
+          setNewUsername('')
+          setNewPassword('')
+          setNewRole('viewer')
+        },
+        onError: () => setUserError('Unable to create user. Check for duplicate usernames or emails.'),
+      },
+    )
+  }
 
   return (
     <AppShell>
@@ -54,6 +78,78 @@ export default function SettingsPage() {
               </p>
             </div>
           </div>
+        )}
+
+        {currentUser?.role === 'admin' && (
+          <Card>
+            <CardHeader>
+              <CardTitle><Shield className="w-4 h-4 inline mr-1.5" />User Management</CardTitle>
+            </CardHeader>
+            <CardBody className="space-y-5">
+              <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_140px_auto] gap-3">
+                <input
+                  value={newUsername}
+                  onChange={(event) => setNewUsername(event.target.value)}
+                  placeholder="Username"
+                  className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                />
+                <input
+                  type="password"
+                  value={newPassword}
+                  onChange={(event) => setNewPassword(event.target.value)}
+                  placeholder="Temporary password"
+                  className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                />
+                <select
+                  value={newRole}
+                  onChange={(event) => setNewRole(event.target.value as 'admin' | 'viewer')}
+                  className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                >
+                  <option value="viewer">Viewer</option>
+                  <option value="admin">Admin</option>
+                </select>
+                <button
+                  type="submit"
+                  disabled={isCreatingUser || !newUsername.trim() || !newPassword}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+                >
+                  <UserPlus className="w-4 h-4" /> Create
+                </button>
+              </form>
+              {userError && <p className="text-xs text-red-500">{userError}</p>}
+
+              <div className="space-y-3">
+                {users.map((user) => (
+                  <div key={user.id} className="flex flex-col md:flex-row md:items-center gap-3 rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                    <div className="flex-1">
+                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{user.username}</p>
+                      <p className="text-xs text-zinc-500">
+                        {user.email || 'No email'} · created {new Date(user.created_at).toLocaleDateString()}
+                      </p>
+                    </div>
+                    <select
+                      value={user.role}
+                      disabled={isUpdatingUser}
+                      onChange={(event) => updateUser({ id: user.id, payload: { role: event.target.value as 'admin' | 'viewer' } })}
+                      className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                    >
+                      <option value="viewer">Viewer</option>
+                      <option value="admin">Admin</option>
+                    </select>
+                    <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+                      <input
+                        type="checkbox"
+                        checked={user.is_active}
+                        disabled={isUpdatingUser}
+                        onChange={(event) => updateUser({ id: user.id, payload: { is_active: event.target.checked } })}
+                      />
+                      Active
+                    </label>
+                  </div>
+                ))}
+              </div>
+            </CardBody>
+          </Card>
         )}
 
         {/* Coming soon banner */}

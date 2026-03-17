@@ -22,6 +22,11 @@ export const authApi = {
       { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
     ),
   me: () => api.get("/api/v1/auth/me"),
+  listUsers: () => api.get("/api/v1/auth/users"),
+  createUser: (payload: { username: string; password: string; email?: string; role: "admin" | "viewer" }) =>
+    api.post("/api/v1/auth/users", payload),
+  updateUser: (id: string, payload: { role?: "admin" | "viewer"; is_active?: boolean }) =>
+    api.patch(`/api/v1/auth/users/${id}`, payload),
 };
 
 // ─── Asset endpoints ────────────────────────────────────────────

@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { CurrentUser } from '@/types'
+import type { CurrentUser, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -76,4 +76,44 @@ export function useLogout() {
     clearAuthToken()
     queryClient.removeQueries({ queryKey: ['auth'] })
   }
+}
+
+export function useUsers(enabled = true) {
+  return useQuery<CurrentUser[]>({
+    queryKey: ['auth', 'users'],
+    queryFn: async () => {
+      const { data } = await authApi.listUsers()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function useCreateUser() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: { username: string; password: string; email?: string; role: UserRole }) => {
+      const { data } = await authApi.createUser(payload)
+      return data as CurrentUser
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'users'] })
+    },
+  })
+}
+
+export function useUpdateUser() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({ id, payload }: { id: string; payload: { role?: UserRole; is_active?: boolean } }) => {
+      const { data } = await authApi.updateUser(id, payload)
+      return data as CurrentUser
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'users'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
+  })
 }

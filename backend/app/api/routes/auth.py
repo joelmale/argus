@@ -1,10 +1,11 @@
 """Auth endpoints — login and token refresh."""
+from uuid import UUID
 from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
@@ -21,6 +22,11 @@ class UserCreateRequest(BaseModel):
     password: str
     email: str | None = None
     role: Literal["admin", "viewer"] = "viewer"
+
+
+class UserUpdateRequest(BaseModel):
+    role: Literal["admin", "viewer"] | None = None
+    is_active: bool | None = None
 
 
 def _serialize_user(user: User) -> dict:
@@ -73,6 +79,47 @@ async def create_user(
         is_active=True,
     )
     db.add(user)
+    await db.commit()
+    await db.refresh(user)
+    return _serialize_user(user)
+
+
+@router.get("/users")
+async def list_users(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    result = await db.execute(select(User).order_by(User.created_at.asc()))
+    return [_serialize_user(user) for user in result.scalars().all()]
+
+
+@router.patch("/users/{user_id}")
+async def update_user(
+    user_id: UUID,
+    payload: UserUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    user = await db.get(User, user_id)
+    if user is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+
+    new_role = payload.role if payload.role is not None else user.role
+    new_is_active = payload.is_active if payload.is_active is not None else user.is_active
+
+    if user.id == current_user.id and (new_role != "admin" or not new_is_active):
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="You cannot remove your own admin access")
+
+    if user.role == "admin" and (new_role != "admin" or not new_is_active):
+        admin_count = await db.scalar(select(func.count()).select_from(User).where(User.role == "admin", User.is_active.is_(True)))
+        if admin_count is not None and admin_count <= 1:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="At least one active admin is required")
+
+    if payload.role is not None:
+        user.role = payload.role
+    if payload.is_active is not None:
+        user.is_active = payload.is_active
+
     await db.commit()
     await db.refresh(user)
     return _serialize_user(user)
