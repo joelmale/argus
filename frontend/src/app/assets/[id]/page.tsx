@@ -7,9 +7,12 @@ import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
 import { Bot, Shield, Clock, Info, Network, AlertTriangle, ChevronLeft, Tag } from 'lucide-react'
 import Link from 'next/link'
+import { useParams } from 'next/navigation'
 
-export default function AssetDetailPage({ params }: { params: { id: string } }) {
-  const { data: asset, isLoading, isError } = useAsset(params.id)
+export default function AssetDetailPage() {
+  const params = useParams<{ id: string }>()
+  const assetId = Array.isArray(params.id) ? params.id[0] : params.id
+  const { data: asset, isLoading, isError } = useAsset(assetId)
 
   if (isLoading) return (
     <AppShell>

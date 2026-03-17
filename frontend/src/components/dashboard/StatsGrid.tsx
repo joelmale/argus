@@ -1,8 +1,11 @@
 'use client'
 
-import { Server, Wifi, WifiOff, Sparkles, ScanLine } from 'lucide-react'
+import { Server, Wifi, WifiOff, Sparkles } from 'lucide-react'
 import { useAssetStats } from '@/hooks/useAssets'
 import { useScans } from '@/hooks/useScans'
+
+const DAY_MS = 86_400_000
+const INITIAL_RENDER_TIME = Date.now()
 
 interface StatCardProps {
   icon: React.ElementType
@@ -35,9 +38,8 @@ export function StatsGrid() {
   const { total, online, offline, newToday, isLoading } = useAssetStats()
   const { data: scans = [] } = useScans()
 
-  const lastScan = scans[0]
   const todayScans = scans.filter(s => {
-    try { return Date.now() - new Date(s.created_at).getTime() < 86_400_000 }
+    try { return INITIAL_RENDER_TIME - new Date(s.created_at).getTime() < DAY_MS }
     catch { return false }
   }).length
 
@@ -47,7 +49,8 @@ export function StatsGrid() {
       <StatCard icon={Wifi}     label="Online"        value={online}   color="text-emerald-500" loading={isLoading}
         sub={total > 0 ? `${Math.round(online / total * 100)}% of fleet` : undefined} />
       <StatCard icon={WifiOff}  label="Offline"       value={offline}  color="text-red-500"     loading={isLoading} />
-      <StatCard icon={Sparkles} label="New Today"     value={newToday} color="text-violet-500"  loading={isLoading} />
+      <StatCard icon={Sparkles} label="New Today"     value={newToday} color="text-violet-500"  loading={isLoading}
+        sub={todayScans > 0 ? `${todayScans} scans today` : undefined} />
     </div>
   )
 }

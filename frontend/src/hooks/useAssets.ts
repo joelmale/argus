@@ -2,6 +2,9 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { assetsApi, topologyApi } from '@/lib/api'
 import type { Asset, TopologyGraph } from '@/types'
 
+const DAY_MS = 86_400_000
+const INITIAL_RENDER_TIME = Date.now()
+
 export function useAssets(params?: { search?: string; status?: string; tag?: string }) {
   return useQuery<Asset[]>({
     queryKey: ['assets', params],
@@ -52,9 +55,8 @@ export function useAssetStats() {
   const { data: assets = [], isLoading } = useAssets()
   const online  = assets.filter((a) => a.status === 'online').length
   const offline = assets.filter((a) => a.status === 'offline').length
-  const now = Date.now()
   const newToday = assets.filter((a) => {
-    try { return now - new Date(a.first_seen).getTime() < 86_400_000 }
+    try { return INITIAL_RENDER_TIME - new Date(a.first_seen).getTime() < DAY_MS }
     catch { return false }
   }).length
 
