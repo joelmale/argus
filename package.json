@@ -8,6 +8,9 @@
     "dev:down": "docker compose -f docker-compose.yml -f docker-compose.dev.yml down",
     "dev:logs": "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f backend frontend scanner",
     "dev:ps": "docker compose -f docker-compose.yml -f docker-compose.dev.yml ps",
+    "prod:up": "docker compose up -d --build",
+    "prod:down": "docker compose down",
+    "prod:logs": "docker compose logs -f backend frontend scanner",
     "rebuild:frontend": "docker compose -f docker-compose.yml -f docker-compose.dev.yml build frontend",
     "rebuild:backend": "docker compose -f docker-compose.yml -f docker-compose.dev.yml build backend scanner"
   }

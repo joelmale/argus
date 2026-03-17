@@ -4,8 +4,12 @@
 services:
   backend:
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@localhost:5432/argus}
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://localhost:6379/0}
     volumes:
       - ./backend:/app
+    network_mode: host
 
   scanner:
     # Celery watchdog reloads worker when Python files change
@@ -13,8 +17,12 @@ services:
       celery -A app.workers.tasks.celery_app worker
         --loglevel=info -B
         --autoscale=4,1
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@localhost:5432/argus}
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://localhost:6379/0}
     volumes:
       - ./backend:/app
+    network_mode: host
 
   frontend:
     command: >

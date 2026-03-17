@@ -93,7 +93,8 @@ npm run dev:logs
 
 ## Current Dev Notes
 
-- The backend and scanner use host networking, so Docker will warn that published ports on those services are discarded. That is expected with the current setup.
+- `docker-compose.yml` is the production-oriented baseline. `docker-compose.dev.yml` adds source mounts, frontend dev mode, and host-network access for the backend and scanner.
+- In development, the backend and scanner use host networking so the scanner can access the local network more directly.
 - The frontend runs in containerized dev mode with a persistent `node_modules` volume and reinstalls dependencies only when `frontend/package-lock.json` changes.
 - Docker is currently the canonical way to run the app locally.
 
