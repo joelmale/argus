@@ -19,6 +19,11 @@ class Settings(BaseSettings):
     SNMP_COMMUNITY: str = "public"
     SNMP_VERSION: str = "2c"
     SNMP_TIMEOUT: int = 5
+    SNMP_V3_USERNAME: str = ""
+    SNMP_V3_AUTH_KEY: str = ""
+    SNMP_V3_PRIV_KEY: str = ""
+    SNMP_V3_AUTH_PROTOCOL: str = "sha"
+    SNMP_V3_PRIV_PROTOCOL: str = "aes"
 
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440
@@ -48,6 +53,7 @@ class Settings(BaseSettings):
     # ── Scanner profiles ──────────────────────────────────────────────────────
     SCANNER_DEFAULT_PROFILE: str = "balanced"
     SCANNER_CONCURRENT_HOSTS: int = 10
+    SCANNER_PASSIVE_ARP_INTERFACE: str = "eth0"
 
 
 settings = Settings()

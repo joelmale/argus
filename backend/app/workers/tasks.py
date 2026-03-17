@@ -12,13 +12,16 @@ in scanner/Dockerfile).
 import asyncio
 import json
 import logging
+import threading
 
 from celery import Celery
+from celery.signals import worker_ready
 from datetime import datetime, timezone
 
 from app.core.config import settings
 
 log = logging.getLogger(__name__)
+_passive_arp_thread: threading.Thread | None = None
 
 celery_app = Celery("argus", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
 
@@ -182,3 +185,56 @@ async def _publish_event(payload: dict) -> None:
         log.debug("Redis publish error: %s", exc)
     finally:
         r.close()
+
+
+@worker_ready.connect
+def _start_passive_arp_listener(**_: object) -> None:
+    global _passive_arp_thread
+    if not settings.SCANNER_PASSIVE_ARP:
+        return
+    if _passive_arp_thread and _passive_arp_thread.is_alive():
+        return
+
+    _passive_arp_thread = threading.Thread(target=_run_passive_arp_listener, daemon=True)
+    _passive_arp_thread.start()
+
+
+def _run_passive_arp_listener() -> None:
+    asyncio.run(_passive_arp_loop())
+
+
+async def _passive_arp_loop() -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    from app.db.upsert import upsert_scan_result
+    from app.scanner.models import HostScanResult, ScanProfile
+    from app.scanner.stages.discovery import PassiveArpListener
+
+    listener = PassiveArpListener(interface=settings.SCANNER_PASSIVE_ARP_INTERFACE)
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async for host in listener.listen():
+            async with Session() as db:
+                asset, change_type = await upsert_scan_result(
+                    db,
+                    HostScanResult(host=host, scan_profile=ScanProfile.BALANCED),
+                )
+                await db.commit()
+
+                if change_type == "discovered":
+                    await _publish_event(
+                        {
+                            "event": "device_discovered",
+                            "data": {
+                                "ip": asset.ip_address,
+                                "mac": asset.mac_address,
+                                "hostname": asset.hostname,
+                                "device_class": asset.device_type or "unknown",
+                            },
+                        }
+                    )
+    finally:
+        listener.stop()
+        await engine.dispose()

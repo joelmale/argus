@@ -143,6 +143,7 @@ class SnmpProbeData(BaseModel):
     sys_location: str | None = None
     sys_contact: str | None = None
     sys_object_id: str | None = None
+    arp_table: list[dict[str, Any]] = Field(default_factory=list)
     interfaces: list[dict[str, Any]] = Field(default_factory=list)
 
 

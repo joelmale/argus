@@ -20,6 +20,7 @@ import asyncio
 import logging
 import time
 
+from app.scanner.snmp import SnmpPoller
 from app.scanner.models import ProbeResult, SnmpProbeData
 
 log = logging.getLogger(__name__)
@@ -39,20 +40,32 @@ async def probe(ip: str, community: str = "public", port: int = 161, timeout: fl
     """Query SNMP MIB-II system group."""
     t0 = time.monotonic()
 
-    loop = asyncio.get_event_loop()
     try:
-        data = await asyncio.wait_for(
-            loop.run_in_executor(None, _snmp_get_sync, ip, community, port),
+        poller = SnmpPoller(community=community)
+        system_info, interfaces, arp_table = await asyncio.wait_for(
+            asyncio.gather(
+                poller.get_system_info(ip),
+                poller.get_interfaces(ip),
+                poller.get_arp_table(ip),
+            ),
             timeout=timeout,
         )
     except asyncio.TimeoutError:
         return ProbeResult(probe_type="snmp", success=False, error="Timeout")
-    except ImportError:
-        return ProbeResult(probe_type="snmp", success=False, error="pysnmp not installed")
     except Exception as exc:
         return ProbeResult(probe_type="snmp", success=False, error=str(exc)[:200])
 
-    if data is None or (not data.sys_descr and not data.sys_name):
+    data = SnmpProbeData(
+        sys_descr=system_info.get("sys_descr"),
+        sys_name=system_info.get("sys_name"),
+        sys_location=system_info.get("sys_location"),
+        sys_contact=system_info.get("sys_contact"),
+        sys_object_id=system_info.get("sys_object_id"),
+        interfaces=interfaces,
+        arp_table=arp_table,
+    )
+
+    if not data.sys_descr and not data.sys_name:
         return ProbeResult(
             probe_type="snmp", success=False,
             duration_ms=round((time.monotonic() - t0) * 1000, 1),
@@ -64,7 +77,9 @@ async def probe(ip: str, community: str = "public", port: int = 161, timeout: fl
         f"sysName: {data.sys_name or 'n/a'}\n"
         f"sysLocation: {data.sys_location or 'n/a'}\n"
         f"sysContact: {data.sys_contact or 'n/a'}\n"
-        f"sysObjectID: {data.sys_object_id or 'n/a'}"
+        f"sysObjectID: {data.sys_object_id or 'n/a'}\n"
+        f"Interfaces: {len(data.interfaces)}\n"
+        f"ARP entries: {len(data.arp_table)}"
     )
 
     return ProbeResult(
@@ -75,53 +90,3 @@ async def probe(ip: str, community: str = "public", port: int = 161, timeout: fl
         data=data.model_dump(),
         raw=raw,
     )
-
-
-def _snmp_get_sync(ip: str, community: str, port: int) -> SnmpProbeData | None:
-    """Synchronous wrapper around the asyncio pysnmp v1/v2c HLAPI."""
-    return asyncio.run(_snmp_get_async(ip, community, port))
-
-
-async def _snmp_get_async(ip: str, community: str, port: int) -> SnmpProbeData | None:
-    """Async pysnmp GET for system MIB variables."""
-    try:
-        from pysnmp.hlapi.v1arch.asyncio import (
-            CommunityData, ObjectIdentity, ObjectType,
-            SnmpDispatcher, UdpTransportTarget, get_cmd,
-        )
-
-        dispatcher = SnmpDispatcher()
-        transport = await UdpTransportTarget.create((ip, port), timeout=3, retries=1)
-        auth = CommunityData(community, mpModel=1)  # mpModel=1 -> SNMPv2c
-
-        # Build GET request for all system OIDs at once
-        objects = [ObjectType(ObjectIdentity(oid)) for oid in OIDS.values()]
-        error_indication, error_status, error_index, var_binds = await get_cmd(
-            dispatcher, auth, transport, *objects
-        )
-
-        if error_indication or error_status:
-            return None
-
-        result = SnmpProbeData()
-        oid_names = list(OIDS.keys())
-        for i, var_bind in enumerate(var_binds):
-            value = str(var_bind[1])
-            if i < len(oid_names):
-                key = oid_names[i]
-                if key == "sys_descr":
-                    result.sys_descr = value
-                elif key == "sys_name":
-                    result.sys_name = value
-                elif key == "sys_location":
-                    result.sys_location = value
-                elif key == "sys_contact":
-                    result.sys_contact = value
-                elif key == "sys_object_id":
-                    result.sys_object_id = value
-
-        return result
-
-    except Exception as exc:
-        log.debug("SNMP sync error: %s", exc)
-        return None

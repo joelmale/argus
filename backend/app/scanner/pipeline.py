@@ -232,6 +232,7 @@ async def _persist_results(
 ) -> None:
     """Persist all scan results to the database."""
     from app.db.upsert import mark_offline, upsert_scan_result
+    from app.scanner.topology import infer_topology_links_from_snmp
 
     # Find assets that were online before but not in this scan
     from sqlalchemy import select
@@ -245,6 +246,9 @@ async def _persist_results(
             continue
         try:
             asset, change_type = await upsert_scan_result(db_session, result)
+            snmp_probe = next((probe for probe in result.probes if probe.probe_type == "snmp" and probe.success), None)
+            if snmp_probe:
+                await infer_topology_links_from_snmp(db_session, asset, snmp_probe.data)
 
             if change_type == "discovered":
                 summary.new_assets += 1
