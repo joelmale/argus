@@ -43,6 +43,7 @@ This script now:
 - builds the images with both `docker-compose.yml` and `docker-compose.dev.yml`
 - starts Postgres and Redis first
 - waits for both to become healthy
+- runs Alembic migrations automatically when the backend starts
 - starts the backend, scanner, and frontend in development mode
 
 Equivalent manual command:
@@ -93,6 +94,12 @@ View logs:
 npm run dev:logs
 ```
 
+Run backend migrations manually:
+
+```bash
+npm run db:migrate
+```
+
 ## Current Dev Notes
 
 - `docker-compose.yml` is the production-oriented baseline. `docker-compose.dev.yml` adds source mounts, frontend dev mode, and host-network access for the backend and scanner.
@@ -121,7 +128,7 @@ npm run build
 
 | Layer | Technology |
 |---|---|
-| Frontend | Next.js 14, React, TypeScript, Tailwind, Cytoscape.js |
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind, Cytoscape.js |
 | Backend | Python, FastAPI, SQLAlchemy async |
 | Database | PostgreSQL 16 |
 | Queue | Celery + Redis |

@@ -8,6 +8,7 @@
     "lint:backend": "PYTHONPATH=backend ruff check backend/",
     "lint:frontend": "cd frontend && npm run lint",
     "setup": "./scripts/setup.sh",
+    "db:migrate": "docker compose -f docker-compose.yml -f docker-compose.dev.yml exec backend python scripts/migrate.py",
     "test": "npm run test:backend",
     "test:backend": "PYTHONPATH=backend pytest backend/tests -v",
     "type-check": "cd frontend && npm run type-check",

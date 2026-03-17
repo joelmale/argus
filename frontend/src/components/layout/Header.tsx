@@ -1,5 +1,6 @@
 'use client'
 
+import { useSyncExternalStore } from 'react'
 import { usePathname } from 'next/navigation'
 import { Sun, Moon, Monitor, RefreshCw } from 'lucide-react'
 import { useTheme } from 'next-themes'
@@ -17,9 +18,14 @@ const PAGE_TITLES: Record<string, string> = {
 
 export function Header() {
   const pathname = usePathname()
-  const { theme, setTheme } = useTheme()
+  const { resolvedTheme, setTheme, theme } = useTheme()
   const { activeScan } = useAppStore()
   const queryClient = useQueryClient()
+  const mounted = useSyncExternalStore(
+    () => () => {},
+    () => true,
+    () => false,
+  )
 
   // Resolve page title (handles /assets/[id])
   const title = PAGE_TITLES[pathname]
@@ -30,6 +36,9 @@ export function Header() {
     { value: 'system', icon: Monitor },
     { value: 'dark',   icon: Moon    },
   ]
+
+  const activeTheme = mounted ? theme : null
+  const systemTheme = mounted ? resolvedTheme : null
 
   return (
     <header className="h-16 flex items-center justify-between px-6 border-b border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 sticky top-0 z-30">
@@ -63,7 +72,8 @@ export function Header() {
               onClick={() => setTheme(value)}
               className={cn(
                 'p-1.5 rounded-md transition-colors',
-                theme === value
+                activeTheme === value
+                  || (value === 'system' && activeTheme === 'system' && systemTheme !== null)
                   ? 'bg-white dark:bg-zinc-700 text-zinc-900 dark:text-white shadow-sm'
                   : 'text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-300',
               )}

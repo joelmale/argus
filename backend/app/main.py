@@ -9,13 +9,11 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.routes import assets, auth, scans, topology, websocket
 from app.core.config import settings
-from app.db.session import init_db
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
-    await init_db()
     yield
 
 

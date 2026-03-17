@@ -3,7 +3,7 @@
 
 services:
   backend:
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+    command: sh -c "python scripts/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
     environment:
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@localhost:5432/argus}
       REDIS_URL: ${REDIS_URL_DOCKER:-redis://localhost:6379/0}
@@ -33,13 +33,16 @@ services:
           npm ci &&
           printf "%s" "$$LOCKFILE_HASH" > node_modules/.package-lock.hash;
         fi &&
+        find .next -mindepth 1 -maxdepth 1 -exec rm -rf {} + 2>/dev/null || true &&
         npm run dev
       '
     volumes:
       - ./frontend:/app
       - frontend_node_modules:/app/node_modules
+      - frontend_next:/app/.next
     environment:
       NODE_ENV: development
 
 volumes:
   frontend_node_modules:
+  frontend_next:

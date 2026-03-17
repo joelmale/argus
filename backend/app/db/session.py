@@ -11,13 +11,6 @@ class Base(DeclarativeBase):
     pass
 
 
-async def init_db():
-    """Create tables on startup (dev). Use Alembic migrations in production."""
-    async with engine.begin() as conn:
-        from app.db import models  # noqa: F401 — ensure models are registered
-        await conn.run_sync(Base.metadata.create_all)
-
-
 async def get_db():
     async with AsyncSessionLocal() as session:
         yield session
