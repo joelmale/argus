@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, PluginInfo, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, HomeAssistantExport, IntegrationEvent, PluginInfo, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -220,6 +220,28 @@ export function usePlugins(enabled = true) {
     },
     enabled,
     refetchInterval: 60_000,
+  })
+}
+
+export function useIntegrationEvents(enabled = true) {
+  return useQuery<IntegrationEvent[]>({
+    queryKey: ['system', 'integration-events'],
+    queryFn: async () => {
+      const { data } = await authApi.listIntegrationEvents()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function useHomeAssistantEntities(enabled = true) {
+  return useQuery<HomeAssistantExport>({
+    queryKey: ['system', 'home-assistant-entities'],
+    queryFn: async () => {
+      const { data } = await authApi.getHomeAssistantEntities()
+      return data
+    },
+    enabled,
   })
 }
 

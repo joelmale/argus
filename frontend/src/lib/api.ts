@@ -37,6 +37,9 @@ export const authApi = {
     api.patch(`/api/v1/auth/alert-rules/${id}`, payload),
   listBackupDrivers: () => api.get("/api/v1/system/backup-drivers"),
   listPlugins: () => api.get("/api/v1/system/plugins"),
+  listIntegrationEvents: () => api.get("/api/v1/system/integration-events"),
+  getHomeAssistantEntities: () => api.get("/api/v1/system/integrations/home-assistant/entities"),
+  getInventorySyncExport: () => api.get("/api/v1/system/integrations/inventory-sync"),
   getBackupPolicy: () => api.get("/api/v1/system/backup-policy"),
   updateBackupPolicy: (payload: Omit<ConfigBackupPolicy, "id" | "last_run_at" | "created_at" | "updated_at">) =>
     api.put("/api/v1/system/backup-policy", payload),
@@ -49,6 +52,8 @@ export const assetsApi = {
   exportCsv: () => api.get("/api/v1/assets/export.csv", { responseType: "blob" }),
   exportAnsible: () => api.get("/api/v1/assets/export.ansible.ini", { responseType: "blob" }),
   exportTerraform: () => api.get("/api/v1/assets/export.terraform.tf.json", { responseType: "blob" }),
+  exportInventoryJson: () => api.get("/api/v1/assets/export.inventory.json", { responseType: "blob" }),
+  exportJsonReport: () => api.get("/api/v1/assets/report.json", { responseType: "blob" }),
   exportHtmlReport: () => api.get("/api/v1/assets/report.html", { responseType: "text" }),
   get: (id: string) => api.get(`/api/v1/assets/${id}`),
   update: (id: string, payload: Record<string, unknown>) => api.patch(`/api/v1/assets/${id}`, payload),

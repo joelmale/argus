@@ -3,9 +3,9 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText } from 'lucide-react'
+import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, usePlugins, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateUser, useUsers } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -103,6 +103,8 @@ export default function SettingsPage() {
   const { data: backupDrivers = [] } = useBackupDrivers(currentUser?.role === 'admin')
   const { data: backupPolicy } = useBackupPolicy(currentUser?.role === 'admin')
   const { data: plugins = [] } = usePlugins(currentUser?.role === 'admin')
+  const { data: integrationEvents = [] } = useIntegrationEvents(currentUser?.role === 'admin')
+  const { data: homeAssistantExport } = useHomeAssistantEntities(currentUser?.role === 'admin')
   const { mutate: createUser, isPending: isCreatingUser } = useCreateUser()
   const { mutate: updateUser, isPending: isUpdatingUser } = useUpdateUser()
   const { mutate: createApiKey, isPending: isCreatingApiKey } = useCreateApiKey()
@@ -345,11 +347,69 @@ export default function SettingsPage() {
                     <p className="text-sm text-zinc-500">No external plugins loaded yet. Phase 4 plugin hooks are ready for custom discovery modules.</p>
                   ) : plugins.map((plugin) => (
                     <div key={plugin.name} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
-                      <div className="flex items-center justify-between gap-3">
+                      <div className="flex items-center justify-between gap-3 flex-wrap">
                         <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{plugin.name}</p>
-                        <span className="text-xs text-zinc-500">{plugin.version}</span>
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs text-zinc-500">{plugin.version}</span>
+                          <span className="text-[11px] px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500">{plugin.health}</span>
+                        </div>
                       </div>
                       {plugin.description && <p className="text-xs text-zinc-500 mt-2">{plugin.description}</p>}
+                      <p className="text-xs text-zinc-500 mt-2">
+                        Capabilities: {plugin.capabilities.length > 0 ? plugin.capabilities.join(', ') : 'none declared'}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle><PlugZap className="w-4 h-4 inline mr-1.5" />Integrations</CardTitle>
+              </CardHeader>
+              <CardBody className="space-y-4">
+                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                  <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100"><HouseWifi className="w-4 h-4 inline mr-1.5" />Home Assistant export</p>
+                    <p className="text-xs text-zinc-500">
+                      {homeAssistantExport ? `${homeAssistantExport.entities.length} entities available` : 'Loading entity export…'}
+                    </p>
+                    <a
+                      href="http://localhost:8000/api/v1/system/integrations/home-assistant/entities"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 text-xs text-sky-500 hover:text-sky-600"
+                    >
+                      Open entity export
+                    </a>
+                  </div>
+                  <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100"><ActivitySquare className="w-4 h-4 inline mr-1.5" />Inventory sync export</p>
+                    <p className="text-xs text-zinc-500">
+                      Read-only normalized JSON snapshot for external systems.
+                    </p>
+                    <a
+                      href="http://localhost:8000/api/v1/system/integrations/inventory-sync"
+                      target="_blank"
+                      rel="noreferrer"
+                      className="inline-flex items-center gap-2 text-xs text-sky-500 hover:text-sky-600"
+                    >
+                      Open sync snapshot
+                    </a>
+                  </div>
+                </div>
+
+                <div className="space-y-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Webhook event catalog</p>
+                  {integrationEvents.map((item) => (
+                    <div key={item.event} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.event}</p>
+                        <span className="text-xs text-zinc-500">{item.source}</span>
+                      </div>
+                      <p className="text-xs text-zinc-500 mt-1">{item.description}</p>
+                      <pre className="mt-3 rounded-lg bg-zinc-950 text-zinc-200 p-3 text-[11px] overflow-x-auto">{JSON.stringify(item.example, null, 2)}</pre>
                     </div>
                   ))}
                 </div>

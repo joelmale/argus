@@ -6,7 +6,7 @@ from uuid import UUID
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
-from sqlalchemy import select
+from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
@@ -20,9 +20,9 @@ from app.backups import (
     list_backup_snapshots,
     upsert_backup_target,
 )
-from app.db.models import Asset, AssetHistory, AssetTag, Port, User, WirelessAssociation
+from app.db.models import Asset, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, User, WirelessAssociation
 from app.db.session import get_db
-from app.exporters import render_ansible_inventory, render_terraform_inventory
+from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 
 router = APIRouter()
 
@@ -136,6 +136,51 @@ async def export_assets_terraform(db: AsyncSession = Depends(get_db), _: User = 
     )
 
 
+@router.get("/export.inventory.json")
+async def export_assets_inventory_json(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    assets = result.scalars().all()
+    return build_inventory_snapshot(assets)
+
+
+@router.get("/report.json")
+async def export_assets_report_json(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    assets = result.scalars().all()
+    open_findings = await db.scalar(select(func.count()).select_from(Finding).where(Finding.status == "open")) or 0
+    total_findings = await db.scalar(select(func.count()).select_from(Finding)) or 0
+    successful_backups = await db.scalar(
+        select(func.count()).select_from(ConfigBackupSnapshot).where(ConfigBackupSnapshot.status == "done")
+    ) or 0
+    recent_changes_result = await db.execute(
+        select(AssetHistory)
+        .order_by(AssetHistory.changed_at.desc())
+        .limit(10)
+    )
+    recent_changes = recent_changes_result.scalars().all()
+
+    return {
+        "summary": {
+            "total_assets": len(assets),
+            "online_assets": sum(1 for asset in assets if asset.status == "online"),
+            "offline_assets": sum(1 for asset in assets if asset.status == "offline"),
+            "total_findings": total_findings,
+            "open_findings": open_findings,
+            "successful_backups": successful_backups,
+        },
+        "recent_changes": [
+            {
+                "asset_id": str(change.asset_id),
+                "change_type": change.change_type,
+                "changed_at": change.changed_at.isoformat(),
+                "diff": change.diff or {},
+            }
+            for change in recent_changes
+        ],
+        "inventory": build_inventory_snapshot(assets),
+    }
+
+
 @router.get("/report.html", response_class=HTMLResponse)
 async def export_assets_report_html(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
@@ -144,6 +189,10 @@ async def export_assets_report_html(db: AsyncSession = Depends(get_db), _: User 
     total = len(assets)
     online = sum(1 for asset in assets if asset.status == "online")
     offline = sum(1 for asset in assets if asset.status == "offline")
+    open_findings = await db.scalar(select(func.count()).select_from(Finding).where(Finding.status == "open")) or 0
+    successful_backups = await db.scalar(
+        select(func.count()).select_from(ConfigBackupSnapshot).where(ConfigBackupSnapshot.status == "done")
+    ) or 0
 
     rows = "".join(
         f"<tr><td>{asset.ip_address}</td><td>{asset.hostname or ''}</td><td>{asset.vendor or ''}</td><td>{asset.device_type or ''}</td><td>{asset.status}</td><td>{', '.join(tag.tag for tag in asset.tags)}</td></tr>"
@@ -171,6 +220,8 @@ async def export_assets_report_html(db: AsyncSession = Depends(get_db), _: User 
               <div class="card"><strong>Total assets:</strong> {total}</div>
               <div class="card"><strong>Online:</strong> {online}</div>
               <div class="card"><strong>Offline:</strong> {offline}</div>
+              <div class="card"><strong>Open findings:</strong> {open_findings}</div>
+              <div class="card"><strong>Successful backups:</strong> {successful_backups}</div>
             </div>
             <table>
               <thead>

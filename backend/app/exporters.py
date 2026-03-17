@@ -74,6 +74,41 @@ def render_terraform_inventory(assets: list[Asset]) -> str:
     return json.dumps(payload, indent=2, sort_keys=True) + "\n"
 
 
+def build_inventory_snapshot(assets: list[Asset]) -> dict[str, object]:
+    return {
+        "generated_by": "Argus",
+        "asset_count": len(assets),
+        "assets": [
+            {
+                "id": str(asset.id),
+                "ip_address": asset.ip_address,
+                "hostname": asset.hostname,
+                "mac_address": asset.mac_address,
+                "vendor": asset.vendor,
+                "os_name": asset.os_name,
+                "os_version": asset.os_version,
+                "device_type": asset.device_type,
+                "status": asset.status,
+                "tags": sorted(tag.tag for tag in asset.tags),
+                "ports": [
+                    {
+                        "port_number": port.port_number,
+                        "protocol": port.protocol,
+                        "service": port.service,
+                        "version": port.version,
+                        "state": port.state,
+                    }
+                    for port in sorted(asset.ports, key=lambda item: (item.port_number, item.protocol))
+                ],
+                "custom_fields": asset.custom_fields or {},
+                "first_seen": asset.first_seen.isoformat(),
+                "last_seen": asset.last_seen.isoformat(),
+            }
+            for asset in sorted(assets, key=lambda item: item.ip_address)
+        ],
+    }
+
+
 def _inventory_name(asset: Asset) -> str:
     candidate = asset.hostname or asset.ip_address
     slug = re.sub(r"[^a-zA-Z0-9_.-]+", "_", candidate).strip("_")

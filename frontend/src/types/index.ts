@@ -123,6 +123,28 @@ export interface PluginInfo {
   name: string;
   version: string;
   description: string;
+  capabilities: string[];
+  health: string;
+}
+
+export interface IntegrationEvent {
+  event: string;
+  source: string;
+  description: string;
+  example: Record<string, unknown>;
+}
+
+export interface HomeAssistantEntity {
+  unique_id: string;
+  name: string;
+  state: string | number;
+  entity_type: string;
+  attributes?: Record<string, unknown>;
+}
+
+export interface HomeAssistantExport {
+  entities: HomeAssistantEntity[];
+  notes: string[];
 }
 
 export interface Port {

@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { AssetTable } from '@/components/assets/AssetTable'
 import { useAssets } from '@/hooks/useAssets'
 import { assetsApi } from '@/lib/api'
-import { Search, Download, X, Boxes, FileCode2 } from 'lucide-react'
+import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
@@ -36,6 +36,16 @@ export default function AssetsPage() {
   async function handleExportTerraform() {
     const response = await assetsApi.exportTerraform()
     downloadBlob(response.data, 'argus-assets.tf.json')
+  }
+
+  async function handleExportInventoryJson() {
+    const response = await assetsApi.exportInventoryJson()
+    downloadBlob(response.data, 'argus-inventory.json')
+  }
+
+  async function handleExportReportJson() {
+    const response = await assetsApi.exportJsonReport()
+    downloadBlob(response.data, 'argus-report.json')
   }
 
   function downloadBlob(data: Blob, filename: string) {
@@ -117,6 +127,20 @@ export default function AssetsPage() {
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
           >
             <FileCode2 className="w-3.5 h-3.5" /> Terraform data
+          </button>
+
+          <button
+            onClick={handleExportInventoryJson}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <FileJson2 className="w-3.5 h-3.5" /> Inventory JSON
+          </button>
+
+          <button
+            onClick={handleExportReportJson}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <Sheet className="w-3.5 h-3.5" /> Report JSON
           </button>
 
           <span className="text-sm text-zinc-500 ml-auto">

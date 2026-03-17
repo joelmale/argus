@@ -15,15 +15,29 @@ def iter_plugins() -> list[Any]:
     return plugins
 
 
-def list_plugins() -> list[dict[str, str]]:
+def list_plugins() -> list[dict[str, object]]:
     return [
         {
             "name": getattr(plugin, "name", plugin.__class__.__name__),
             "version": getattr(plugin, "version", "unknown"),
             "description": getattr(plugin, "description", ""),
+            "capabilities": list(getattr(plugin, "capabilities", [])),
+            "health": _plugin_health(plugin),
         }
         for plugin in iter_plugins()
     ]
+
+
+def _plugin_health(plugin: Any) -> str:
+    if hasattr(plugin, "health"):
+        health = getattr(plugin, "health")
+        return str(health() if callable(health) else health)
+    if hasattr(plugin, "is_healthy"):
+        try:
+            return "healthy" if bool(plugin.is_healthy()) else "degraded"
+        except Exception:
+            return "error"
+    return "unknown"
 
 
 async def run_post_upsert_hooks(*, db_session, asset, result, change_type: str) -> None:
