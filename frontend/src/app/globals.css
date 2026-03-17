@@ -1,7 +1,51 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* ── Tailwind v4 entry point ────────────────────────────────────────────── */
+@import "tailwindcss";
 
+/*
+ * Class-based dark mode — required for next-themes (attribute="class").
+ * Without this, every dark:* utility is a no-op in Tailwind v4 because
+ * v4 defaults to prefers-color-scheme media query, not the .dark class.
+ */
+@custom-variant dark (&:where(.dark, .dark *));
+
+/* ── Design tokens ───────────────────────────────────────────────────────── */
+@theme {
+  /* Brand accent — Argus "eye" cyan-sky */
+  --color-accent:       #0ea5e9;
+  --color-accent-hover: #0284c7;
+
+  /* Device status */
+  --color-online:  #22c55e;
+  --color-offline: #ef4444;
+
+  /* Dark sidebar palette */
+  --color-sidebar:        #18181b;
+  --color-sidebar-hover:  #27272a;
+  --color-sidebar-active: #3f3f46;
+  --color-sidebar-border: #27272a;
+
+  /* Custom animations */
+  --animate-pulse-slow: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-fade-in:    fade-in   0.2s ease-in-out;
+  --animate-slide-in:   slide-in  0.2s ease-out;
+}
+
+@keyframes pulse-slow {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.5; }
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes slide-in {
+  from { transform: translateX(-8px); opacity: 0; }
+  to   { transform: translateX(0);    opacity: 1; }
+}
+
+/* ── Base layer ──────────────────────────────────────────────────────────── */
 @layer base {
   :root {
     --scrollbar-track: #f4f4f5;
@@ -16,15 +60,16 @@
     scrollbar-width: thin;
     scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
   }
-  *::-webkit-scrollbar { width: 6px; height: 6px; }
+  *::-webkit-scrollbar       { width: 6px; height: 6px; }
   *::-webkit-scrollbar-track { background: var(--scrollbar-track); }
   *::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
 }
 
-/* Monospace numbers in tables */
+/* ── Utilities ───────────────────────────────────────────────────────────── */
+/* Tabular numbers in tables / stat cards */
 .tabular { font-variant-numeric: tabular-nums; }
 
-/* Cytoscape container */
+/* Cytoscape topology canvas */
 #topology-canvas {
   width: 100%;
   height: 100%;
