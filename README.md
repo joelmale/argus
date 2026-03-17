@@ -33,7 +33,7 @@ For local development, use the setup script:
 ```bash
 git clone https://github.com/joelmale/argus.git
 cd argus
-./scripts/setup.sh
+npm run setup
 ```
 
 This script now:
@@ -52,6 +52,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 Notes:
 - The first frontend startup may take a minute because the dev container installs dependencies into a named Docker volume.
 - Later restarts reuse that volume and are faster unless `frontend/package-lock.json` changes.
+- Common local workflows are also available as root npm scripts.
 
 Then open:
 - **Frontend**: http://localhost:3000
@@ -63,31 +64,31 @@ Then open:
 Start the full dev stack:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+npm run dev
 ```
 
 Start in the background:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build
+npm run dev:up
 ```
 
 Stop the stack:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml down
+npm run dev:down
 ```
 
 Rebuild only the frontend:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml build frontend
+npm run rebuild:frontend
 ```
 
 View logs:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f backend frontend scanner
+npm run dev:logs
 ```
 
 ## Current Dev Notes

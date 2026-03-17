@@ -39,6 +39,8 @@ Thumbs.db
 # Logs
 *.log
 logs/
+backend/celerybeat-schedule
+backend/celerybeat-schedule.*
 
 # DB volumes (local dev)
 postgres_data/
