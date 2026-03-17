@@ -30,6 +30,7 @@ export const authApi = {
   listApiKeys: () => api.get("/api/v1/auth/api-keys"),
   createApiKey: (payload: { name: string }) => api.post("/api/v1/auth/api-keys", payload),
   deleteApiKey: (id: string) => api.delete(`/api/v1/auth/api-keys/${id}`),
+  listAuditLogs: () => api.get("/api/v1/auth/audit-logs"),
 };
 
 // ─── Asset endpoints ────────────────────────────────────────────

@@ -24,6 +24,16 @@ export interface ApiKey {
   created_at: string;
 }
 
+export interface AuditLogEntry {
+  id: number;
+  action: string;
+  target_type: string | null;
+  target_id: string | null;
+  details: Record<string, unknown> | null;
+  created_at: string;
+  user: { id: string; username: string } | null;
+}
+
 export interface Port {
   id: number;
   port_number: number;

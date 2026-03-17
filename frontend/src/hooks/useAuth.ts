@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { ApiKey, CurrentUser, UserRole } from '@/types'
+import type { ApiKey, AuditLogEntry, CurrentUser, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -153,5 +153,17 @@ export function useDeleteApiKey() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['auth', 'api-keys'] })
     },
+  })
+}
+
+export function useAuditLogs(enabled = true) {
+  return useQuery<AuditLogEntry[]>({
+    queryKey: ['auth', 'audit-logs'],
+    queryFn: async () => {
+      const { data } = await authApi.listAuditLogs()
+      return data
+    },
+    enabled,
+    refetchInterval: 60_000,
   })
 }

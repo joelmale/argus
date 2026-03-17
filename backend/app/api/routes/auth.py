@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
+from app.audit import log_audit_event
 from app.core.security import (
     api_key_prefix,
     create_access_token,
@@ -16,7 +17,7 @@ from app.core.security import (
     hash_api_key,
     verify_password,
 )
-from app.db.models import ApiKey, User
+from app.db.models import ApiKey, AuditLog, User
 from app.db.session import get_db
 from app.core.security import hash_password
 
@@ -62,12 +63,29 @@ def _serialize_api_key(api_key: ApiKey) -> dict:
     }
 
 
+def _serialize_audit_log(entry: AuditLog) -> dict:
+    return {
+        "id": entry.id,
+        "action": entry.action,
+        "target_type": entry.target_type,
+        "target_id": entry.target_id,
+        "details": entry.details,
+        "created_at": entry.created_at.isoformat(),
+        "user": {
+            "id": str(entry.user.id),
+            "username": entry.user.username,
+        } if entry.user else None,
+    }
+
+
 @router.post("/token")
 async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
     result = await db.execute(select(User).where(User.username == form.username))
     user = result.scalar_one_or_none()
     if not user or not verify_password(form.password, user.hashed_password):
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+    await log_audit_event(db, action="auth.login", user=user)
+    await db.commit()
     token = create_access_token(subject=str(user.id))
     return {"access_token": token, "token_type": "bearer"}
 
@@ -100,6 +118,15 @@ async def create_user(
         is_active=True,
     )
     db.add(user)
+    await db.flush()
+    await log_audit_event(
+        db,
+        action="auth.user_created",
+        user=_,
+        target_type="user",
+        target_id=str(user.id),
+        details={"username": user.username, "role": user.role},
+    )
     await db.commit()
     await db.refresh(user)
     return _serialize_user(user)
@@ -141,6 +168,14 @@ async def update_user(
     if payload.is_active is not None:
         user.is_active = payload.is_active
 
+    await log_audit_event(
+        db,
+        action="auth.user_updated",
+        user=current_user,
+        target_type="user",
+        target_id=str(user.id),
+        details={"role": user.role, "is_active": user.is_active},
+    )
     await db.commit()
     await db.refresh(user)
     return _serialize_user(user)
@@ -170,6 +205,15 @@ async def create_api_key(
         is_active=True,
     )
     db.add(api_key)
+    await db.flush()
+    await log_audit_event(
+        db,
+        action="auth.api_key_created",
+        user=current_user,
+        target_type="api_key",
+        target_id=str(api_key.id),
+        details={"name": api_key.name, "key_prefix": api_key.key_prefix},
+    )
     await db.commit()
     await db.refresh(api_key)
     return {**_serialize_api_key(api_key), "token": raw_key}
@@ -184,5 +228,27 @@ async def delete_api_key(
     api_key = await db.get(ApiKey, api_key_id)
     if api_key is None or api_key.user_id != current_user.id:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    await log_audit_event(
+        db,
+        action="auth.api_key_deleted",
+        user=current_user,
+        target_type="api_key",
+        target_id=str(api_key.id),
+        details={"name": api_key.name, "key_prefix": api_key.key_prefix},
+    )
     await db.delete(api_key)
     await db.commit()
+
+
+@router.get("/audit-logs")
+async def list_audit_logs(
+    limit: int = 50,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    from sqlalchemy.orm import selectinload
+
+    result = await db.execute(
+        select(AuditLog).options(selectinload(AuditLog.user)).order_by(AuditLog.created_at.desc()).limit(limit)
+    )
+    return [_serialize_audit_log(entry) for entry in result.scalars().all()]

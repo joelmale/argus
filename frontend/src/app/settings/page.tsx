@@ -3,8 +3,8 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2 } from 'lucide-react'
-import { useApiKeys, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History } from 'lucide-react'
+import { useApiKeys, useAuditLogs, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useUpdateUser, useUsers } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -38,6 +38,7 @@ export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()
   const { data: users = [] } = useUsers(currentUser?.role === 'admin')
   const { data: apiKeys = [] } = useApiKeys(currentUser?.role === 'admin')
+  const { data: auditLogs = [] } = useAuditLogs(currentUser?.role === 'admin')
   const { mutate: createUser, isPending: isCreatingUser } = useCreateUser()
   const { mutate: updateUser, isPending: isUpdatingUser } = useUpdateUser()
   const { mutate: createApiKey, isPending: isCreatingApiKey } = useCreateApiKey()
@@ -221,6 +222,29 @@ export default function SettingsPage() {
                     </div>
                   ))}
                 </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle><History className="w-4 h-4 inline mr-1.5" />Recent Audit Activity</CardTitle>
+              </CardHeader>
+              <CardBody className="space-y-3">
+                {auditLogs.map((entry) => (
+                  <div key={entry.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                    <div className="flex items-center justify-between gap-3">
+                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{entry.action}</p>
+                      <p className="text-xs text-zinc-500">{new Date(entry.created_at).toLocaleString()}</p>
+                    </div>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      {entry.user?.username || 'system'} {entry.target_type ? `· ${entry.target_type}` : ''}
+                      {entry.target_id ? ` · ${entry.target_id}` : ''}
+                    </p>
+                  </div>
+                ))}
+                {auditLogs.length === 0 && (
+                  <p className="text-sm text-zinc-500">No audit events recorded yet.</p>
+                )}
               </CardBody>
             </Card>
           </>
