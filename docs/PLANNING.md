@@ -397,12 +397,19 @@ Notes:
 
 ### Phase 4 — Advanced
 
-- [ ] Configuration backup (SSH-based: Cisco, Juniper, MikroTik, OpenWRT)
-- [ ] Layer 2 diagram (CDP/LLDP neighbor discovery via SNMP)
-- [ ] Wireless client association tracking (via access point SNMP)
-- [ ] Ansible inventory export
-- [ ] Terraform resource export
-- [ ] Plugin system for custom discovery modules
+- [x] Configuration backup (SSH-based: Cisco, Juniper, MikroTik, OpenWRT)
+- [x] Layer 2 diagram (CDP/LLDP neighbor discovery via SNMP)
+- [x] Wireless client association tracking (via access point SNMP, where available)
+- [x] Ansible inventory export
+- [x] Terraform resource export
+- [x] Plugin system for custom discovery modules
+
+Notes:
+- Config backups are admin-driven and use SSH driver profiles. The app stores only the environment variable name for the password, not the secret itself.
+- Layer 2 enrichment now ingests LLDP and CDP neighbors into topology links when managed devices expose those tables over SNMP.
+- Wireless association tracking is implemented as a generic SNMP-capable AP feature. Consumer TP-Link Deco app-managed mesh hardware does not reliably expose those tables, so this feature may remain empty on that specific setup.
+- Ansible and Terraform exports are available from the inventory UI and produce directly usable inventory/data files.
+- The Phase 4 plugin system is a lightweight Python entry-point hook surface for custom discovery or post-processing modules.
 
 ---
 
