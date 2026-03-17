@@ -10,6 +10,7 @@ The scanner container runs both worker + beat in the same process (see CMD
 in scanner/Dockerfile).
 """
 import asyncio
+import json
 import logging
 
 from celery import Celery
@@ -81,8 +82,21 @@ async def _run_job_async(job_id: str) -> None:
         job.started_at = datetime.now(timezone.utc)
         await db.commit()
 
+        await _publish_event({
+            "event": "scan_progress",
+            "data": {
+                "job_id": job_id,
+                "stage": "queued",
+                "progress": 0.0,
+                "message": f"Queued scan for {job.targets}",
+            },
+        })
+
         try:
-            profile = ScanProfile(job.scan_type) if job.scan_type in ScanProfile.__members__ else ScanProfile.BALANCED
+            try:
+                profile = ScanProfile(job.scan_type)
+            except ValueError:
+                profile = ScanProfile.BALANCED
             enable_ai = settings.AI_ENABLE_PER_SCAN
 
             summary = await run_scan(
@@ -107,6 +121,14 @@ async def _run_job_async(job_id: str) -> None:
             job.finished_at = datetime.now(timezone.utc)
             job.result_summary = {"error": str(exc)}
             await db.commit()
+            await _publish_event({
+                "event": "scan_complete",
+                "data": {
+                    "job_id": job_id,
+                    "status": "failed",
+                    "error": str(exc),
+                },
+            })
             raise
 
     await engine.dispose()
@@ -140,15 +162,23 @@ async def _enqueue_scheduled_scan() -> None:
 
 def _get_broadcast_fn():
     """Return a broadcast function that publishes events to Redis pub/sub."""
-    import json
     import redis
 
     r = redis.from_url(settings.REDIS_URL)
 
     async def broadcast(payload: dict):
-        try:
-            r.publish("argus:events", json.dumps(payload))
-        except Exception as exc:
-            log.debug("Redis publish error: %s", exc)
+        await _publish_event(payload)
 
     return broadcast
+
+
+async def _publish_event(payload: dict) -> None:
+    import redis
+
+    r = redis.from_url(settings.REDIS_URL)
+    try:
+        r.publish("argus:events", json.dumps(payload))
+    except Exception as exc:
+        log.debug("Redis publish error: %s", exc)
+    finally:
+        r.close()

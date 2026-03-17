@@ -24,8 +24,8 @@ export const assetsApi = {
 // ─── Scan endpoints ─────────────────────────────────────────────
 export const scansApi = {
   list: () => api.get("/api/v1/scans/"),
-  trigger: (targets: string, scan_type = "full") =>
-    api.post("/api/v1/scans/trigger", null, { params: { targets, scan_type } }),
+  trigger: (targets: string, scan_type = "balanced") =>
+    api.post("/api/v1/scans/trigger", { targets, scan_type }),
   get: (id: string) => api.get(`/api/v1/scans/${id}`),
 };
 
