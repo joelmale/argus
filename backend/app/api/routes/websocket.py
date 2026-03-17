@@ -19,7 +19,10 @@ REDIS_CHANNEL = "argus:events"
 async def _send_heartbeats(websocket: WebSocket) -> None:
     while True:
         await asyncio.sleep(30)
-        await websocket.send_json({"event": "heartbeat"})
+        try:
+            await websocket.send_json({"event": "heartbeat"})
+        except (RuntimeError, WebSocketDisconnect):
+            return
 
 
 @router.websocket("/events")
@@ -55,13 +58,16 @@ async def websocket_events(websocket: WebSocket):
         while True:
             message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0)
             if message and message["data"]:
-                await websocket.send_json(json.loads(message["data"]))
+                try:
+                    await websocket.send_json(json.loads(message["data"]))
+                except (RuntimeError, WebSocketDisconnect):
+                    break
             await asyncio.sleep(0.1)
-    except WebSocketDisconnect:
+    except (RuntimeError, WebSocketDisconnect):
         pass
     finally:
         heartbeat_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
+        with contextlib.suppress(asyncio.CancelledError, RuntimeError, WebSocketDisconnect):
             await heartbeat_task
         await pubsub.unsubscribe(REDIS_CHANNEL)
         await pubsub.aclose()
