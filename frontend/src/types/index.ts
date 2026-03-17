@@ -2,6 +2,7 @@
 
 export type AssetStatus = "online" | "offline" | "unknown";
 export type DeviceType = "router" | "switch" | "server" | "workstation" | "iot" | "printer" | "unknown";
+export type DeviceClass = DeviceType | "access_point" | "firewall" | "nas" | "ip_camera" | "smart_tv" | "iot_device" | "voip";
 
 export interface Port {
   id: number;
@@ -71,6 +72,8 @@ export interface TopologyGraph {
 
 export type WsEvent =
   | { event: "device_discovered"; data: Asset }
-  | { event: "scan_progress"; data: { job_id: string; progress: number; current_host: string } }
+  | { event: "scan_progress"; data: { job_id: string; stage?: string; progress?: number; current_host?: string; hosts_found?: number; message?: string } }
+  | { event: "scan_complete"; data: Record<string, unknown> }
+  | { event: "device_investigated"; data: { job_id: string; ip: string; device_class: string; vendor: string | null; confidence: number } }
   | { event: "device_status_change"; data: { id: string; status: AssetStatus } }
   | { event: "heartbeat" };

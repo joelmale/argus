@@ -42,6 +42,9 @@ services:
     container_name: argus_backend
     restart: unless-stopped
     env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@localhost:5432/argus}
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://localhost:6379/0}
     depends_on:
       db:
         condition: service_healthy
@@ -66,6 +69,9 @@ services:
     container_name: argus_scanner
     restart: unless-stopped
     env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@localhost:5432/argus}
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://localhost:6379/0}
     depends_on:
       - backend
       - redis

@@ -109,7 +109,7 @@ class TopologyLink(Base):
     target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"))
     link_type: Mapped[str] = mapped_column(String(32), default="ethernet")  # ethernet | wifi | vlan | vpn
     vlan_id: Mapped[int | None] = mapped_column(Integer)
-    metadata: Mapped[dict | None] = mapped_column(JSONB)
+    link_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
 
     __table_args__ = (UniqueConstraint("source_id", "target_id", name="uq_topology_link"),)
 

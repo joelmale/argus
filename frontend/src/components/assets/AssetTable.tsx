@@ -105,7 +105,9 @@ function AssetRow({ asset }: { asset: Asset }) {
             <Bot className="w-3.5 h-3.5 text-sky-500 flex-shrink-0" />
             <ConfidenceBadge confidence={ai.confidence} />
             {hasSecurityFindings && (
-              <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" title="Security findings" />
+              <span title="Security findings">
+                <AlertTriangle className="w-3.5 h-3.5 text-yellow-500" />
+              </span>
             )}
           </div>
         ) : (

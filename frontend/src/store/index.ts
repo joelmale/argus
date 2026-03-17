@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
-import type { WsEvent, Asset } from '@/types'
+import type { WsEvent } from '@/types'
 
 export interface LiveEvent {
   id: string
@@ -41,6 +41,10 @@ interface AppState {
 }
 
 let _eventCounter = 0
+
+function toRecord(value: unknown): Record<string, unknown> {
+  return typeof value === 'object' && value !== null ? value as Record<string, unknown> : {}
+}
 
 export const useAppStore = create<AppState>()(
   persist(
@@ -84,34 +88,32 @@ export function processWsEvent(payload: WsEvent, store: ReturnType<typeof useApp
       return  // Don't surface heartbeats in the UI
 
     case 'device_discovered':
-      store.addEvent({ id, timestamp, event: 'device_discovered', data: payload.data as Record<string, unknown> })
+      store.addEvent({ id, timestamp, event: 'device_discovered', data: toRecord(payload.data) })
       if ('ip' in payload.data) store.addRecentlyDiscovered(payload.data.ip as string)
       break
 
     case 'scan_progress':
-      store.addEvent({ id, timestamp, event: 'scan_progress', data: payload.data as Record<string, unknown> })
+      store.addEvent({ id, timestamp, event: 'scan_progress', data: toRecord(payload.data) })
       store.setActiveScan({
-        job_id: (payload.data as Record<string, unknown>).job_id as string,
-        stage: (payload.data as Record<string, unknown>).stage as string,
-        current_host: (payload.data as Record<string, unknown>).current_host as string,
-        hosts_found: (payload.data as Record<string, unknown>).hosts_found as number,
+        job_id: payload.data.job_id,
+        stage: payload.data.stage,
+        current_host: payload.data.current_host,
+        hosts_found: payload.data.hosts_found,
+        progress: payload.data.progress,
       })
       break
 
     case 'scan_complete':
-      store.addEvent({ id, timestamp, event: 'scan_complete', data: payload.data as Record<string, unknown> })
+      store.addEvent({ id, timestamp, event: 'scan_complete', data: toRecord(payload.data) })
       store.setActiveScan(null)
       break
 
     case 'device_investigated':
-      store.addEvent({ id, timestamp, event: 'device_investigated', data: payload.data as Record<string, unknown> })
+      store.addEvent({ id, timestamp, event: 'device_investigated', data: toRecord(payload.data) })
       break
 
     case 'device_status_change':
-      store.addEvent({ id, timestamp, event: 'device_status_change', data: payload.data as Record<string, unknown> })
+      store.addEvent({ id, timestamp, event: 'device_status_change', data: toRecord(payload.data) })
       break
-
-    default:
-      store.addEvent({ id, timestamp, event: (payload as WsEvent).event, data: (payload as unknown as Record<string, unknown>) })
   }
 }

@@ -127,19 +127,17 @@ def _smb_probe_sync(ip: str, port: int) -> SmbProbeData | None:
 def _netbios_name_query(ip: str) -> str | None:
     """Send a NetBIOS Name Service query and extract the workstation name."""
     import socket
-    import struct
-
     # NetBIOS Name Service wildcard query
     query = (
-        b"\xab\xcd"    # Transaction ID
-        b"\x00\x00"    # Flags: query
-        b"\x00\x01"    # QDCOUNT: 1 question
-        b"\x00\x00" * 3
-        b"\x20"         # Name length
+        b"\xab\xcd"  # Transaction ID
+        + b"\x00\x00"  # Flags: query
+        + b"\x00\x01"  # QDCOUNT: 1 question
+        + (b"\x00\x00" * 3)
+        + b"\x20"  # Name length
         + b"CKAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"  # Encoded wildcard "*"
         + b"\x00"
-        b"\x00\x21"    # QTYPE: NB_STAT
-        b"\x00\x01"    # QCLASS: IN
+        + b"\x00\x21"  # QTYPE: NB_STAT
+        + b"\x00\x01"  # QCLASS: IN
     )
 
     try:

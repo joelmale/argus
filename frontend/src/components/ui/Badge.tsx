@@ -1,5 +1,4 @@
 import { cn } from '@/lib/utils'
-import type { DeviceClass } from '@/types'
 
 /** Status badge: online / offline / unknown */
 export function StatusBadge({ status }: { status: string }) {
