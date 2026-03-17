@@ -16,6 +16,8 @@ APP_TABLES = {
     "asset_history",
     "topology_links",
     "scan_jobs",
+    "config_backup_targets",
+    "config_backup_snapshots",
 }
 
 ROOT_DIR = Path(__file__).resolve().parents[1]

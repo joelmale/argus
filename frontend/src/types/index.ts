@@ -44,6 +44,43 @@ export interface AlertRule {
   created_at: string;
 }
 
+export interface ConfigBackupTarget {
+  id: number;
+  asset_id: string;
+  driver: string;
+  username: string;
+  password_env_var: string | null;
+  port: number;
+  host_override: string | null;
+  enabled: boolean;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ConfigBackupSnapshot {
+  id: number;
+  asset_id: string;
+  target_id: number | null;
+  status: "pending" | "running" | "done" | "failed";
+  driver: string;
+  command: string | null;
+  content: string | null;
+  error: string | null;
+  captured_at: string;
+}
+
+export interface BackupDriver {
+  name: string;
+  label: string;
+  description: string;
+}
+
+export interface PluginInfo {
+  name: string;
+  version: string;
+  description: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;

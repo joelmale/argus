@@ -1,4 +1,5 @@
 import axios from "axios";
+import type { ConfigBackupTarget } from "@/types";
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
@@ -34,6 +35,8 @@ export const authApi = {
   listAlertRules: () => api.get("/api/v1/auth/alert-rules"),
   updateAlertRule: (id: number, payload: { enabled?: boolean; notify_email?: boolean; notify_webhook?: boolean }) =>
     api.patch(`/api/v1/auth/alert-rules/${id}`, payload),
+  listBackupDrivers: () => api.get("/api/v1/system/backup-drivers"),
+  listPlugins: () => api.get("/api/v1/system/plugins"),
 };
 
 // ─── Asset endpoints ────────────────────────────────────────────
@@ -47,6 +50,13 @@ export const assetsApi = {
   addTag: (id: string, tag: string) => api.post(`/api/v1/assets/${id}/tags`, { tag }),
   removeTag: (id: string, tag: string) => api.delete(`/api/v1/assets/${id}/tags/${encodeURIComponent(tag)}`),
   delete: (id: string) => api.delete(`/api/v1/assets/${id}`),
+  getConfigBackupTarget: (id: string) => api.get(`/api/v1/assets/${id}/config-backup-target`),
+  upsertConfigBackupTarget: (
+    id: string,
+    payload: Omit<ConfigBackupTarget, "id" | "asset_id" | "created_at" | "updated_at">,
+  ) => api.put(`/api/v1/assets/${id}/config-backup-target`, payload),
+  listConfigBackups: (id: string) => api.get(`/api/v1/assets/${id}/config-backups`),
+  triggerConfigBackup: (id: string) => api.post(`/api/v1/assets/${id}/config-backups`),
 };
 
 // ─── Scan endpoints ─────────────────────────────────────────────

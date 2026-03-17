@@ -3,14 +3,14 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useAddAssetTag, useAsset, useRemoveAssetTag, useUpdateAsset } from '@/hooks/useAssets'
+import { useAddAssetTag, useAsset, useConfigBackupTarget, useConfigBackups, useRemoveAssetTag, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget } from '@/hooks/useAssets'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
-import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X } from 'lucide-react'
+import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import type { Asset } from '@/types'
+import type { Asset, ConfigBackupTarget } from '@/types'
 
 function AssetMetadataEditor({ asset }: { asset: Asset }) {
   const { mutate: updateAsset, isPending: isSaving } = useUpdateAsset()
@@ -122,6 +122,104 @@ function AssetMetadataEditor({ asset }: { asset: Asset }) {
         >
           <Save className="w-3.5 h-3.5" /> {isSaving ? 'Saving…' : 'Save'}
         </button>
+      </CardBody>
+    </Card>
+  )
+}
+
+function ConfigBackupForm({ asset, target }: { asset: Asset; target: ConfigBackupTarget | null | undefined }) {
+  const { mutate: saveTarget, isPending: isSaving } = useUpsertConfigBackupTarget()
+  const { mutate: triggerBackup, isPending: isRunning } = useTriggerConfigBackup()
+  const [driver, setDriver] = useState(target?.driver ?? 'openwrt')
+  const [username, setUsername] = useState(target?.username ?? 'root')
+  const [passwordEnvVar, setPasswordEnvVar] = useState(target?.password_env_var ?? '')
+  const [port, setPort] = useState(target?.port ?? 22)
+  const [hostOverride, setHostOverride] = useState(target?.host_override ?? '')
+  const [enabled, setEnabled] = useState(target?.enabled ?? true)
+
+  function handleSave() {
+    saveTarget({
+      id: asset.id,
+      payload: {
+        driver,
+        username,
+        password_env_var: passwordEnvVar || null,
+        port,
+        host_override: hostOverride || null,
+        enabled,
+      },
+    })
+  }
+
+  return (
+    <>
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+        <select value={driver} onChange={(event) => setDriver(event.target.value)} className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700">
+          <option value="cisco_ios">Cisco IOS</option>
+          <option value="juniper_junos">Juniper Junos</option>
+          <option value="mikrotik_routeros">MikroTik RouterOS</option>
+          <option value="openwrt">OpenWRT</option>
+        </select>
+        <input value={username} onChange={(event) => setUsername(event.target.value)} placeholder="SSH username" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+        <input value={passwordEnvVar} onChange={(event) => setPasswordEnvVar(event.target.value)} placeholder="Password env var, e.g. ARGUS_BACKUP_PASSWORD" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+        <input value={hostOverride} onChange={(event) => setHostOverride(event.target.value)} placeholder="Optional host override" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+        <input value={port} type="number" onChange={(event) => setPort(Number(event.target.value) || 22)} placeholder="22" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+        <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+          <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+          Enabled
+        </label>
+      </div>
+
+      <div className="flex flex-wrap gap-3">
+        <button onClick={handleSave} disabled={isSaving} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white">
+          <ServerCog className="w-4 h-4" /> {isSaving ? 'Saving…' : 'Save backup target'}
+        </button>
+        <button onClick={() => triggerBackup(asset.id)} disabled={isRunning || !target} className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700">
+          <Play className="w-4 h-4" /> {isRunning ? 'Running…' : 'Run backup now'}
+        </button>
+      </div>
+    </>
+  )
+}
+
+function ConfigBackupCard({ asset }: { asset: Asset }) {
+  const { data: target } = useConfigBackupTarget(asset.id)
+  const { data: backups = [] } = useConfigBackups(asset.id)
+
+  return (
+    <Card>
+      <CardHeader><CardTitle><Router className="w-4 h-4 inline mr-1.5" />Config Backups</CardTitle></CardHeader>
+      <CardBody className="space-y-4">
+        <p className="text-sm text-zinc-500">
+          Configure SSH-based backups for network devices. Secrets stay in container environment variables; this form stores only the env var name.
+        </p>
+
+        <ConfigBackupForm asset={asset} target={target} key={`${asset.id}:${target?.updated_at ?? 'new'}`} />
+
+        <div className="space-y-3">
+          {backups.map((backup) => (
+            <div key={backup.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{backup.driver}</p>
+                  <p className="text-xs text-zinc-500">{new Date(backup.captured_at).toLocaleString()}</p>
+                </div>
+                <span className="text-xs px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">
+                  {backup.status}
+                </span>
+              </div>
+              {backup.error && <p className="text-xs text-red-500 mt-2">{backup.error}</p>}
+              {backup.content && (
+                <pre className="mt-3 max-h-64 overflow-auto rounded-lg bg-zinc-950 text-zinc-200 p-3 text-xs">
+                  {backup.content}
+                </pre>
+              )}
+            </div>
+          ))}
+          {backups.length === 0 && (
+            <p className="text-sm text-zinc-500">No config backups captured for this asset yet.</p>
+          )}
+        </div>
       </CardBody>
     </Card>
   )
@@ -344,7 +442,10 @@ export default function AssetDetailPage() {
 
             {/* Notes */}
             {currentUser?.role === 'admin' ? (
-              <AssetMetadataEditor key={asset.id} asset={asset} />
+              <div className="space-y-5">
+                <ConfigBackupCard asset={asset} />
+                <AssetMetadataEditor key={asset.id} asset={asset} />
+              </div>
             ) : (
               <Card>
                 <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>

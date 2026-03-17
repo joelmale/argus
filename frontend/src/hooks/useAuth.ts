@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { AlertRule, ApiKey, AuditLogEntry, CurrentUser, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, CurrentUser, PluginInfo, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -197,5 +197,28 @@ export function useUpdateAlertRule() {
       await queryClient.invalidateQueries({ queryKey: ['auth', 'alert-rules'] })
       await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
     },
+  })
+}
+
+export function useBackupDrivers(enabled = true) {
+  return useQuery<BackupDriver[]>({
+    queryKey: ['system', 'backup-drivers'],
+    queryFn: async () => {
+      const { data } = await authApi.listBackupDrivers()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function usePlugins(enabled = true) {
+  return useQuery<PluginInfo[]>({
+    queryKey: ['system', 'plugins'],
+    queryFn: async () => {
+      const { data } = await authApi.listPlugins()
+      return data
+    },
+    enabled,
+    refetchInterval: 60_000,
   })
 }

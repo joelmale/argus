@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useUpdateAlertRule, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, usePlugins, useUpdateAlertRule, useUpdateUser, useUsers } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -41,6 +41,8 @@ export default function SettingsPage() {
   const { data: apiKeys = [] } = useApiKeys(currentUser?.role === 'admin')
   const { data: auditLogs = [] } = useAuditLogs(currentUser?.role === 'admin')
   const { data: alertRules = [] } = useAlertRules(currentUser?.role === 'admin')
+  const { data: backupDrivers = [] } = useBackupDrivers(currentUser?.role === 'admin')
+  const { data: plugins = [] } = usePlugins(currentUser?.role === 'admin')
   const { mutate: createUser, isPending: isCreatingUser } = useCreateUser()
   const { mutate: updateUser, isPending: isUpdatingUser } = useUpdateUser()
   const { mutate: createApiKey, isPending: isCreatingApiKey } = useCreateApiKey()
@@ -255,6 +257,41 @@ export default function SettingsPage() {
                 {auditLogs.length === 0 && (
                   <p className="text-sm text-zinc-500">No audit events recorded yet.</p>
                 )}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle><Wifi className="w-4 h-4 inline mr-1.5" />Backup Drivers & Plugins</CardTitle>
+              </CardHeader>
+              <CardBody className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                <div className="space-y-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Supported config backup drivers</p>
+                  {backupDrivers.map((driver) => (
+                    <div key={driver.name} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{driver.label}</p>
+                      <p className="text-xs text-zinc-500 mt-1 font-mono">{driver.name}</p>
+                      <p className="text-xs text-zinc-500 mt-2">{driver.description}</p>
+                    </div>
+                  ))}
+                  {backupDrivers.length === 0 && (
+                    <p className="text-sm text-zinc-500">No backup drivers available.</p>
+                  )}
+                </div>
+                <div className="space-y-3">
+                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Loaded plugins</p>
+                  {plugins.length === 0 ? (
+                    <p className="text-sm text-zinc-500">No external plugins loaded yet. Phase 4 plugin hooks are ready for custom discovery modules.</p>
+                  ) : plugins.map((plugin) => (
+                    <div key={plugin.name} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                      <div className="flex items-center justify-between gap-3">
+                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{plugin.name}</p>
+                        <span className="text-xs text-zinc-500">{plugin.version}</span>
+                      </div>
+                      {plugin.description && <p className="text-xs text-zinc-500 mt-2">{plugin.description}</p>}
+                    </div>
+                  ))}
+                </div>
               </CardBody>
             </Card>
 

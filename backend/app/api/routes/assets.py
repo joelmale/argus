@@ -11,6 +11,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin, get_current_user
+from app.backups import capture_backup_for_asset, get_backup_target, list_backup_snapshots, upsert_backup_target
 from app.db.models import Asset, AssetHistory, AssetTag, Port, User
 from app.db.session import get_db
 
@@ -19,6 +20,15 @@ router = APIRouter()
 
 class AssetTagRequest(BaseModel):
     tag: str
+
+
+class ConfigBackupTargetRequest(BaseModel):
+    driver: str
+    username: str
+    password_env_var: str | None = None
+    port: int = 22
+    host_override: str | None = None
+    enabled: bool = True
 
 
 @router.get("/")
@@ -260,3 +270,123 @@ async def delete_asset_tag(
         return
     await db.delete(asset_tag)
     await db.commit()
+
+
+@router.get("/{asset_id}/config-backup-target")
+async def read_config_backup_target(
+    asset_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    asset = await db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    target = await get_backup_target(db, asset_id)
+    if target is None:
+        return None
+
+    return {
+        "id": target.id,
+        "asset_id": str(target.asset_id),
+        "driver": target.driver,
+        "username": target.username,
+        "password_env_var": target.password_env_var,
+        "port": target.port,
+        "host_override": target.host_override,
+        "enabled": target.enabled,
+        "created_at": target.created_at.isoformat(),
+        "updated_at": target.updated_at.isoformat(),
+    }
+
+
+@router.put("/{asset_id}/config-backup-target")
+async def write_config_backup_target(
+    asset_id: UUID,
+    payload: ConfigBackupTargetRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    asset = await db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    try:
+        target = await upsert_backup_target(
+            db,
+            asset_id=asset_id,
+            driver=payload.driver,
+            username=payload.username.strip(),
+            password_env_var=payload.password_env_var.strip() if payload.password_env_var else None,
+            port=payload.port,
+            host_override=payload.host_override.strip() if payload.host_override else None,
+            enabled=payload.enabled,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "id": target.id,
+        "asset_id": str(target.asset_id),
+        "driver": target.driver,
+        "username": target.username,
+        "password_env_var": target.password_env_var,
+        "port": target.port,
+        "host_override": target.host_override,
+        "enabled": target.enabled,
+        "created_at": target.created_at.isoformat(),
+        "updated_at": target.updated_at.isoformat(),
+    }
+
+
+@router.get("/{asset_id}/config-backups")
+async def get_config_backups(
+    asset_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    asset = await db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    snapshots = await list_backup_snapshots(db, asset_id)
+    return [
+        {
+            "id": snapshot.id,
+            "asset_id": str(snapshot.asset_id),
+            "target_id": snapshot.target_id,
+            "status": snapshot.status,
+            "driver": snapshot.driver,
+            "command": snapshot.command,
+            "content": snapshot.content,
+            "error": snapshot.error,
+            "captured_at": snapshot.captured_at.isoformat(),
+        }
+        for snapshot in snapshots
+    ]
+
+
+@router.post("/{asset_id}/config-backups", status_code=201)
+async def trigger_config_backup(
+    asset_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    try:
+        snapshot = await capture_backup_for_asset(db, asset_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return {
+        "id": snapshot.id,
+        "asset_id": str(snapshot.asset_id),
+        "target_id": snapshot.target_id,
+        "status": snapshot.status,
+        "driver": snapshot.driver,
+        "command": snapshot.command,
+        "content": snapshot.content,
+        "error": snapshot.error,
+        "captured_at": snapshot.captured_at.isoformat(),
+    }

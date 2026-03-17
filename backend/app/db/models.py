@@ -173,3 +173,37 @@ class AlertRule(Base):
     notify_email: Mapped[bool] = mapped_column(Boolean, default=True)
     notify_webhook: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ConfigBackupTarget(Base):
+    __tablename__ = "config_backup_targets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    driver: Mapped[str] = mapped_column(String(64), nullable=False)
+    username: Mapped[str] = mapped_column(String(128), nullable=False)
+    password_env_var: Mapped[str | None] = mapped_column(String(128))
+    port: Mapped[int] = mapped_column(Integer, default=22)
+    host_override: Mapped[str | None] = mapped_column(String(255))
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ConfigBackupSnapshot(Base):
+    __tablename__ = "config_backup_snapshots"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    target_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("config_backup_targets.id", ondelete="SET NULL"))
+    status: Mapped[str] = mapped_column(String(16), default="pending")
+    driver: Mapped[str] = mapped_column(String(64), nullable=False)
+    command: Mapped[str | None] = mapped_column(Text)
+    content: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

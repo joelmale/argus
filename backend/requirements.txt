@@ -40,5 +40,6 @@ anthropic==0.85.0           # Optional: Anthropic API fallback
 
 # ── Utilities ──────────────────────────────────────────────────
 httpx[http2]==0.28.1        # Async HTTP for probes (HTTP/2 support)
+asyncssh==2.21.1
 aiofiles==25.1.0
 structlog==25.5.0
