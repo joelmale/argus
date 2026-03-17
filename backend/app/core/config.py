@@ -34,6 +34,13 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
     NOTIFY_WEBHOOK_URL: str = ""
+    NOTIFY_OFFLINE_MINUTES: int = 0
+    SMTP_HOST: str = ""
+    SMTP_PORT: int = 587
+    SMTP_USERNAME: str = ""
+    SMTP_PASSWORD: str = ""
+    SMTP_FROM: str = ""
+    SMTP_TO: str = ""
 
     # ── AI Agent ─────────────────────────────────────────────────────────────
     # AI_BACKEND: "ollama" | "anthropic" | "none"

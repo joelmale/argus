@@ -185,6 +185,7 @@ async def mark_offline(db: AsyncSession, ip_addresses: list[str]) -> int:
     Returns count of assets marked offline.
     """
     count = 0
+    offline_assets: list[Asset] = []
     for ip in ip_addresses:
         stmt = select(Asset).where(Asset.ip_address == ip, Asset.status == "online")
         asset = (await db.execute(stmt)).scalar_one_or_none()
@@ -196,4 +197,5 @@ async def mark_offline(db: AsyncSession, ip_addresses: list[str]) -> int:
                 diff={"status": {"old": "online", "new": "offline"}},
             ))
             count += 1
-    return count
+            offline_assets.append(asset)
+    return count, offline_assets

@@ -232,6 +232,7 @@ async def _persist_results(
 ) -> None:
     """Persist all scan results to the database."""
     from app.db.upsert import mark_offline, upsert_scan_result
+    from app.notifications import notify_devices_offline, notify_new_device
     from app.scanner.topology import infer_topology_links_from_snmp
 
     # Find assets that were online before but not in this scan
@@ -252,7 +253,7 @@ async def _persist_results(
 
             if change_type == "discovered":
                 summary.new_assets += 1
-                await _broadcast(broadcast_fn, {
+                discovered_event = {
                     "event": "device_discovered",
                     "data": {
                         "job_id": job_id,
@@ -261,7 +262,9 @@ async def _persist_results(
                         "hostname": result.reverse_hostname,
                         "device_class": result.ai_analysis.device_class.value if result.ai_analysis else "unknown",
                     },
-                })
+                }
+                await _broadcast(broadcast_fn, discovered_event)
+                await notify_new_device(discovered_event["data"])
             elif change_type == "updated":
                 summary.changed_assets += 1
 
@@ -270,8 +273,19 @@ async def _persist_results(
             summary.errors.append(f"{result.host.ip_address}: {exc}")
 
     # Mark offline assets
-    offline_count = await mark_offline(db_session, offline_ips)
+    offline_count, offline_assets = await mark_offline(db_session, offline_ips)
     summary.offline_assets = offline_count
+    if offline_assets:
+        await notify_devices_offline(
+            [
+                {
+                    "ip": asset.ip_address,
+                    "hostname": asset.hostname,
+                    "last_seen": asset.last_seen.isoformat() if asset.last_seen else None,
+                }
+                for asset in offline_assets
+            ]
+        )
 
     await db_session.commit()
 
