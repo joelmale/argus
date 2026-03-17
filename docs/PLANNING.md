@@ -208,6 +208,7 @@ GET    /assets/{id}/ports    Port list for an asset
 ```
 GET    /scans/               List recent scan jobs
 POST   /scans/trigger        Enqueue a manual scan { targets, scan_type }
+POST   /scans/ingest/logs    Ingest DHCP/DNS observations from common log formats
 GET    /scans/{id}           Get scan job status and result_summary
 DELETE /scans/{id}           Cancel a pending scan
 ```
@@ -277,6 +278,10 @@ For managed switches and routers, SNMP provides data unavailable from nmap:
 - System name, location, description
 
 SNMP v3 (auth + privacy) is preferred for security; v2c with community string as fallback.
+
+### DHCP / DNS Log Ingestion (Phase 2)
+
+Argus can optionally enrich the inventory from pasted or forwarded DHCP/DNS logs without running another active scan. The current parser handles common dnsmasq and ISC DHCP lease formats plus dnsmasq DNS reply lines, then routes those observations through the normal asset upsert and history pipeline.
 
 ### Asset Upsert Logic
 
@@ -359,16 +364,16 @@ Target: working end-to-end discovery → inventory → topology map.
 
 Target: richer data, smarter topology, notifications.
 
-- [ ] SNMP v2c/v3 polling for managed devices
-- [ ] Passive ARP listener (scapy)
-- [ ] DNS/DHCP log ingestion (optional, parser for common formats)
-- [ ] VLAN-aware topology (from SNMP interface tables)
-- [ ] Topology link inference from ARP tables
-- [ ] Webhook notifications (new device, device offline > N minutes)
-- [ ] Email notifications (SMTP)
-- [ ] Asset tagging UI
-- [ ] Custom fields editor
-- [ ] Export inventory to CSV
+- [x] SNMP v2c/v3 polling for managed devices
+- [x] Passive ARP listener (scapy)
+- [x] DNS/DHCP log ingestion (optional, parser for common formats)
+- [x] VLAN-aware topology (from SNMP interface tables)
+- [x] Topology link inference from ARP tables
+- [x] Webhook notifications (new device, device offline > N minutes)
+- [x] Email notifications (SMTP)
+- [x] Asset tagging UI
+- [x] Custom fields editor
+- [x] Export inventory to CSV
 
 ### Phase 3 — Enterprise Features
 
