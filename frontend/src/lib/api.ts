@@ -16,8 +16,11 @@ api.interceptors.request.use((config) => {
 export const assetsApi = {
   list: (params?: { search?: string; status?: string; tag?: string }) =>
     api.get("/api/v1/assets/", { params }),
+  exportCsv: () => api.get("/api/v1/assets/export.csv", { responseType: "blob" }),
   get: (id: string) => api.get(`/api/v1/assets/${id}`),
   update: (id: string, payload: Record<string, unknown>) => api.patch(`/api/v1/assets/${id}`, payload),
+  addTag: (id: string, tag: string) => api.post(`/api/v1/assets/${id}/tags`, { tag }),
+  removeTag: (id: string, tag: string) => api.delete(`/api/v1/assets/${id}/tags/${encodeURIComponent(tag)}`),
   delete: (id: string) => api.delete(`/api/v1/assets/${id}`),
 };
 

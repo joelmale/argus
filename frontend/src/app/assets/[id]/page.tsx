@@ -1,13 +1,130 @@
 'use client'
 
+import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
-import { useAsset } from '@/hooks/useAssets'
+import { useAddAssetTag, useAsset, useRemoveAssetTag, useUpdateAsset } from '@/hooks/useAssets'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
-import { Bot, Shield, Clock, Info, Network, AlertTriangle, ChevronLeft, Tag } from 'lucide-react'
+import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
+import type { Asset } from '@/types'
+
+function AssetMetadataEditor({ asset }: { asset: Asset }) {
+  const { mutate: updateAsset, isPending: isSaving } = useUpdateAsset()
+  const { mutate: addTag, isPending: isAddingTag } = useAddAssetTag()
+  const { mutate: removeTag } = useRemoveAssetTag()
+  const [notes, setNotes] = useState(asset.notes ?? '')
+  const [deviceType, setDeviceType] = useState(asset.device_type ?? '')
+  const [customFieldsText, setCustomFieldsText] = useState(
+    JSON.stringify(asset.custom_fields ?? {}, null, 2),
+  )
+  const [tagInput, setTagInput] = useState('')
+  const [editorError, setEditorError] = useState<string | null>(null)
+
+  function handleSaveMetadata() {
+    try {
+      const customFields = JSON.parse(customFieldsText || '{}')
+      setEditorError(null)
+      updateAsset({
+        id: asset.id,
+        payload: {
+          notes,
+          device_type: deviceType || null,
+          custom_fields: customFields,
+        },
+      })
+    } catch {
+      setEditorError('Custom fields must be valid JSON.')
+    }
+  }
+
+  function handleAddTag() {
+    const normalized = tagInput.trim().toLowerCase()
+    if (!normalized) return
+    addTag(
+      { id: asset.id, tag: normalized },
+      {
+        onSuccess: () => setTagInput(''),
+      },
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
+      <CardBody className="space-y-4">
+        <div>
+          <p className="text-xs text-zinc-500 mb-1.5">Tags</p>
+          <div className="flex flex-wrap gap-1.5 mb-2">
+            {asset.tags.map((tag) => (
+              <span key={tag.tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
+                {tag.tag}
+                <button onClick={() => removeTag({ id: asset.id, tag: tag.tag })}>
+                  <X className="w-3 h-3" />
+                </button>
+              </span>
+            ))}
+          </div>
+          <div className="flex gap-2">
+            <input
+              value={tagInput}
+              onChange={(e) => setTagInput(e.target.value)}
+              placeholder="Add tag"
+              className="flex-1 px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+            />
+            <button
+              onClick={handleAddTag}
+              disabled={isAddingTag}
+              className="inline-flex items-center gap-1 px-3 py-2 rounded-lg text-sm bg-sky-500 text-white"
+            >
+              <Plus className="w-3.5 h-3.5" /> Add
+            </button>
+          </div>
+        </div>
+
+        <div>
+          <p className="text-xs text-zinc-500 mb-1.5">Device type</p>
+          <input
+            value={deviceType}
+            onChange={(e) => setDeviceType(e.target.value)}
+            className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+        </div>
+
+        <div>
+          <p className="text-xs text-zinc-500 mb-1.5">Notes</p>
+          <textarea
+            value={notes}
+            onChange={(e) => setNotes(e.target.value)}
+            rows={4}
+            className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+        </div>
+
+        <div>
+          <p className="text-xs text-zinc-500 mb-1.5">Custom fields (JSON)</p>
+          <textarea
+            value={customFieldsText}
+            onChange={(e) => setCustomFieldsText(e.target.value)}
+            rows={8}
+            className="w-full px-3 py-2 rounded-lg text-sm font-mono bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          {editorError && <p className="text-xs text-red-500 mt-1">{editorError}</p>}
+        </div>
+
+        <button
+          onClick={handleSaveMetadata}
+          disabled={isSaving}
+          className="inline-flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white"
+        >
+          <Save className="w-3.5 h-3.5" /> {isSaving ? 'Saving…' : 'Save'}
+        </button>
+      </CardBody>
+    </Card>
+  )
+}
 
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
@@ -224,14 +341,7 @@ export default function AssetDetailPage() {
             )}
 
             {/* Notes */}
-            {asset.notes && (
-              <Card>
-                <CardHeader><CardTitle>Notes</CardTitle></CardHeader>
-                <CardBody>
-                  <p className="text-sm text-zinc-600 dark:text-zinc-400">{asset.notes}</p>
-                </CardBody>
-              </Card>
-            )}
+            <AssetMetadataEditor key={asset.id} asset={asset} />
           </div>
         </div>
       </div>

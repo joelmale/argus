@@ -4,7 +4,8 @@ import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { AssetTable } from '@/components/assets/AssetTable'
 import { useAssets } from '@/hooks/useAssets'
-import { Search, Filter, X } from 'lucide-react'
+import { assetsApi } from '@/lib/api'
+import { Search, Download, X } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
@@ -21,6 +22,16 @@ export default function AssetsPage() {
 
   const clearFilters = () => { setSearch(''); setStatus('') }
   const hasFilters = search || status
+
+  async function handleExportCsv() {
+    const response = await assetsApi.exportCsv()
+    const url = URL.createObjectURL(response.data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = 'argus-assets.csv'
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <AppShell>
@@ -72,6 +83,13 @@ export default function AssetsPage() {
               <X className="w-3.5 h-3.5" /> Clear
             </button>
           )}
+
+          <button
+            onClick={handleExportCsv}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
 
           <span className="text-sm text-zinc-500 ml-auto">
             {isLoading ? '…' : `${assets.length} assets`}

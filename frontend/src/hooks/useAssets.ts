@@ -39,6 +39,28 @@ export function useUpdateAsset() {
   })
 }
 
+export function useAddAssetTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, tag }: { id: string; tag: string }) => assetsApi.addTag(id, tag),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['assets', id] })
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
+export function useRemoveAssetTag() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, tag }: { id: string; tag: string }) => assetsApi.removeTag(id, tag),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['assets', id] })
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
 export function useTopologyGraph() {
   return useQuery<TopologyGraph>({
     queryKey: ['topology'],
