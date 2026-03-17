@@ -1,38 +1,38 @@
 # ── Web Framework ──────────────────────────────────────────────
-fastapi==0.111.0
-uvicorn[standard]==0.29.0
+fastapi==0.135.1
+uvicorn[standard]==0.42.0
 websockets==12.0
 python-multipart==0.0.9
 
 # ── Database ───────────────────────────────────────────────────
-sqlalchemy[asyncio]==2.0.30
-asyncpg==0.29.0
-alembic==1.13.1
-psycopg2-binary==2.9.9
+sqlalchemy[asyncio]==2.0.48
+asyncpg==0.31.0
+alembic==1.18.4
+psycopg2-binary==2.9.11
 
 # ── Cache / Task Queue ─────────────────────────────────────────
 redis==5.0.4
 celery[redis]==5.3.6
 
 # ── Auth ───────────────────────────────────────────────────────
-python-jose[cryptography]==3.3.0
+python-jose[cryptography]==3.5.0
 passlib[bcrypt]==1.7.4
 bcrypt<5
 
 # ── Config ─────────────────────────────────────────────────────
-pydantic-settings==2.2.1
-python-dotenv==1.0.1
+pydantic-settings==2.13.1
+python-dotenv==1.2.2
 
 # ── Network Discovery ──────────────────────────────────────────
 python-nmap==0.7.1
-scapy==2.5.0
+scapy==2.7.0
 pysnmp==6.1.4
 netaddr==1.3.0
-mac-vendor-lookup==0.1.12
-zeroconf==0.132.2          # mDNS/Bonjour discovery
+mac-vendor-lookup==0.1.15
+zeroconf==0.148.0          # mDNS/Bonjour discovery
 
 # ── Protocol Probes ────────────────────────────────────────────
-impacket==0.12.0            # SMB/NetBIOS probe
+impacket==0.13.0            # SMB/NetBIOS probe
 
 # ── AI Agent ───────────────────────────────────────────────────
 openai==1.35.0              # Ollama OpenAI-compatible API + optional OpenAI
@@ -40,5 +40,5 @@ anthropic==0.28.0           # Optional: Anthropic API fallback
 
 # ── Utilities ──────────────────────────────────────────────────
 httpx[http2]==0.27.0        # Async HTTP for probes (HTTP/2 support)
-aiofiles==23.2.1
-structlog==24.1.0
+aiofiles==25.1.0
+structlog==25.5.0

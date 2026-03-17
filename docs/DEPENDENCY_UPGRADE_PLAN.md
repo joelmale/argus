@@ -4,7 +4,8 @@ Revalidated on March 16, 2026.
 
 ## Current Status
 
-Phase 0 is partially complete.
+Phase 0 is complete.
+Phase 1 is complete.
 
 Completed stabilization work:
 - The backend syntax error in the SMB probe was fixed.
@@ -14,59 +15,11 @@ Completed stabilization work:
 - Docker build performance was improved with [frontend/.dockerignore](/Users/JoelN/Coding/argus/frontend/.dockerignore).
 - The dev startup flow and docs were aligned with the current Docker-based workflow.
 - The Python dependency blocker was fixed by moving `pysnmp` from the nonexistent `6.1.2` release to `6.1.4`.
+- Frontend lint, type-check, and build now run as committed, non-interactive checks.
+- Minimal backend smoke tests and backend CI checks are now in the repo.
+- Local runtime targets are now documented and pinned with `.nvmrc` and `.python-version`.
 
-Still open before broad dependency upgrades:
-- Frontend lint is still not a real non-interactive quality gate because there is no checked-in ESLint config. `npm run lint` still needs proper project setup.
-- CI still points to `backend/tests/` even though there is no backend test suite.
-- There is still no Alembic migration setup even though `alembic` is installed.
-- Local runtime normalization is still incomplete. Docker and CI use Python 3.12 and Node 20, while local development on this machine is different.
-
-## Remaining Findings
-
-1. CI is still not fully reproducible.
-
-   The frontend lint command is not yet a usable committed quality gate, and the backend CI job still expects tests that do not exist.
-
-   References:
-   - [frontend/package.json](/Users/JoelN/Coding/argus/frontend/package.json)
-   - [.github/workflows/ci.yml](/Users/JoelN/Coding/argus/.github/workflows/ci.yml)
-
-2. Database change management is still incomplete.
-
-   `alembic` is installed, but the application still creates tables on startup and there is no Alembic config or migrations directory.
-
-   Reference:
-   - [backend/app/db/session.py](/Users/JoelN/Coding/argus/backend/app/db/session.py)
-
-3. Runtime and tooling drift still increases upgrade risk.
-
-   The repo targets Python 3.12 and Node 20 in Docker and CI. Local tooling should be normalized before major dependency moves.
-
-   References:
-   - [backend/Dockerfile](/Users/JoelN/Coding/argus/backend/Dockerfile)
-   - [frontend/Dockerfile](/Users/JoelN/Coding/argus/frontend/Dockerfile)
-   - [.github/workflows/ci.yml](/Users/JoelN/Coding/argus/.github/workflows/ci.yml)
-
-## Updated Phase Plan
-
-### Phase 0: Finish stabilization
-
-Remaining work:
-- Add a committed frontend ESLint config so `npm run lint` is non-interactive.
-- Add a minimal backend smoke test and a minimal frontend smoke or CI-level validation step.
-- Fix CI so it reflects the actual repo state.
-- Pin or document local runtimes to match Docker and CI more closely.
-- Decide whether `create_all()` startup schema creation stays temporary or is replaced now with Alembic bootstrap.
-
-Exit criteria:
-- Frontend lint, type-check, and build pass non-interactively
-- Backend imports compile cleanly
-- CI runs non-interactively
-- At least minimal smoke coverage exists for backend and frontend
-
-### Phase 1: Low-risk backend refresh
-
-Upgrade these first:
+Completed Phase 1 backend upgrades:
 - `fastapi 0.111.0 -> 0.135.1`
 - `uvicorn 0.29.0 -> 0.42.0`
 - `sqlalchemy 2.0.30 -> 2.0.48`
@@ -83,7 +36,36 @@ Upgrade these first:
 - `scapy 2.5.0 -> 2.7.0`
 - `psycopg2-binary 2.9.9 -> 2.9.11`
 
-Keep these as-is unless a specific issue appears:
+Still open before the remaining major upgrades:
+- There is still no Alembic migration setup even though `alembic` is installed.
+- Phase 2 infrastructure and protocol stack upgrades remain.
+- Phase 3 AI SDK upgrades remain.
+- Phase 4 and Phase 5 frontend major upgrades remain.
+
+## Remaining Findings
+
+1. Database change management is still incomplete.
+
+   `alembic` is installed, but the application still creates tables on startup and there is no Alembic config or migrations directory.
+
+   Reference:
+   - [backend/app/db/session.py](/Users/JoelN/Coding/argus/backend/app/db/session.py)
+
+2. Major-version backend infrastructure updates still carry the highest remaining risk.
+
+   The remaining backend package moves affect Redis, Celery, WebSockets, multipart handling, HTTP client behavior, and SNMP support.
+
+## Updated Phase Plan
+
+### Phase 0: Stabilization
+
+Status: complete.
+
+### Phase 1: Low-risk backend refresh
+
+Status: complete.
+
+Kept as-is:
 - `passlib`
 - `python-nmap`
 - `netaddr`
@@ -157,9 +139,7 @@ These do not show the same immediate pressure:
 
 ## Recommended Execution Order
 
-1. Finish the remaining Phase 0 work
-2. Upgrade low-risk backend packages
-3. Upgrade backend infrastructure and protocol packages
-4. Upgrade AI SDKs
-5. Upgrade frontend framework packages
-6. Upgrade frontend ecosystem packages
+1. Upgrade backend infrastructure and protocol packages
+2. Upgrade AI SDKs
+3. Upgrade frontend framework packages
+4. Upgrade frontend ecosystem packages
