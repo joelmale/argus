@@ -9,7 +9,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
 
-from app.api.routes import assets, auth, scans, system, topology, websocket
+from app.api.routes import assets, auth, findings, scans, system, topology, websocket
 from app.bootstrap import ensure_admin_user, ensure_system_defaults
 from app.core.config import settings
 from app.db.models import Asset, ScanJob
@@ -42,6 +42,7 @@ app.add_middleware(
 # Register routers
 app.include_router(auth.router, prefix="/api/v1/auth", tags=["auth"])
 app.include_router(assets.router, prefix="/api/v1/assets", tags=["assets"])
+app.include_router(findings.router, prefix="/api/v1/findings", tags=["findings"])
 app.include_router(scans.router, prefix="/api/v1/scans", tags=["scans"])
 app.include_router(topology.router, prefix="/api/v1/topology", tags=["topology"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])

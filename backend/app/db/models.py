@@ -223,3 +223,24 @@ class WirelessAssociation(Base):
     source: Mapped[str] = mapped_column(String(32), default="snmp")
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class Finding(Base):
+    __tablename__ = "findings"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    port_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ports.id", ondelete="SET NULL"))
+    source_tool: Mapped[str] = mapped_column(String(64), nullable=False)
+    external_id: Mapped[str | None] = mapped_column(String(128))
+    title: Mapped[str] = mapped_column(String(255), nullable=False)
+    description: Mapped[str | None] = mapped_column(Text)
+    severity: Mapped[str] = mapped_column(String(16), default="info")
+    status: Mapped[str] = mapped_column(String(16), default="open")
+    cve: Mapped[str | None] = mapped_column(String(64))
+    service: Mapped[str | None] = mapped_column(String(64))
+    port_number: Mapped[int | None] = mapped_column(Integer)
+    protocol: Mapped[str | None] = mapped_column(String(8))
+    finding_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

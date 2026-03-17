@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { assetsApi, topologyApi } from '@/lib/api'
-import type { Asset, ConfigBackupSnapshot, ConfigBackupTarget, TopologyGraph, WirelessAssociation } from '@/types'
+import type { Asset, ConfigBackupSnapshot, ConfigBackupTarget, Finding, TopologyGraph, WirelessAssociation } from '@/types'
 
 const DAY_MS = 86_400_000
 const INITIAL_RENDER_TIME = Date.now()
@@ -128,6 +128,18 @@ export function useWirelessClients(id: string, enabled = true) {
     queryKey: ['assets', id, 'wireless-clients'],
     queryFn: async () => {
       const { data } = await assetsApi.listWirelessClients(id)
+      return data
+    },
+    enabled: enabled && !!id,
+    refetchInterval: 60_000,
+  })
+}
+
+export function useAssetFindings(id: string, enabled = true) {
+  return useQuery<Finding[]>({
+    queryKey: ['assets', id, 'findings'],
+    queryFn: async () => {
+      const { data } = await assetsApi.listFindings(id)
       return data
     },
     enabled: enabled && !!id,

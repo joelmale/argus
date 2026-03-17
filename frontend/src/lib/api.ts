@@ -60,6 +60,7 @@ export const assetsApi = {
   listConfigBackups: (id: string) => api.get(`/api/v1/assets/${id}/config-backups`),
   triggerConfigBackup: (id: string) => api.post(`/api/v1/assets/${id}/config-backups`),
   listWirelessClients: (id: string) => api.get(`/api/v1/assets/${id}/wireless-clients`),
+  listFindings: (id: string) => api.get(`/api/v1/assets/${id}/findings`),
 };
 
 // ─── Scan endpoints ─────────────────────────────────────────────
@@ -68,6 +69,15 @@ export const scansApi = {
   trigger: (targets: string, scan_type = "balanced") =>
     api.post("/api/v1/scans/trigger", { targets, scan_type }),
   get: (id: string) => api.get(`/api/v1/scans/${id}`),
+};
+
+export const findingsApi = {
+  list: (params?: { severity?: string; status?: string; asset_id?: string }) =>
+    api.get("/api/v1/findings/", { params }),
+  summary: () => api.get("/api/v1/findings/summary"),
+  ingest: (payload: { source_tool: string; findings: Array<Record<string, unknown>> }) =>
+    api.post("/api/v1/findings/ingest", payload),
+  update: (id: number, payload: { status: string }) => api.patch(`/api/v1/findings/${id}`, payload),
 };
 
 // ─── Topology endpoint ──────────────────────────────────────────

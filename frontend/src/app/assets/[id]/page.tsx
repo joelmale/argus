@@ -3,11 +3,11 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useAddAssetTag, useAsset, useConfigBackupTarget, useConfigBackups, useRemoveAssetTag, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
+import { useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useRemoveAssetTag, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
-import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi } from 'lucide-react'
+import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { Asset, ConfigBackupTarget } from '@/types'
@@ -255,6 +255,34 @@ function WirelessAssociationsCard({ asset }: { asset: Asset }) {
   )
 }
 
+function AssetFindingsCard({ asset }: { asset: Asset }) {
+  const { data: findings = [] } = useAssetFindings(asset.id)
+
+  return (
+    <Card>
+      <CardHeader><CardTitle><ShieldAlert className="w-4 h-4 inline mr-1.5" />Assessment Findings</CardTitle></CardHeader>
+      <CardBody className="space-y-3">
+        {findings.length === 0 ? (
+          <p className="text-sm text-zinc-500">No findings linked to this asset.</p>
+        ) : findings.map((finding) => (
+          <div key={finding.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{finding.title}</p>
+              <span className="text-xs px-2 py-0.5 rounded-full bg-red-500/10 text-red-600 dark:text-red-400">{finding.severity}</span>
+            </div>
+            <p className="text-xs text-zinc-500 mt-1">
+              {finding.source_tool} · {finding.status}
+              {finding.port_number ? ` · ${finding.port_number}/${finding.protocol || 'tcp'}` : ''}
+              {finding.cve ? ` · ${finding.cve}` : ''}
+            </p>
+            {finding.description && <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2">{finding.description}</p>}
+          </div>
+        ))}
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -473,6 +501,7 @@ export default function AssetDetailPage() {
             {/* Notes */}
             {currentUser?.role === 'admin' ? (
               <div className="space-y-5">
+                <AssetFindingsCard asset={asset} />
                 <WirelessAssociationsCard asset={asset} />
                 <ConfigBackupCard asset={asset} />
                 <AssetMetadataEditor key={asset.id} asset={asset} />

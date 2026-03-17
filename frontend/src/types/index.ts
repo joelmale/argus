@@ -83,6 +83,25 @@ export interface WirelessAssociation {
   last_seen: string;
 }
 
+export interface Finding {
+  id: number;
+  asset_id: string;
+  port_id: number | null;
+  source_tool: string;
+  external_id: string | null;
+  title: string;
+  description: string | null;
+  severity: string;
+  status: string;
+  cve: string | null;
+  service: string | null;
+  port_number: number | null;
+  protocol: string | null;
+  metadata: Record<string, unknown> | null;
+  first_seen: string;
+  last_seen: string;
+}
+
 export interface BackupDriver {
   name: string;
   label: string;
