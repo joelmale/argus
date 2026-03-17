@@ -78,21 +78,26 @@ async def probe(ip: str, community: str = "public", port: int = 161, timeout: fl
 
 
 def _snmp_get_sync(ip: str, community: str, port: int) -> SnmpProbeData | None:
-    """Synchronous pysnmp GET for system MIB variables."""
+    """Synchronous wrapper around the asyncio pysnmp v1/v2c HLAPI."""
+    return asyncio.run(_snmp_get_async(ip, community, port))
+
+
+async def _snmp_get_async(ip: str, community: str, port: int) -> SnmpProbeData | None:
+    """Async pysnmp GET for system MIB variables."""
     try:
-        from pysnmp.hlapi import (
-            CommunityData, ContextData, ObjectIdentity, ObjectType,
-            SnmpEngine, UdpTransportTarget, getCmd,
+        from pysnmp.hlapi.v1arch.asyncio import (
+            CommunityData, ObjectIdentity, ObjectType,
+            SnmpDispatcher, UdpTransportTarget, get_cmd,
         )
 
-        engine = SnmpEngine()
-        transport = UdpTransportTarget((ip, port), timeout=3, retries=1)
-        auth = CommunityData(community, mpModel=1)  # mpModel=1 → SNMPv2c
+        dispatcher = SnmpDispatcher()
+        transport = await UdpTransportTarget.create((ip, port), timeout=3, retries=1)
+        auth = CommunityData(community, mpModel=1)  # mpModel=1 -> SNMPv2c
 
         # Build GET request for all system OIDs at once
         objects = [ObjectType(ObjectIdentity(oid)) for oid in OIDS.values()]
-        error_indication, error_status, error_index, var_binds = next(
-            getCmd(engine, auth, transport, ContextData(), *objects)
+        error_indication, error_status, error_index, var_binds = await get_cmd(
+            dispatcher, auth, transport, *objects
         )
 
         if error_indication or error_status:
