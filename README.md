@@ -55,6 +55,7 @@ docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
 Notes:
 - The first frontend startup may take a minute because the dev container installs dependencies into a named Docker volume.
 - Later restarts reuse that volume and are faster unless `frontend/package-lock.json` changes.
+- The backend development container includes test and lint tooling from `backend/requirements-dev.txt`; the production backend image does not.
 - Common local workflows are also available as root npm scripts.
 
 Then open:
@@ -122,6 +123,13 @@ npm run lint
 npm run type-check
 npm run test
 npm run build
+```
+
+Inside the Docker dev backend container, test tooling is available directly:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec backend pytest tests -q
+docker compose -f docker-compose.yml -f docker-compose.dev.yml exec backend ruff check .
 ```
 
 ## Stack
