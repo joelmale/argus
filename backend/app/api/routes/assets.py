@@ -14,6 +14,7 @@ from app.api.deps import get_current_admin, get_current_user
 from app.backups import capture_backup_for_asset, get_backup_target, list_backup_snapshots, upsert_backup_target
 from app.db.models import Asset, AssetHistory, AssetTag, Port, User
 from app.db.session import get_db
+from app.exporters import render_ansible_inventory, render_terraform_inventory
 
 router = APIRouter()
 
@@ -102,6 +103,28 @@ async def export_assets_csv(db: AsyncSession = Depends(get_db), _: User = Depend
         content=buffer.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="argus-assets.csv"'},
+    )
+
+
+@router.get("/export.ansible.ini")
+async def export_assets_ansible(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    assets = result.scalars().all()
+    return Response(
+        content=render_ansible_inventory(assets),
+        media_type="text/plain",
+        headers={"Content-Disposition": 'attachment; filename="argus-inventory.ini"'},
+    )
+
+
+@router.get("/export.terraform.tf.json")
+async def export_assets_terraform(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    assets = result.scalars().all()
+    return Response(
+        content=render_terraform_inventory(assets),
+        media_type="application/json",
+        headers={"Content-Disposition": 'attachment; filename="argus-assets.tf.json"'},
     )
 
 

@@ -44,6 +44,8 @@ export const assetsApi = {
   list: (params?: { search?: string; status?: string; tag?: string }) =>
     api.get("/api/v1/assets/", { params }),
   exportCsv: () => api.get("/api/v1/assets/export.csv", { responseType: "blob" }),
+  exportAnsible: () => api.get("/api/v1/assets/export.ansible.ini", { responseType: "blob" }),
+  exportTerraform: () => api.get("/api/v1/assets/export.terraform.tf.json", { responseType: "blob" }),
   exportHtmlReport: () => api.get("/api/v1/assets/report.html", { responseType: "text" }),
   get: (id: string) => api.get(`/api/v1/assets/${id}`),
   update: (id: string, payload: Record<string, unknown>) => api.patch(`/api/v1/assets/${id}`, payload),

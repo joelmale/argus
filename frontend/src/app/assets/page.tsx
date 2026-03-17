@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { AssetTable } from '@/components/assets/AssetTable'
 import { useAssets } from '@/hooks/useAssets'
 import { assetsApi } from '@/lib/api'
-import { Search, Download, X } from 'lucide-react'
+import { Search, Download, X, Boxes, FileCode2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
@@ -25,10 +25,24 @@ export default function AssetsPage() {
 
   async function handleExportCsv() {
     const response = await assetsApi.exportCsv()
-    const url = URL.createObjectURL(response.data)
+    downloadBlob(response.data, 'argus-assets.csv')
+  }
+
+  async function handleExportAnsible() {
+    const response = await assetsApi.exportAnsible()
+    downloadBlob(response.data, 'argus-inventory.ini')
+  }
+
+  async function handleExportTerraform() {
+    const response = await assetsApi.exportTerraform()
+    downloadBlob(response.data, 'argus-assets.tf.json')
+  }
+
+  function downloadBlob(data: Blob, filename: string) {
+    const url = URL.createObjectURL(data)
     const link = document.createElement('a')
     link.href = url
-    link.download = 'argus-assets.csv'
+    link.download = filename
     link.click()
     URL.revokeObjectURL(url)
   }
@@ -89,6 +103,20 @@ export default function AssetsPage() {
             className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
           >
             <Download className="w-3.5 h-3.5" /> Export CSV
+          </button>
+
+          <button
+            onClick={handleExportAnsible}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <Boxes className="w-3.5 h-3.5" /> Ansible inventory
+          </button>
+
+          <button
+            onClick={handleExportTerraform}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+          >
+            <FileCode2 className="w-3.5 h-3.5" /> Terraform data
           </button>
 
           <span className="text-sm text-zinc-500 ml-auto">
