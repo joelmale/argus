@@ -379,20 +379,21 @@ Target: richer data, smarter topology, notifications.
 
 Target: make Argus usable by a small household, homelab, or trusted team without adding enterprise-weight authorization complexity.
 
-- [ ] Simple user roles: `admin` and `viewer`
-- [ ] Viewer-safe UI and API permissions
-- [ ] Admin user management UI
-- [ ] Alert rules for common inventory events
-- [ ] REST API key authentication
-- [ ] API key management UI
-- [ ] Audit log UI (asset changes and admin actions)
-- [ ] PDF / HTML report export
-- [ ] Prometheus metrics endpoint
+- [x] Simple user roles: `admin` and `viewer`
+- [x] Viewer-safe UI and API permissions
+- [x] Admin user management UI
+- [x] Alert rules for common inventory events
+- [x] REST API key authentication
+- [x] API key management UI
+- [x] Audit log UI (asset changes and admin actions)
+- [x] Printable HTML report export
+- [x] Prometheus metrics endpoint
 
 Notes:
 - `admin` can manage users, trigger scans, edit inventory, manage notifications, and create API keys.
 - `viewer` can log in and view dashboards, assets, scans, and topology, but cannot modify state.
 - Full multi-role RBAC is intentionally out of scope for a homelab-first product unless real complexity appears later.
+- The current report path is a printable HTML inventory report; browser print/export covers PDF generation without a separate renderer.
 
 ### Phase 4 — Advanced
 

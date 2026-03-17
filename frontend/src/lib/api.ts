@@ -31,6 +31,9 @@ export const authApi = {
   createApiKey: (payload: { name: string }) => api.post("/api/v1/auth/api-keys", payload),
   deleteApiKey: (id: string) => api.delete(`/api/v1/auth/api-keys/${id}`),
   listAuditLogs: () => api.get("/api/v1/auth/audit-logs"),
+  listAlertRules: () => api.get("/api/v1/auth/alert-rules"),
+  updateAlertRule: (id: number, payload: { enabled?: boolean; notify_email?: boolean; notify_webhook?: boolean }) =>
+    api.patch(`/api/v1/auth/alert-rules/${id}`, payload),
 };
 
 // ─── Asset endpoints ────────────────────────────────────────────
@@ -38,6 +41,7 @@ export const assetsApi = {
   list: (params?: { search?: string; status?: string; tag?: string }) =>
     api.get("/api/v1/assets/", { params }),
   exportCsv: () => api.get("/api/v1/assets/export.csv", { responseType: "blob" }),
+  exportHtmlReport: () => api.get("/api/v1/assets/report.html", { responseType: "text" }),
   get: (id: string) => api.get(`/api/v1/assets/${id}`),
   update: (id: string, payload: Record<string, unknown>) => api.patch(`/api/v1/assets/${id}`, payload),
   addTag: (id: string, tag: string) => api.post(`/api/v1/assets/${id}/tags`, { tag }),

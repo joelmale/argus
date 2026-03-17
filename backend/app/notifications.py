@@ -9,23 +9,29 @@ import httpx
 from app.core.config import settings
 
 
-async def notify_new_device(payload: dict) -> None:
+async def notify_new_device(payload: dict, *, webhook: bool = True, email: bool = True) -> None:
     title = f"Argus new device: {payload.get('ip', 'unknown')}"
-    await asyncio.gather(
-        _send_webhook({"event": "new_device", "data": payload}),
-        _send_email(title, _format_lines(payload)),
-    )
+    tasks = []
+    if webhook:
+        tasks.append(_send_webhook({"event": "new_device", "data": payload}))
+    if email:
+        tasks.append(_send_email(title, _format_lines(payload)))
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
-async def notify_devices_offline(devices: list[dict]) -> None:
+async def notify_devices_offline(devices: list[dict], *, webhook: bool = True, email: bool = True) -> None:
     if not devices:
         return
     payload = {"event": "devices_offline", "data": {"devices": devices}}
     body = "\n\n".join(_format_lines(device) for device in devices)
-    await asyncio.gather(
-        _send_webhook(payload),
-        _send_email(f"Argus offline devices: {len(devices)}", body),
-    )
+    tasks = []
+    if webhook:
+        tasks.append(_send_webhook(payload))
+    if email:
+        tasks.append(_send_email(f"Argus offline devices: {len(devices)}", body))
+    if tasks:
+        await asyncio.gather(*tasks)
 
 
 async def _send_webhook(payload: dict) -> None:

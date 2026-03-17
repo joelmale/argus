@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { ApiKey, AuditLogEntry, CurrentUser, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, CurrentUser, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -165,5 +165,37 @@ export function useAuditLogs(enabled = true) {
     },
     enabled,
     refetchInterval: 60_000,
+  })
+}
+
+export function useAlertRules(enabled = true) {
+  return useQuery<AlertRule[]>({
+    queryKey: ['auth', 'alert-rules'],
+    queryFn: async () => {
+      const { data } = await authApi.listAlertRules()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function useUpdateAlertRule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async ({
+      id,
+      payload,
+    }: {
+      id: number
+      payload: { enabled?: boolean; notify_email?: boolean; notify_webhook?: boolean }
+    }) => {
+      const { data } = await authApi.updateAlertRule(id, payload)
+      return data as AlertRule
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'alert-rules'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
   })
 }

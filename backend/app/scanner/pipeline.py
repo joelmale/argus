@@ -258,7 +258,7 @@ async def _persist_results(
 ) -> None:
     """Persist all scan results to the database."""
     from app.db.upsert import mark_offline, upsert_scan_result
-    from app.notifications import notify_devices_offline, notify_new_device
+    from app.alerting import notify_devices_offline_if_enabled, notify_new_device_if_enabled
     from app.scanner.topology import infer_topology_links_from_snmp
 
     # Find assets that were online before but not in this scan
@@ -290,7 +290,7 @@ async def _persist_results(
                     },
                 }
                 await _broadcast(broadcast_fn, discovered_event)
-                await notify_new_device(discovered_event["data"])
+                await notify_new_device_if_enabled(db_session, discovered_event["data"])
             elif change_type == "updated":
                 summary.changed_assets += 1
 
@@ -302,7 +302,8 @@ async def _persist_results(
     offline_count, offline_assets = await mark_offline(db_session, offline_ips)
     summary.offline_assets = offline_count
     if offline_assets:
-        await notify_devices_offline(
+        await notify_devices_offline_if_enabled(
+            db_session,
             [
                 {
                     "ip": asset.ip_address,

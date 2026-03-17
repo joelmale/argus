@@ -34,6 +34,16 @@ export interface AuditLogEntry {
   user: { id: string; username: string } | null;
 }
 
+export interface AlertRule {
+  id: number;
+  event_type: string;
+  description: string | null;
+  enabled: boolean;
+  notify_email: boolean;
+  notify_webhook: boolean;
+  created_at: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;

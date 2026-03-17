@@ -3,8 +3,9 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History } from 'lucide-react'
-import { useApiKeys, useAuditLogs, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText } from 'lucide-react'
+import { assetsApi } from '@/lib/api'
+import { useAlertRules, useApiKeys, useAuditLogs, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useUpdateAlertRule, useUpdateUser, useUsers } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -39,10 +40,12 @@ export default function SettingsPage() {
   const { data: users = [] } = useUsers(currentUser?.role === 'admin')
   const { data: apiKeys = [] } = useApiKeys(currentUser?.role === 'admin')
   const { data: auditLogs = [] } = useAuditLogs(currentUser?.role === 'admin')
+  const { data: alertRules = [] } = useAlertRules(currentUser?.role === 'admin')
   const { mutate: createUser, isPending: isCreatingUser } = useCreateUser()
   const { mutate: updateUser, isPending: isUpdatingUser } = useUpdateUser()
   const { mutate: createApiKey, isPending: isCreatingApiKey } = useCreateApiKey()
   const { mutate: deleteApiKey, isPending: isDeletingApiKey } = useDeleteApiKey()
+  const { mutate: updateAlertRule, isPending: isUpdatingAlertRule } = useUpdateAlertRule()
   const [newUsername, setNewUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [newRole, setNewRole] = useState<'admin' | 'viewer'>('viewer')
@@ -77,6 +80,13 @@ export default function SettingsPage() {
         },
       },
     )
+  }
+
+  async function handleOpenReport() {
+    const response = await assetsApi.exportHtmlReport()
+    const reportWindow = window.open('', '_blank')
+    reportWindow?.document.write(response.data)
+    reportWindow?.document.close()
   }
 
   return (
@@ -245,6 +255,74 @@ export default function SettingsPage() {
                 {auditLogs.length === 0 && (
                   <p className="text-sm text-zinc-500">No audit events recorded yet.</p>
                 )}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle><Bell className="w-4 h-4 inline mr-1.5" />Alert Rules</CardTitle>
+              </CardHeader>
+              <CardBody className="space-y-3">
+                {alertRules.map((rule) => (
+                  <div key={rule.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-3">
+                    <div>
+                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{rule.event_type}</p>
+                      <p className="text-xs text-zinc-500">{rule.description}</p>
+                    </div>
+                    <div className="flex flex-wrap gap-4 text-sm text-zinc-600 dark:text-zinc-300">
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={rule.enabled}
+                          disabled={isUpdatingAlertRule}
+                          onChange={(event) => updateAlertRule({ id: rule.id, payload: { enabled: event.target.checked } })}
+                        />
+                        Enabled
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={rule.notify_email}
+                          disabled={isUpdatingAlertRule}
+                          onChange={(event) => updateAlertRule({ id: rule.id, payload: { notify_email: event.target.checked } })}
+                        />
+                        Email
+                      </label>
+                      <label className="inline-flex items-center gap-2">
+                        <input
+                          type="checkbox"
+                          checked={rule.notify_webhook}
+                          disabled={isUpdatingAlertRule}
+                          onChange={(event) => updateAlertRule({ id: rule.id, payload: { notify_webhook: event.target.checked } })}
+                        />
+                        Webhook
+                      </label>
+                    </div>
+                  </div>
+                ))}
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle><FileText className="w-4 h-4 inline mr-1.5" />Reports & Metrics</CardTitle>
+              </CardHeader>
+              <CardBody className="flex flex-col md:flex-row gap-3">
+                <button
+                  type="button"
+                  onClick={handleOpenReport}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white"
+                >
+                  <FileText className="w-4 h-4" /> Open HTML inventory report
+                </button>
+                <a
+                  href="http://localhost:8000/metrics"
+                  target="_blank"
+                  rel="noreferrer"
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-800"
+                >
+                  <Database className="w-4 h-4" /> View metrics endpoint
+                </a>
               </CardBody>
             </Card>
           </>

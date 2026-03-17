@@ -4,6 +4,7 @@ from io import StringIO
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -91,6 +92,54 @@ async def export_assets_csv(db: AsyncSession = Depends(get_db), _: User = Depend
         content=buffer.getvalue(),
         media_type="text/csv",
         headers={"Content-Disposition": 'attachment; filename="argus-assets.csv"'},
+    )
+
+
+@router.get("/report.html", response_class=HTMLResponse)
+async def export_assets_report_html(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    assets = result.scalars().all()
+
+    total = len(assets)
+    online = sum(1 for asset in assets if asset.status == "online")
+    offline = sum(1 for asset in assets if asset.status == "offline")
+
+    rows = "".join(
+        f"<tr><td>{asset.ip_address}</td><td>{asset.hostname or ''}</td><td>{asset.vendor or ''}</td><td>{asset.device_type or ''}</td><td>{asset.status}</td><td>{', '.join(tag.tag for tag in asset.tags)}</td></tr>"
+        for asset in assets
+    )
+    return HTMLResponse(
+        f"""
+        <html>
+          <head>
+            <title>Argus Inventory Report</title>
+            <style>
+              body {{ font-family: sans-serif; margin: 32px; color: #18181b; }}
+              h1 {{ margin-bottom: 8px; }}
+              .summary {{ display: flex; gap: 16px; margin: 16px 0 24px; }}
+              .card {{ border: 1px solid #d4d4d8; border-radius: 12px; padding: 12px 16px; }}
+              table {{ width: 100%; border-collapse: collapse; }}
+              th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e4e4e7; font-size: 14px; }}
+              th {{ background: #f4f4f5; }}
+            </style>
+          </head>
+          <body>
+            <h1>Argus Inventory Report</h1>
+            <p>Generated from the current inventory snapshot.</p>
+            <div class="summary">
+              <div class="card"><strong>Total assets:</strong> {total}</div>
+              <div class="card"><strong>Online:</strong> {online}</div>
+              <div class="card"><strong>Offline:</strong> {offline}</div>
+            </div>
+            <table>
+              <thead>
+                <tr><th>IP</th><th>Hostname</th><th>Vendor</th><th>Type</th><th>Status</th><th>Tags</th></tr>
+              </thead>
+              <tbody>{rows}</tbody>
+            </table>
+          </body>
+        </html>
+        """
     )
 
 

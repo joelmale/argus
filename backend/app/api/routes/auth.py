@@ -9,6 +9,7 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
+from app.alerting import list_alert_rules
 from app.audit import log_audit_event
 from app.core.security import (
     api_key_prefix,
@@ -38,6 +39,12 @@ class UserUpdateRequest(BaseModel):
 
 class ApiKeyCreateRequest(BaseModel):
     name: str
+
+
+class AlertRuleUpdateRequest(BaseModel):
+    enabled: bool | None = None
+    notify_email: bool | None = None
+    notify_webhook: bool | None = None
 
 
 def _serialize_user(user: User) -> dict:
@@ -75,6 +82,18 @@ def _serialize_audit_log(entry: AuditLog) -> dict:
             "id": str(entry.user.id),
             "username": entry.user.username,
         } if entry.user else None,
+    }
+
+
+def _serialize_alert_rule(rule) -> dict:
+    return {
+        "id": rule.id,
+        "event_type": rule.event_type,
+        "description": rule.description,
+        "enabled": rule.enabled,
+        "notify_email": rule.notify_email,
+        "notify_webhook": rule.notify_webhook,
+        "created_at": rule.created_at.isoformat(),
     }
 
 
@@ -238,6 +257,52 @@ async def delete_api_key(
     )
     await db.delete(api_key)
     await db.commit()
+
+
+@router.get("/alert-rules")
+async def get_alert_rules(
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    return [_serialize_alert_rule(rule) for rule in await list_alert_rules(db)]
+
+
+@router.patch("/alert-rules/{rule_id}")
+async def update_alert_rule(
+    rule_id: int,
+    payload: AlertRuleUpdateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    from app.db.models import AlertRule
+
+    rule = await db.get(AlertRule, rule_id)
+    if rule is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Alert rule not found")
+
+    if payload.enabled is not None:
+        rule.enabled = payload.enabled
+    if payload.notify_email is not None:
+        rule.notify_email = payload.notify_email
+    if payload.notify_webhook is not None:
+        rule.notify_webhook = payload.notify_webhook
+
+    await log_audit_event(
+        db,
+        action="alert.rule_updated",
+        user=current_user,
+        target_type="alert_rule",
+        target_id=str(rule.id),
+        details={
+            "event_type": rule.event_type,
+            "enabled": rule.enabled,
+            "notify_email": rule.notify_email,
+            "notify_webhook": rule.notify_webhook,
+        },
+    )
+    await db.commit()
+    await db.refresh(rule)
+    return _serialize_alert_rule(rule)
 
 
 @router.get("/audit-logs")

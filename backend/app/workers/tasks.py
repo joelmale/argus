@@ -204,7 +204,7 @@ def _run_passive_arp_listener() -> None:
 
 
 async def _passive_arp_loop() -> None:
-    from app.notifications import notify_new_device
+    from app.alerting import notify_new_device_if_enabled
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.db.upsert import upsert_scan_result
@@ -235,7 +235,7 @@ async def _passive_arp_loop() -> None:
                         },
                     }
                     await _publish_event(payload)
-                    await notify_new_device(payload["data"])
+                    await notify_new_device_if_enabled(db, payload["data"])
     finally:
         listener.stop()
         await engine.dispose()
