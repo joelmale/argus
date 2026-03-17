@@ -1,32 +1,50 @@
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import datetime, timezone
 
-from fastapi import Depends, HTTPException, status
-from fastapi.security import OAuth2PasswordBearer
+from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
 
-from app.core.security import decode_token
-from app.db.models import User
+from app.core.security import decode_token, api_key_prefix, verify_api_key
+from app.db.models import ApiKey, User
 from app.db.session import get_db
 
-
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/token")
-
-
 async def get_current_user(
-    token: str = Depends(oauth2_scheme),
+    request: Request,
     db: AsyncSession = Depends(get_db),
 ) -> User:
-    subject = decode_token(token)
-    if not subject:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
+    authorization = request.headers.get("Authorization", "")
+    if authorization.lower().startswith("bearer "):
+        token = authorization.split(" ", 1)[1].strip()
+        subject = decode_token(token)
+        if not subject:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
 
-    user = await db.get(User, subject)
-    if user is None or not user.is_active:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        user = await db.get(User, subject)
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+        return user
 
-    return user
+    raw_api_key = request.headers.get("X-API-Key")
+    if raw_api_key:
+        result = await db.execute(
+            select(ApiKey).where(ApiKey.key_prefix == api_key_prefix(raw_api_key), ApiKey.is_active.is_(True))
+        )
+        api_key = result.scalar_one_or_none()
+        if api_key is None or not verify_api_key(raw_api_key, api_key.hashed_key):
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid API key")
+
+        user = await db.get(User, api_key.user_id)
+        if user is None or not user.is_active:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
+
+        api_key.last_used_at = datetime.now(timezone.utc)
+        await db.commit()
+        return user
+
+    raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
 
 async def get_current_admin(user: User = Depends(get_current_user)) -> User:

@@ -35,6 +35,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16), default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
 
     @property
     def is_admin(self) -> bool:
@@ -130,3 +131,18 @@ class ScanJob(Base):
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result_summary: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    user_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="CASCADE"))
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    key_prefix: Mapped[str] = mapped_column(String(24), unique=True, nullable=False)
+    hashed_key: Mapped[str] = mapped_column(String(128), nullable=False)
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_used_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    user: Mapped[User] = relationship(back_populates="api_keys")

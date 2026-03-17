@@ -9,8 +9,14 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
-from app.core.security import create_access_token, verify_password
-from app.db.models import User
+from app.core.security import (
+    api_key_prefix,
+    create_access_token,
+    generate_api_key,
+    hash_api_key,
+    verify_password,
+)
+from app.db.models import ApiKey, User
 from app.db.session import get_db
 from app.core.security import hash_password
 
@@ -29,6 +35,10 @@ class UserUpdateRequest(BaseModel):
     is_active: bool | None = None
 
 
+class ApiKeyCreateRequest(BaseModel):
+    name: str
+
+
 def _serialize_user(user: User) -> dict:
     return {
         "id": str(user.id),
@@ -38,6 +48,17 @@ def _serialize_user(user: User) -> dict:
         "is_admin": user.is_admin,
         "is_active": user.is_active,
         "created_at": user.created_at.isoformat(),
+    }
+
+
+def _serialize_api_key(api_key: ApiKey) -> dict:
+    return {
+        "id": str(api_key.id),
+        "name": api_key.name,
+        "key_prefix": api_key.key_prefix,
+        "is_active": api_key.is_active,
+        "last_used_at": api_key.last_used_at.isoformat() if api_key.last_used_at else None,
+        "created_at": api_key.created_at.isoformat(),
     }
 
 
@@ -123,3 +144,45 @@ async def update_user(
     await db.commit()
     await db.refresh(user)
     return _serialize_user(user)
+
+
+@router.get("/api-keys")
+async def list_api_keys(
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    result = await db.execute(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at.desc()))
+    return [_serialize_api_key(api_key) for api_key in result.scalars().all()]
+
+
+@router.post("/api-keys", status_code=status.HTTP_201_CREATED)
+async def create_api_key(
+    payload: ApiKeyCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    raw_key = generate_api_key()
+    api_key = ApiKey(
+        user_id=current_user.id,
+        name=payload.name.strip() or "API key",
+        key_prefix=api_key_prefix(raw_key),
+        hashed_key=hash_api_key(raw_key),
+        is_active=True,
+    )
+    db.add(api_key)
+    await db.commit()
+    await db.refresh(api_key)
+    return {**_serialize_api_key(api_key), "token": raw_key}
+
+
+@router.delete("/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
+async def delete_api_key(
+    api_key_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    current_user: User = Depends(get_current_admin),
+):
+    api_key = await db.get(ApiKey, api_key_id)
+    if api_key is None or api_key.user_id != current_user.id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    await db.delete(api_key)
+    await db.commit()

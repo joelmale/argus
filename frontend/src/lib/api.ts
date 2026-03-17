@@ -27,6 +27,9 @@ export const authApi = {
     api.post("/api/v1/auth/users", payload),
   updateUser: (id: string, payload: { role?: "admin" | "viewer"; is_active?: boolean }) =>
     api.patch(`/api/v1/auth/users/${id}`, payload),
+  listApiKeys: () => api.get("/api/v1/auth/api-keys"),
+  createApiKey: (payload: { name: string }) => api.post("/api/v1/auth/api-keys", payload),
+  deleteApiKey: (id: string) => api.delete(`/api/v1/auth/api-keys/${id}`),
 };
 
 // ─── Asset endpoints ────────────────────────────────────────────

@@ -3,8 +3,8 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus } from 'lucide-react'
-import { useCreateUser, useCurrentUser, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2 } from 'lucide-react'
+import { useApiKeys, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useUpdateUser, useUsers } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -37,12 +37,17 @@ const SECTIONS = [
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()
   const { data: users = [] } = useUsers(currentUser?.role === 'admin')
+  const { data: apiKeys = [] } = useApiKeys(currentUser?.role === 'admin')
   const { mutate: createUser, isPending: isCreatingUser } = useCreateUser()
   const { mutate: updateUser, isPending: isUpdatingUser } = useUpdateUser()
+  const { mutate: createApiKey, isPending: isCreatingApiKey } = useCreateApiKey()
+  const { mutate: deleteApiKey, isPending: isDeletingApiKey } = useDeleteApiKey()
   const [newUsername, setNewUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [newRole, setNewRole] = useState<'admin' | 'viewer'>('viewer')
   const [userError, setUserError] = useState<string | null>(null)
+  const [apiKeyName, setApiKeyName] = useState('')
+  const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null)
 
   function handleCreateUser(event: React.FormEvent) {
     event.preventDefault()
@@ -56,6 +61,19 @@ export default function SettingsPage() {
           setNewRole('viewer')
         },
         onError: () => setUserError('Unable to create user. Check for duplicate usernames or emails.'),
+      },
+    )
+  }
+
+  function handleCreateApiKey(event: React.FormEvent) {
+    event.preventDefault()
+    createApiKey(
+      { name: apiKeyName.trim() || 'CLI key' },
+      {
+        onSuccess: (created) => {
+          setGeneratedApiKey(created.token)
+          setApiKeyName('')
+        },
       },
     )
   }
@@ -81,75 +99,131 @@ export default function SettingsPage() {
         )}
 
         {currentUser?.role === 'admin' && (
-          <Card>
-            <CardHeader>
-              <CardTitle><Shield className="w-4 h-4 inline mr-1.5" />User Management</CardTitle>
-            </CardHeader>
-            <CardBody className="space-y-5">
-              <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_140px_auto] gap-3">
-                <input
-                  value={newUsername}
-                  onChange={(event) => setNewUsername(event.target.value)}
-                  placeholder="Username"
-                  className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-                />
-                <input
-                  type="password"
-                  value={newPassword}
-                  onChange={(event) => setNewPassword(event.target.value)}
-                  placeholder="Temporary password"
-                  className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-                />
-                <select
-                  value={newRole}
-                  onChange={(event) => setNewRole(event.target.value as 'admin' | 'viewer')}
-                  className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-                >
-                  <option value="viewer">Viewer</option>
-                  <option value="admin">Admin</option>
-                </select>
-                <button
-                  type="submit"
-                  disabled={isCreatingUser || !newUsername.trim() || !newPassword}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
-                >
-                  <UserPlus className="w-4 h-4" /> Create
-                </button>
-              </form>
-              {userError && <p className="text-xs text-red-500">{userError}</p>}
+          <>
+            <Card>
+              <CardHeader>
+                <CardTitle><Shield className="w-4 h-4 inline mr-1.5" />User Management</CardTitle>
+              </CardHeader>
+              <CardBody className="space-y-5">
+                <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_140px_auto] gap-3">
+                  <input
+                    value={newUsername}
+                    onChange={(event) => setNewUsername(event.target.value)}
+                    placeholder="Username"
+                    className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                  />
+                  <input
+                    type="password"
+                    value={newPassword}
+                    onChange={(event) => setNewPassword(event.target.value)}
+                    placeholder="Temporary password"
+                    className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                  />
+                  <select
+                    value={newRole}
+                    onChange={(event) => setNewRole(event.target.value as 'admin' | 'viewer')}
+                    className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                  >
+                    <option value="viewer">Viewer</option>
+                    <option value="admin">Admin</option>
+                  </select>
+                  <button
+                    type="submit"
+                    disabled={isCreatingUser || !newUsername.trim() || !newPassword}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+                  >
+                    <UserPlus className="w-4 h-4" /> Create
+                  </button>
+                </form>
+                {userError && <p className="text-xs text-red-500">{userError}</p>}
 
-              <div className="space-y-3">
-                {users.map((user) => (
-                  <div key={user.id} className="flex flex-col md:flex-row md:items-center gap-3 rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
-                    <div className="flex-1">
-                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{user.username}</p>
-                      <p className="text-xs text-zinc-500">
-                        {user.email || 'No email'} · created {new Date(user.created_at).toLocaleDateString()}
-                      </p>
-                    </div>
-                    <select
-                      value={user.role}
-                      disabled={isUpdatingUser}
-                      onChange={(event) => updateUser({ id: user.id, payload: { role: event.target.value as 'admin' | 'viewer' } })}
-                      className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-                    >
-                      <option value="viewer">Viewer</option>
-                      <option value="admin">Admin</option>
-                    </select>
-                    <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-                      <input
-                        type="checkbox"
-                        checked={user.is_active}
+                <div className="space-y-3">
+                  {users.map((user) => (
+                    <div key={user.id} className="flex flex-col md:flex-row md:items-center gap-3 rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{user.username}</p>
+                        <p className="text-xs text-zinc-500">
+                          {user.email || 'No email'} · created {new Date(user.created_at).toLocaleDateString()}
+                        </p>
+                      </div>
+                      <select
+                        value={user.role}
                         disabled={isUpdatingUser}
-                        onChange={(event) => updateUser({ id: user.id, payload: { is_active: event.target.checked } })}
-                      />
-                      Active
-                    </label>
+                        onChange={(event) => updateUser({ id: user.id, payload: { role: event.target.value as 'admin' | 'viewer' } })}
+                        className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                      >
+                        <option value="viewer">Viewer</option>
+                        <option value="admin">Admin</option>
+                      </select>
+                      <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+                        <input
+                          type="checkbox"
+                          checked={user.is_active}
+                          disabled={isUpdatingUser}
+                          onChange={(event) => updateUser({ id: user.id, payload: { is_active: event.target.checked } })}
+                        />
+                        Active
+                      </label>
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle><KeyRound className="w-4 h-4 inline mr-1.5" />API Keys</CardTitle>
+              </CardHeader>
+              <CardBody className="space-y-4">
+                <form onSubmit={handleCreateApiKey} className="flex flex-col md:flex-row gap-3">
+                  <input
+                    value={apiKeyName}
+                    onChange={(event) => setApiKeyName(event.target.value)}
+                    placeholder="CLI key"
+                    className="flex-1 px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                  />
+                  <button
+                    type="submit"
+                    disabled={isCreatingApiKey}
+                    className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-zinc-900 text-white dark:bg-zinc-100 dark:text-zinc-900 disabled:bg-zinc-300 dark:disabled:bg-zinc-800"
+                  >
+                    <KeyRound className="w-4 h-4" /> Create key
+                  </button>
+                </form>
+
+                {generatedApiKey && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-4 dark:border-emerald-900 dark:bg-emerald-950/30">
+                    <p className="text-sm font-medium text-emerald-700 dark:text-emerald-300">Copy this API key now</p>
+                    <p className="text-xs text-emerald-600 dark:text-emerald-400 mt-1 mb-2">
+                      This is the only time the full token will be shown.
+                    </p>
+                    <code className="block rounded-lg bg-white/80 dark:bg-zinc-950 px-3 py-2 text-xs break-all">{generatedApiKey}</code>
                   </div>
-                ))}
-              </div>
-            </CardBody>
-          </Card>
+                )}
+
+                <div className="space-y-3">
+                  {apiKeys.map((apiKey) => (
+                    <div key={apiKey.id} className="flex flex-col md:flex-row md:items-center gap-3 rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                      <div className="flex-1">
+                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{apiKey.name}</p>
+                        <p className="text-xs text-zinc-500">
+                          {apiKey.key_prefix} · last used {apiKey.last_used_at ? new Date(apiKey.last_used_at).toLocaleString() : 'never'}
+                        </p>
+                      </div>
+                      <button
+                        type="button"
+                        disabled={isDeletingApiKey}
+                        onClick={() => deleteApiKey(apiKey.id)}
+                        className="inline-flex items-center justify-center gap-2 px-3 py-2 rounded-lg text-sm text-red-600 hover:bg-red-50 dark:hover:bg-red-950/30"
+                      >
+                        <Trash2 className="w-4 h-4" /> Revoke
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              </CardBody>
+            </Card>
+          </>
         )}
 
         {/* Coming soon banner */}

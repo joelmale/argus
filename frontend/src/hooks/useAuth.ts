@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { CurrentUser, UserRole } from '@/types'
+import type { ApiKey, CurrentUser, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -114,6 +114,44 @@ export function useUpdateUser() {
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['auth', 'users'] })
       await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+    },
+  })
+}
+
+export function useApiKeys(enabled = true) {
+  return useQuery<ApiKey[]>({
+    queryKey: ['auth', 'api-keys'],
+    queryFn: async () => {
+      const { data } = await authApi.listApiKeys()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function useCreateApiKey() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: { name: string }) => {
+      const { data } = await authApi.createApiKey(payload)
+      return data as ApiKey & { token: string }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'api-keys'] })
+    },
+  })
+}
+
+export function useDeleteApiKey() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (id: string) => {
+      await authApi.deleteApiKey(id)
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'api-keys'] })
     },
   })
 }

@@ -1,4 +1,12 @@
-from app.core.security import create_access_token, decode_token, hash_password, verify_password
+from app.core.security import (
+    create_access_token,
+    decode_token,
+    generate_api_key,
+    hash_api_key,
+    hash_password,
+    verify_api_key,
+    verify_password,
+)
 from app.db.models import User
 
 
@@ -21,3 +29,11 @@ def test_access_token_round_trip():
 def test_user_is_admin_property():
     assert User(username="admin", hashed_password="x", role="admin").is_admin is True
     assert User(username="viewer", hashed_password="x", role="viewer").is_admin is False
+
+
+def test_api_key_round_trip():
+    api_key = generate_api_key()
+    hashed = hash_api_key(api_key)
+
+    assert verify_api_key(api_key, hashed) is True
+    assert verify_api_key(f"{api_key}x", hashed) is False
