@@ -2,11 +2,12 @@
 
 import { useSyncExternalStore } from 'react'
 import { usePathname } from 'next/navigation'
-import { Sun, Moon, Monitor, RefreshCw } from 'lucide-react'
+import { Sun, Moon, Monitor, RefreshCw, LogOut } from 'lucide-react'
 import { useTheme } from 'next-themes'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { useQueryClient } from '@tanstack/react-query'
+import { useCurrentUser, useLogout } from '@/hooks/useAuth'
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -21,6 +22,8 @@ export function Header() {
   const { resolvedTheme, setTheme, theme } = useTheme()
   const { activeScan } = useAppStore()
   const queryClient = useQueryClient()
+  const { data: currentUser } = useCurrentUser()
+  const logout = useLogout()
   const mounted = useSyncExternalStore(
     () => () => {},
     () => true,
@@ -53,8 +56,17 @@ export function Header() {
         )}
       </div>
 
-      {/* Right: refresh + theme toggle */}
+      {/* Right: refresh + theme toggle + session */}
       <div className="flex items-center gap-2">
+        {currentUser && (
+          <div className="hidden sm:flex items-center gap-2 mr-2 rounded-lg border border-gray-200 dark:border-zinc-800 px-3 py-1.5">
+            <div className="text-right">
+              <p className="text-xs font-medium text-zinc-800 dark:text-zinc-200">{currentUser.username}</p>
+              <p className="text-[11px] uppercase tracking-wide text-zinc-500">{currentUser.role}</p>
+            </div>
+          </div>
+        )}
+
         {/* Refresh all queries */}
         <button
           onClick={() => queryClient.invalidateQueries()}
@@ -83,6 +95,14 @@ export function Header() {
             </button>
           ))}
         </div>
+
+        <button
+          onClick={logout}
+          className="p-2 rounded-lg text-zinc-500 hover:text-zinc-900 dark:hover:text-white hover:bg-gray-100 dark:hover:bg-zinc-800 transition-colors"
+          title="Sign out"
+        >
+          <LogOut className="w-4 h-4" />
+        </button>
       </div>
     </header>
   )

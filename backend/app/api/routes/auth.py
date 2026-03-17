@@ -1,4 +1,6 @@
 """Auth endpoints — login and token refresh."""
+from typing import Literal
+
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
@@ -18,7 +20,7 @@ class UserCreateRequest(BaseModel):
     username: str
     password: str
     email: str | None = None
-    is_admin: bool = False
+    role: Literal["admin", "viewer"] = "viewer"
 
 
 def _serialize_user(user: User) -> dict:
@@ -26,6 +28,7 @@ def _serialize_user(user: User) -> dict:
         "id": str(user.id),
         "username": user.username,
         "email": user.email,
+        "role": user.role,
         "is_admin": user.is_admin,
         "is_active": user.is_active,
         "created_at": user.created_at.isoformat(),
@@ -66,7 +69,7 @@ async def create_user(
         username=payload.username,
         email=payload.email,
         hashed_password=hash_password(payload.password),
-        is_admin=payload.is_admin,
+        role=payload.role,
         is_active=True,
     )
     db.add(user)

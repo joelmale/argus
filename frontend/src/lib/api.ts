@@ -5,12 +5,24 @@ export const api = axios.create({
   timeout: 15_000,
 });
 
+export const TOKEN_STORAGE_KEY = "argus_token";
+
 // Attach JWT token from localStorage if present
 api.interceptors.request.use((config) => {
-  const token = typeof window !== "undefined" ? localStorage.getItem("argus_token") : null;
+  const token = typeof window !== "undefined" ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
+
+export const authApi = {
+  login: (username: string, password: string) =>
+    api.post(
+      "/api/v1/auth/token",
+      new URLSearchParams({ username, password }),
+      { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
+    ),
+  me: () => api.get("/api/v1/auth/me"),
+};
 
 // ─── Asset endpoints ────────────────────────────────────────────
 export const assetsApi = {
@@ -39,7 +51,9 @@ export const topologyApi = {
 
 // ─── WebSocket helper ───────────────────────────────────────────
 export function createWsConnection(onMessage: (e: MessageEvent) => void): WebSocket {
-  const wsUrl = (process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000") + "/ws/events";
+  const baseWsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
+  const token = typeof window !== "undefined" ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const wsUrl = `${baseWsUrl}/ws/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
   const ws = new WebSocket(wsUrl);
   ws.onmessage = onMessage;
   return ws;

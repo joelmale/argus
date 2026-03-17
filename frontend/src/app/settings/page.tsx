@@ -3,6 +3,7 @@
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanLine, Bell, Wifi, Brain, Database, Construction } from 'lucide-react'
+import { useCurrentUser } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -33,6 +34,8 @@ const SECTIONS = [
 ]
 
 export default function SettingsPage() {
+  const { data: currentUser } = useCurrentUser()
+
   return (
     <AppShell>
       <div className="max-w-3xl mx-auto space-y-6">
@@ -40,6 +43,18 @@ export default function SettingsPage() {
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Settings</h2>
           <p className="text-sm text-zinc-500 mt-0.5">Configuration for Argus scans, AI, and notifications.</p>
         </div>
+
+        {currentUser?.role === 'viewer' && (
+          <div className="flex items-start gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/20">
+            <Construction className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+            <div>
+              <p className="text-sm font-medium text-red-700 dark:text-red-400">Admin access required</p>
+              <p className="text-xs text-red-600/80 dark:text-red-400/70 mt-0.5">
+                Viewer accounts can inspect Argus data, but settings are limited to admins.
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Coming soon banner */}
         <div className="flex items-start gap-3 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
@@ -54,7 +69,7 @@ export default function SettingsPage() {
         </div>
 
         {/* Upcoming sections preview */}
-        <div className="space-y-3">
+        <div className={currentUser?.role === 'viewer' ? 'space-y-3 opacity-50 pointer-events-none' : 'space-y-3'}>
           {SECTIONS.map(({ icon: Icon, title, desc }) => (
             <Card key={title} className="opacity-60 pointer-events-none select-none">
               <CardBody>

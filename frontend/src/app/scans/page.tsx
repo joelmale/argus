@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
+import { useCurrentUser } from '@/hooks/useAuth'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanHistory } from '@/components/scans/ScanHistory'
 import { useScans, useTriggerScan } from '@/hooks/useScans'
@@ -42,6 +43,8 @@ export default function ScansPage() {
   const { data: scans = [], isLoading } = useScans()
   const { mutate: trigger, isPending } = useTriggerScan()
   const { activeScan } = useAppStore()
+  const { data: currentUser } = useCurrentUser()
+  const isViewer = currentUser?.role === 'viewer'
 
   function handleScan(e: React.FormEvent) {
     e.preventDefault()
@@ -82,6 +85,11 @@ export default function ScansPage() {
                 <CardTitle><Target className="w-4 h-4 inline mr-1.5" />New Scan</CardTitle>
               </CardHeader>
               <CardBody>
+                {isViewer && (
+                  <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-700 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-300">
+                    Viewer accounts can review scan history but cannot trigger new scans.
+                  </div>
+                )}
                 <form onSubmit={handleScan} className="space-y-4">
                   {/* Targets */}
                   <div>
@@ -138,11 +146,11 @@ export default function ScansPage() {
                   <div className="flex items-center gap-3">
                     <button
                       type="submit"
-                      disabled={isPending || !!activeScan || !targets.trim()}
+                      disabled={isViewer || isPending || !!activeScan || !targets.trim()}
                       className={cn(
                         'flex items-center gap-2 py-2.5 px-5 rounded-lg text-sm font-medium',
                         'transition-all duration-150',
-                        isPending || activeScan || !targets.trim()
+                        isViewer || isPending || activeScan || !targets.trim()
                           ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
                           : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md hover:shadow-sky-500/20',
                       )}

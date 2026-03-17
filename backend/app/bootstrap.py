@@ -20,7 +20,7 @@ async def ensure_admin_user() -> None:
             User(
                 username=settings.ADMIN_USERNAME,
                 hashed_password=hash_password(settings.ADMIN_PASSWORD),
-                is_admin=True,
+                role="admin",
                 is_active=True,
             )
         )

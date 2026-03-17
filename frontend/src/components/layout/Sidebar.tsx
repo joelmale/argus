@@ -8,6 +8,7 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
+import { useCurrentUser } from '@/hooks/useAuth'
 
 const NAV_ITEMS = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -20,6 +21,11 @@ const NAV_ITEMS = [
 export function Sidebar() {
   const pathname = usePathname()
   const { sidebarCollapsed, toggleSidebar, wsConnected } = useAppStore()
+  const { data: currentUser } = useCurrentUser()
+
+  const navItems = currentUser?.role === 'viewer'
+    ? NAV_ITEMS.filter((item) => item.href !== '/settings')
+    : NAV_ITEMS
 
   return (
     <aside
@@ -47,7 +53,7 @@ export function Sidebar() {
 
       {/* Navigation */}
       <nav className="flex-1 px-2 py-4 space-y-1 overflow-y-auto">
-        {NAV_ITEMS.map(({ href, icon: Icon, label }) => {
+        {navItems.map(({ href, icon: Icon, label }) => {
           const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
           return (
             <Link

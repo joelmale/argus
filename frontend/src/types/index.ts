@@ -3,6 +3,17 @@
 export type AssetStatus = "online" | "offline" | "unknown";
 export type DeviceType = "router" | "switch" | "server" | "workstation" | "iot" | "printer" | "unknown";
 export type DeviceClass = DeviceType | "access_point" | "firewall" | "nas" | "ip_camera" | "smart_tv" | "iot_device" | "voip";
+export type UserRole = "admin" | "viewer";
+
+export interface CurrentUser {
+  id: string;
+  username: string;
+  email: string | null;
+  role: UserRole;
+  is_admin: boolean;
+  is_active: boolean;
+  created_at: string;
+}
 
 export interface Port {
   id: number;

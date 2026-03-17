@@ -6,7 +6,8 @@ from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, TopologyLink
+from app.api.deps import get_current_admin, get_current_user
+from app.db.models import Asset, TopologyLink, User
 from app.db.session import get_db
 
 router = APIRouter()
@@ -20,7 +21,7 @@ class TopologyLinkCreateRequest(BaseModel):
 
 
 @router.get("/graph")
-async def get_topology_graph(db: AsyncSession = Depends(get_db)):
+async def get_topology_graph(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     """
     Returns a Cytoscape.js-compatible graph payload:
       { nodes: [{data: {id, label, ...}}], edges: [{data: {source, target, ...}}] }
@@ -63,7 +64,11 @@ async def get_topology_graph(db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/links", status_code=201)
-async def create_topology_link(payload: TopologyLinkCreateRequest, db: AsyncSession = Depends(get_db)):
+async def create_topology_link(
+    payload: TopologyLinkCreateRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     link = TopologyLink(
         source_id=payload.source_id,
         target_id=payload.target_id,
@@ -77,7 +82,11 @@ async def create_topology_link(payload: TopologyLinkCreateRequest, db: AsyncSess
 
 
 @router.delete("/links/{link_id}", status_code=204)
-async def delete_topology_link(link_id: int, db: AsyncSession = Depends(get_db)):
+async def delete_topology_link(
+    link_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     link = await db.get(TopologyLink, link_id)
     if link is None:
         return

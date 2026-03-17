@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from collections.abc import Callable
+
 from fastapi import Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordBearer
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +30,13 @@ async def get_current_user(
 
 
 async def get_current_admin(user: User = Depends(get_current_user)) -> User:
-    if not user.is_admin:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
-    return user
+    return await require_role("admin")(user)
+
+
+def require_role(role: str) -> Callable[[User], User]:
+    async def _require_role(user: User = Depends(get_current_user)) -> User:
+        if user.role != role:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail=f"{role.title()} access required")
+        return user
+
+    return _require_role

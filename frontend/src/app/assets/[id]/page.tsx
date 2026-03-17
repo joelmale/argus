@@ -2,6 +2,7 @@
 
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
+import { useCurrentUser } from '@/hooks/useAuth'
 import { useAddAssetTag, useAsset, useRemoveAssetTag, useUpdateAsset } from '@/hooks/useAssets'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
@@ -130,6 +131,7 @@ export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
   const { data: asset, isLoading, isError } = useAsset(assetId)
+  const { data: currentUser } = useCurrentUser()
 
   if (isLoading) return (
     <AppShell>
@@ -341,7 +343,18 @@ export default function AssetDetailPage() {
             )}
 
             {/* Notes */}
-            <AssetMetadataEditor key={asset.id} asset={asset} />
+            {currentUser?.role === 'admin' ? (
+              <AssetMetadataEditor key={asset.id} asset={asset} />
+            ) : (
+              <Card>
+                <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
+                <CardBody>
+                  <p className="text-sm text-zinc-500">
+                    Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
+                  </p>
+                </CardBody>
+              </Card>
+            )}
           </div>
         </div>
       </div>

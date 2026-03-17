@@ -1,4 +1,5 @@
 from app.core.security import create_access_token, decode_token, hash_password, verify_password
+from app.db.models import User
 
 
 def test_password_hash_round_trip():
@@ -15,3 +16,8 @@ def test_access_token_round_trip():
 
     assert decode_token(token) == "user-123"
     assert decode_token(f"{token}corrupted") is None
+
+
+def test_user_is_admin_property():
+    assert User(username="admin", hashed_password="x", role="admin").is_admin is True
+    assert User(username="viewer", hashed_password="x", role="viewer").is_admin is False

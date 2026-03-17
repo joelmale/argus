@@ -6,9 +6,9 @@ import { useAppStore, processWsEvent } from '@/store'
 import type { WsEvent } from '@/types'
 
 const RECONNECT_DELAY_MS = 3000
-const WS_URL = (process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000') + '/ws/events'
+const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
 
-export function useWebSocket() {
+export function useWebSocket(enabled = true) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null)
   const mountedRef = useRef(true)
@@ -17,10 +17,14 @@ export function useWebSocket() {
   const { setWsConnected } = useAppStore()
 
   function connect() {
+    if (!enabled) return
     if (!mountedRef.current) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
-    const ws = new WebSocket(WS_URL)
+    const token = typeof window === 'undefined' ? null : localStorage.getItem('argus_token')
+    if (!token) return
+
+    const ws = new WebSocket(`${WS_URL}/ws/events?token=${encodeURIComponent(token)}`)
     wsRef.current = ws
 
     ws.onopen = () => {
@@ -73,5 +77,5 @@ export function useWebSocket() {
       if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
       wsRef.current?.close()
     }
-  }, []) // eslint-disable-line react-hooks/exhaustive-deps
+  }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps
 }

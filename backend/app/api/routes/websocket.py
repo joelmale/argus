@@ -3,10 +3,13 @@ import asyncio
 import contextlib
 import json
 
-from fastapi import APIRouter, WebSocket, WebSocketDisconnect
+from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 import redis.asyncio as redis
 
 from app.core.config import settings
+from app.core.security import decode_token
+from app.db.models import User
+from app.db.session import AsyncSessionLocal
 
 router = APIRouter()
 
@@ -25,6 +28,22 @@ async def websocket_events(websocket: WebSocket):
     Clients connect here to receive live scan progress and new-device events.
     Messages are JSON: { "event": "device_discovered" | "scan_progress" | "heartbeat", "data": {...} }
     """
+    token = websocket.query_params.get("token")
+    if not token:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token")
+        return
+
+    subject = decode_token(token)
+    if not subject:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+        return
+
+    async with AsyncSessionLocal() as db:
+        user = await db.get(User, subject)
+        if user is None or not user.is_active:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="User not found")
+            return
+
     await websocket.accept()
 
     redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)

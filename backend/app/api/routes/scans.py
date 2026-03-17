@@ -6,7 +6,9 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.api.deps import get_current_admin, get_current_user
 from app.db.models import ScanJob
+from app.db.models import User
 from app.db.session import get_db
 from app.db.upsert import upsert_scan_result
 from app.ingestion.logs import parse_dns_dhcp_logs
@@ -26,13 +28,21 @@ class IngestLogsRequest(BaseModel):
 
 
 @router.get("/")
-async def list_scans(limit: int = 20, db: AsyncSession = Depends(get_db)):
+async def list_scans(
+    limit: int = 20,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
+):
     result = await db.execute(select(ScanJob).order_by(ScanJob.created_at.desc()).limit(limit))
     return result.scalars().all()
 
 
 @router.post("/trigger")
-async def trigger_scan(payload: TriggerScanRequest, db: AsyncSession = Depends(get_db)):
+async def trigger_scan(
+    payload: TriggerScanRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """Enqueue a manual scan. The scanner worker picks this up via Redis."""
     job = ScanJob(targets=payload.targets, scan_type=payload.scan_type, triggered_by="manual")
     db.add(job)
@@ -44,7 +54,11 @@ async def trigger_scan(payload: TriggerScanRequest, db: AsyncSession = Depends(g
 
 
 @router.post("/ingest/logs")
-async def ingest_logs(payload: IngestLogsRequest, db: AsyncSession = Depends(get_db)):
+async def ingest_logs(
+    payload: IngestLogsRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     observations = parse_dns_dhcp_logs(payload.content)
 
     new_assets = 0
@@ -73,6 +87,6 @@ async def ingest_logs(payload: IngestLogsRequest, db: AsyncSession = Depends(get
 
 
 @router.get("/{job_id}")
-async def get_scan(job_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_scan(job_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     job = await db.get(ScanJob, job_id)
     return job

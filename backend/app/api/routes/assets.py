@@ -9,7 +9,8 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.db.models import Asset, AssetHistory, AssetTag, Port
+from app.api.deps import get_current_admin, get_current_user
+from app.db.models import Asset, AssetHistory, AssetTag, Port, User
 from app.db.session import get_db
 
 router = APIRouter()
@@ -27,6 +28,7 @@ async def list_assets(
     skip: int = 0,
     limit: int = 100,
     db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_user),
 ):
     """Return all discovered assets with optional filtering."""
     q = select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports))
@@ -47,7 +49,7 @@ async def list_assets(
 
 
 @router.get("/export.csv")
-async def export_assets_csv(db: AsyncSession = Depends(get_db)):
+async def export_assets_csv(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
     assets = result.scalars().all()
 
@@ -93,7 +95,7 @@ async def export_assets_csv(db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{asset_id}")
-async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     stmt = (
         select(Asset)
         .options(
@@ -110,7 +112,12 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.patch("/{asset_id}")
-async def update_asset(asset_id: UUID, payload: dict, db: AsyncSession = Depends(get_db)):
+async def update_asset(
+    asset_id: UUID,
+    payload: dict,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     """Update mutable fields: hostname, notes, tags, custom_fields."""
     asset = await db.get(Asset, asset_id)
     if not asset:
@@ -125,7 +132,7 @@ async def update_asset(asset_id: UUID, payload: dict, db: AsyncSession = Depends
 
 
 @router.delete("/{asset_id}", status_code=204)
-async def delete_asset(asset_id: UUID, db: AsyncSession = Depends(get_db)):
+async def delete_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_admin)):
     asset = await db.get(Asset, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -134,7 +141,7 @@ async def delete_asset(asset_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{asset_id}/history")
-async def get_asset_history(asset_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_asset_history(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     asset = await db.get(Asset, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -148,7 +155,7 @@ async def get_asset_history(asset_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.get("/{asset_id}/ports")
-async def get_asset_ports(asset_id: UUID, db: AsyncSession = Depends(get_db)):
+async def get_asset_ports(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
     asset = await db.get(Asset, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -162,7 +169,12 @@ async def get_asset_ports(asset_id: UUID, db: AsyncSession = Depends(get_db)):
 
 
 @router.post("/{asset_id}/tags", status_code=201)
-async def add_asset_tag(asset_id: UUID, payload: AssetTagRequest, db: AsyncSession = Depends(get_db)):
+async def add_asset_tag(
+    asset_id: UUID,
+    payload: AssetTagRequest,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     asset = await db.get(Asset, asset_id)
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -185,7 +197,12 @@ async def add_asset_tag(asset_id: UUID, payload: AssetTagRequest, db: AsyncSessi
 
 
 @router.delete("/{asset_id}/tags/{tag}", status_code=204)
-async def delete_asset_tag(asset_id: UUID, tag: str, db: AsyncSession = Depends(get_db)):
+async def delete_asset_tag(
+    asset_id: UUID,
+    tag: str,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
     result = await db.execute(
         select(AssetTag).where(AssetTag.asset_id == asset_id, AssetTag.tag == tag.lower())
     )
