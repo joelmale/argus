@@ -1,6 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { assetsApi, topologyApi } from '@/lib/api'
-import type { Asset, ConfigBackupSnapshot, ConfigBackupTarget, TopologyGraph } from '@/types'
+import type { Asset, ConfigBackupSnapshot, ConfigBackupTarget, TopologyGraph, WirelessAssociation } from '@/types'
 
 const DAY_MS = 86_400_000
 const INITIAL_RENDER_TIME = Date.now()
@@ -120,6 +120,18 @@ export function useTriggerConfigBackup() {
       qc.invalidateQueries({ queryKey: ['assets', id, 'config-backups'] })
       qc.invalidateQueries({ queryKey: ['assets', id, 'config-backup-target'] })
     },
+  })
+}
+
+export function useWirelessClients(id: string, enabled = true) {
+  return useQuery<WirelessAssociation[]>({
+    queryKey: ['assets', id, 'wireless-clients'],
+    queryFn: async () => {
+      const { data } = await assetsApi.listWirelessClients(id)
+      return data
+    },
+    enabled: enabled && !!id,
+    refetchInterval: 60_000,
   })
 }
 

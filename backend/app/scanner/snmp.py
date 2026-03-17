@@ -51,6 +51,18 @@ IFACE_OIDS = {
 
 VLAN_PVID_OID = "1.3.6.1.2.1.17.7.1.4.5.1.1"
 ARP_MAC_OID = "1.3.6.1.2.1.4.22.1.2"
+LLDP_OIDS = {
+    "remote_chassis": "1.0.8802.1.1.2.1.4.1.1.5",
+    "remote_port": "1.0.8802.1.1.2.1.4.1.1.7",
+    "remote_port_desc": "1.0.8802.1.1.2.1.4.1.1.8",
+    "remote_sys_name": "1.0.8802.1.1.2.1.4.1.1.9",
+    "remote_sys_desc": "1.0.8802.1.1.2.1.4.1.1.10",
+}
+CDP_OIDS = {
+    "device_id": "1.3.6.1.4.1.9.9.23.1.2.1.1.6",
+    "device_port": "1.3.6.1.4.1.9.9.23.1.2.1.1.7",
+    "platform": "1.3.6.1.4.1.9.9.23.1.2.1.1.8",
+}
 
 
 class SnmpPoller:
@@ -105,6 +117,17 @@ class SnmpPoller:
                 iface["vlan_id"] = None
 
         return [interfaces[idx] for idx in sorted(interfaces)]
+
+    async def get_neighbors(self, host: str) -> list[dict]:
+        lldp_columns = {key: await self._walk(host, oid) for key, oid in LLDP_OIDS.items()}
+        cdp_columns = {key: await self._walk(host, oid) for key, oid in CDP_OIDS.items()}
+        return _parse_lldp_rows(lldp_columns) + _parse_cdp_rows(cdp_columns)
+
+    async def get_wireless_clients(self, host: str) -> list[dict]:
+        # Consumer APs often expose no standard client-association tables over SNMP.
+        # Keep the interface in place so vendor-specific or enterprise AP support can
+        # populate this later without changing the pipeline contract.
+        return []
 
     async def _get_single(self, host: str, oid: str) -> str | None:
         if self.version == "3":
@@ -192,3 +215,63 @@ def _normalize_value(field: str, value: str):
     if field == "mac":
         return _format_mac(value)
     return value
+
+
+def _parse_lldp_rows(columns: dict[str, list[tuple[str, str]]]) -> list[dict]:
+    rows: dict[tuple[int, int], dict] = {}
+    for field, entries in columns.items():
+        for oid, value in entries:
+            parts = oid.split(".")
+            if len(parts) < 3:
+                continue
+            try:
+                local_port = int(parts[-2])
+                remote_index = int(parts[-1])
+            except ValueError:
+                continue
+            row = rows.setdefault((local_port, remote_index), {"protocol": "lldp", "local_port": local_port})
+            row[field] = value
+
+    neighbors: list[dict] = []
+    for row in rows.values():
+        neighbors.append(
+            {
+                "protocol": "lldp",
+                "local_port": row.get("local_port"),
+                "remote_name": row.get("remote_sys_name"),
+                "remote_port": row.get("remote_port_desc") or row.get("remote_port"),
+                "remote_mac": _format_mac(row["remote_chassis"]) if row.get("remote_chassis") else None,
+                "remote_platform": row.get("remote_sys_desc"),
+            }
+        )
+    return neighbors
+
+
+def _parse_cdp_rows(columns: dict[str, list[tuple[str, str]]]) -> list[dict]:
+    rows: dict[tuple[int, int], dict] = {}
+    for field, entries in columns.items():
+        for oid, value in entries:
+            parts = oid.split(".")
+            if len(parts) < 2:
+                continue
+            try:
+                local_port = int(parts[-2])
+                remote_index = int(parts[-1])
+            except ValueError:
+                continue
+            row = rows.setdefault((local_port, remote_index), {"protocol": "cdp", "local_port": local_port})
+            row[field] = value
+
+    neighbors: list[dict] = []
+    for row in rows.values():
+        neighbors.append(
+            {
+                "protocol": "cdp",
+                "local_port": row.get("local_port"),
+                "remote_name": row.get("device_id"),
+                "remote_port": row.get("device_port"),
+                "remote_platform": row.get("platform"),
+                "remote_mac": None,
+            }
+        )
+    return neighbors

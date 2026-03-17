@@ -69,6 +69,20 @@ export interface ConfigBackupSnapshot {
   captured_at: string;
 }
 
+export interface WirelessAssociation {
+  id: number;
+  access_point_asset_id: string;
+  client_asset_id: string | null;
+  client_mac: string | null;
+  client_ip: string | null;
+  ssid: string | null;
+  band: string | null;
+  signal_dbm: number | null;
+  source: string;
+  first_seen: string;
+  last_seen: string;
+}
+
 export interface BackupDriver {
   name: string;
   label: string;

@@ -12,7 +12,7 @@ from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin, get_current_user
 from app.backups import capture_backup_for_asset, get_backup_target, list_backup_snapshots, upsert_backup_target
-from app.db.models import Asset, AssetHistory, AssetTag, Port, User
+from app.db.models import Asset, AssetHistory, AssetTag, Port, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import render_ansible_inventory, render_terraform_inventory
 
@@ -248,6 +248,39 @@ async def get_asset_ports(asset_id: UUID, db: AsyncSession = Depends(get_db), _:
         .order_by(Port.port_number.asc(), Port.protocol.asc())
     )
     return result.scalars().all()
+
+
+@router.get("/{asset_id}/wireless-clients")
+async def get_wireless_clients(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    asset = await db.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+
+    result = await db.execute(
+        select(WirelessAssociation)
+        .where(
+            (WirelessAssociation.access_point_asset_id == asset_id)
+            | (WirelessAssociation.client_asset_id == asset_id)
+        )
+        .order_by(WirelessAssociation.last_seen.desc())
+    )
+    associations = result.scalars().all()
+    return [
+        {
+            "id": association.id,
+            "access_point_asset_id": str(association.access_point_asset_id),
+            "client_asset_id": str(association.client_asset_id) if association.client_asset_id else None,
+            "client_mac": association.client_mac,
+            "client_ip": association.client_ip,
+            "ssid": association.ssid,
+            "band": association.band,
+            "signal_dbm": association.signal_dbm,
+            "source": association.source,
+            "first_seen": association.first_seen.isoformat(),
+            "last_seen": association.last_seen.isoformat(),
+        }
+        for association in associations
+    ]
 
 
 @router.post("/{asset_id}/tags", status_code=201)

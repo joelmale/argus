@@ -207,3 +207,19 @@ class ConfigBackupSnapshot(Base):
     content: Mapped[str | None] = mapped_column(Text)
     error: Mapped[str | None] = mapped_column(Text)
     captured_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
+class WirelessAssociation(Base):
+    __tablename__ = "wireless_associations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    access_point_asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    client_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"))
+    client_mac: Mapped[str | None] = mapped_column(String(17))
+    client_ip: Mapped[str | None] = mapped_column(String(45))
+    ssid: Mapped[str | None] = mapped_column(String(128))
+    band: Mapped[str | None] = mapped_column(String(32))
+    signal_dbm: Mapped[int | None] = mapped_column(Integer)
+    source: Mapped[str] = mapped_column(String(32), default="snmp")
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

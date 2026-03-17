@@ -3,11 +3,11 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useAddAssetTag, useAsset, useConfigBackupTarget, useConfigBackups, useRemoveAssetTag, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget } from '@/hooks/useAssets'
+import { useAddAssetTag, useAsset, useConfigBackupTarget, useConfigBackups, useRemoveAssetTag, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
-import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog } from 'lucide-react'
+import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { Asset, ConfigBackupTarget } from '@/types'
@@ -220,6 +220,36 @@ function ConfigBackupCard({ asset }: { asset: Asset }) {
             <p className="text-sm text-zinc-500">No config backups captured for this asset yet.</p>
           )}
         </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+function WirelessAssociationsCard({ asset }: { asset: Asset }) {
+  const { data: associations = [] } = useWirelessClients(asset.id)
+
+  return (
+    <Card>
+      <CardHeader><CardTitle><Wifi className="w-4 h-4 inline mr-1.5" />Wireless Associations</CardTitle></CardHeader>
+      <CardBody className="space-y-3">
+        <p className="text-sm text-zinc-500">
+          SNMP-capable access points can report connected clients here. TP-Link Deco app-managed mesh hardware typically does not expose these tables, so this section may stay empty in your environment.
+        </p>
+        {associations.length === 0 ? (
+          <p className="text-sm text-zinc-500">No wireless client associations recorded for this asset.</p>
+        ) : associations.map((association) => (
+          <div key={association.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+            <div className="flex items-center justify-between gap-3">
+              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                {association.client_ip || association.client_mac || 'Unknown client'}
+              </p>
+              <span className="text-xs text-zinc-500">{new Date(association.last_seen).toLocaleString()}</span>
+            </div>
+            <p className="text-xs text-zinc-500 mt-1">
+              {association.ssid || 'SSID unknown'} · {association.band || 'band unknown'} · signal {association.signal_dbm ?? 'n/a'} dBm
+            </p>
+          </div>
+        ))}
       </CardBody>
     </Card>
   )
@@ -443,6 +473,7 @@ export default function AssetDetailPage() {
             {/* Notes */}
             {currentUser?.role === 'admin' ? (
               <div className="space-y-5">
+                <WirelessAssociationsCard asset={asset} />
                 <ConfigBackupCard asset={asset} />
                 <AssetMetadataEditor key={asset.id} asset={asset} />
               </div>

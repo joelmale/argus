@@ -42,11 +42,13 @@ async def probe(ip: str, community: str = "public", port: int = 161, timeout: fl
 
     try:
         poller = SnmpPoller(community=community)
-        system_info, interfaces, arp_table = await asyncio.wait_for(
+        system_info, interfaces, arp_table, neighbors, wireless_clients = await asyncio.wait_for(
             asyncio.gather(
                 poller.get_system_info(ip),
                 poller.get_interfaces(ip),
                 poller.get_arp_table(ip),
+                poller.get_neighbors(ip),
+                poller.get_wireless_clients(ip),
             ),
             timeout=timeout,
         )
@@ -63,6 +65,8 @@ async def probe(ip: str, community: str = "public", port: int = 161, timeout: fl
         sys_object_id=system_info.get("sys_object_id"),
         interfaces=interfaces,
         arp_table=arp_table,
+        neighbors=neighbors,
+        wireless_clients=wireless_clients,
     )
 
     if not data.sys_descr and not data.sys_name:
@@ -79,7 +83,9 @@ async def probe(ip: str, community: str = "public", port: int = 161, timeout: fl
         f"sysContact: {data.sys_contact or 'n/a'}\n"
         f"sysObjectID: {data.sys_object_id or 'n/a'}\n"
         f"Interfaces: {len(data.interfaces)}\n"
-        f"ARP entries: {len(data.arp_table)}"
+        f"ARP entries: {len(data.arp_table)}\n"
+        f"Neighbors: {len(data.neighbors)}\n"
+        f"Wireless clients: {len(data.wireless_clients)}"
     )
 
     return ProbeResult(

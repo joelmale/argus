@@ -59,6 +59,7 @@ export const assetsApi = {
   ) => api.put(`/api/v1/assets/${id}/config-backup-target`, payload),
   listConfigBackups: (id: string) => api.get(`/api/v1/assets/${id}/config-backups`),
   triggerConfigBackup: (id: string) => api.post(`/api/v1/assets/${id}/config-backups`),
+  listWirelessClients: (id: string) => api.get(`/api/v1/assets/${id}/wireless-clients`),
 };
 
 // ─── Scan endpoints ─────────────────────────────────────────────
