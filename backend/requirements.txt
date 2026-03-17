@@ -35,8 +35,8 @@ zeroconf==0.148.0          # mDNS/Bonjour discovery
 impacket==0.13.0            # SMB/NetBIOS probe
 
 # ── AI Agent ───────────────────────────────────────────────────
-openai==1.35.0              # Ollama OpenAI-compatible API + optional OpenAI
-anthropic==0.28.0           # Optional: Anthropic API fallback
+openai==2.28.0              # Ollama OpenAI-compatible API + optional OpenAI
+anthropic==0.85.0           # Optional: Anthropic API fallback
 
 # ── Utilities ──────────────────────────────────────────────────
 httpx[http2]==0.28.1        # Async HTTP for probes (HTTP/2 support)
