@@ -415,16 +415,16 @@ Notes:
 
 Target: make Argus more useful as the source of truth for a homelab by connecting it to other tools, preserving richer history, and surfacing higher-value operational reports.
 
-- [ ] Vulnerability and assessment ingestion (OpenVAS, Nessus, Nmap NSE, or imported findings)
-- [ ] Findings view in the UI, linked back to affected assets and ports
-- [ ] Home Assistant / webhook-friendly event integration layer
-- [ ] Backup artifact UX improvements: download, diff, and retention controls
-- [ ] Scheduled backup jobs for tagged infrastructure devices
-- [ ] Richer reporting: change summary, offline/new devices, backup status, findings summary
-- [ ] Plugin packaging guide and example plugin templates
-- [ ] Plugin management page: loaded plugins, version, capabilities, and health
-- [ ] External inventory sync hooks (read-only export first; push/sync later if warranted)
-- [ ] Optional restore-assist workflows for supported backup drivers
+- [x] Vulnerability and assessment ingestion (OpenVAS, Nessus, Nmap NSE, or imported findings)
+- [x] Findings view in the UI, linked back to affected assets and ports
+- [x] Home Assistant / webhook-friendly event integration layer
+- [x] Backup artifact UX improvements: download, diff, and retention controls
+- [x] Scheduled backup jobs for tagged infrastructure devices
+- [x] Richer reporting: change summary, offline/new devices, backup status, findings summary
+- [x] Plugin packaging guide and example plugin templates
+- [x] Plugin management page: loaded plugins, version, capabilities, and health
+- [x] External inventory sync hooks (read-only export first; push/sync later if warranted)
+- [x] Optional restore-assist workflows for supported backup drivers
 
 Notes:
 - Vulnerability support should start as ingestion and correlation, not as a built-in full scanner. Argus should integrate with purpose-built assessment tools instead of trying to replace them.
@@ -432,6 +432,14 @@ Notes:
 - For homelab use, Home Assistant and generic webhook targets are likely more valuable early integrations than enterprise ticketing systems.
 - Backup restore should be approached conservatively. Start with downloadable artifacts and guided restore command generation before attempting fully automated push-back.
 - Plugin maturity in Phase 5 should focus on making the existing extension hooks usable by other developers, not on building a marketplace.
+
+Delivered in Phase 5:
+- Findings ingestion accepts imported assessment data and correlates records back to assets and ports.
+- The UI now includes a dedicated Findings page, asset-linked findings cards, and dashboard summaries.
+- Backup workflows support artifact download, diff generation, retention policy, scheduled execution, and restore-assist guidance.
+- Integrations now expose a Home Assistant-friendly entity export, a webhook event catalog, and a normalized inventory sync snapshot.
+- Reporting now includes HTML and JSON inventory reports plus exportable machine-readable inventory snapshots.
+- Plugin management now surfaces plugin health and capabilities, and the repo includes an example plugin package plus packaging guide in `docs/plugins/README.md`.
 
 ---
 

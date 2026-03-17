@@ -1,0 +1,12 @@
+[build-system]
+requires = ["setuptools>=69", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "example-argus-plugin"
+version = "0.1.0"
+description = "Example Argus plugin package"
+requires-python = ">=3.12"
+
+[project.entry-points."argus.plugins"]
+example = "example_argus_plugin:ExampleArgusPlugin"
