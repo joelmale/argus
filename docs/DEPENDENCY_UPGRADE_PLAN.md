@@ -4,8 +4,7 @@ Revalidated on March 16, 2026.
 
 ## Current Status
 
-Phase 0 is complete.
-Phase 1 is complete.
+Phases 0 through 5 are complete.
 
 Completed stabilization work:
 - The backend syntax error in the SMB probe was fixed.
@@ -36,11 +35,42 @@ Completed Phase 1 backend upgrades:
 - `scapy 2.5.0 -> 2.7.0`
 - `psycopg2-binary 2.9.9 -> 2.9.11`
 
+Completed Phase 2 backend infrastructure upgrades:
+- `websockets 12.0 -> 16.0`
+- `python-multipart 0.0.9 -> 0.0.22`
+- `httpx 0.27.0 -> 0.28.1`
+- `celery 5.3.6 -> 5.6.2`
+- `pysnmp 6.1.4 -> 7.1.22`
+- `redis 5.0.4 -> 6.4.0`
+
+Note:
+- `redis 7.3.0` was not installable with `celery[redis] 5.6.2` because the current `kombu[redis]` dependency range caps Redis below `6.5`.
+
+Completed Phase 3 AI SDK upgrades:
+- `openai 1.35.0 -> 2.28.0`
+- `anthropic 0.28.0 -> 0.85.0`
+
+Completed Phase 4 frontend framework upgrades:
+- `next 14.2.3 -> 16.1.7`
+- `react 18.3.1 -> 19.2.4`
+- `react-dom 18.3.1 -> 19.2.4`
+- `@types/react 18.3.28 -> 19.2.14`
+- `@types/react-dom 18.3.7 -> 19.2.3`
+- `eslint-config-next 14.2.3 -> 16.1.7`
+- `eslint 8.x -> 9.39.4`
+
+Completed Phase 5 frontend ecosystem upgrades:
+- `tailwindcss 3.4.19 -> 4.2.1`
+- `tailwind-merge 2.6.1 -> 3.5.0`
+- `date-fns 3.6.0 -> 4.1.0`
+- `zustand 4.5.7 -> 5.0.12`
+- `recharts 2.15.4 -> 3.8.0`
+- `next-themes 0.3.0 -> 0.4.6`
+- `lucide-react 0.383.0 -> 0.577.0`
+
 Still open before the remaining major upgrades:
 - There is still no Alembic migration setup even though `alembic` is installed.
-- Phase 2 infrastructure and protocol stack upgrades remain.
-- Phase 3 AI SDK upgrades remain.
-- Phase 4 and Phase 5 frontend major upgrades remain.
+- `create_all()` is still being used at startup.
 
 ## Remaining Findings
 
@@ -51,9 +81,9 @@ Still open before the remaining major upgrades:
    Reference:
    - [backend/app/db/session.py](/Users/JoelN/Coding/argus/backend/app/db/session.py)
 
-2. Major-version backend infrastructure updates still carry the highest remaining risk.
+2. Dependency-upgrade work is complete, but migration and schema-management work still remains.
 
-   The remaining backend package moves affect Redis, Celery, WebSockets, multipart handling, HTTP client behavior, and SNMP support.
+   The remaining technical debt is operational rather than package-version related.
 
 ## Updated Phase Plan
 
@@ -72,53 +102,19 @@ Kept as-is:
 
 ### Phase 2: Backend infrastructure and protocol stack majors
 
-Upgrade these in isolation:
-- `websockets 12.0 -> 16.0`
-- `python-multipart 0.0.9 -> 0.0.22`
-- `httpx 0.27.0 -> 0.28.1`
-- `redis 5.0.4 -> 7.3.0`
-- `celery 5.3.6 -> 5.6.2`
-- `pysnmp 6.1.4 -> 7.1.22`
-
-Validation required:
-- WebSocket events
-- Auth form posts
-- Celery worker startup
-- Redis connectivity
-- SNMP probing
+Status: complete.
 
 ### Phase 3: AI SDK upgrades behind an adapter boundary
 
-Upgrade separately:
-- `openai 1.35.0 -> 2.28.0`
-- `anthropic 0.28.0 -> 0.85.0`
-
-These should sit behind a thin compatibility layer first because the code currently uses chat and tool APIs directly.
+Status: complete.
 
 ### Phase 4: Frontend framework majors
 
-Move these together:
-- `next 14.2.3 -> 16.1.7`
-- `react 18.3.1 -> 19.2.4`
-- `react-dom 18.3.1 -> 19.2.4`
-- `@types/react 18.3.28 -> 19.2.14`
-- `@types/react-dom 18.3.7 -> 19.2.3`
-- `eslint-config-next 14.2.3 -> 16.1.7`
-
-Do `eslint` only in the range that the Next 16 move requires.
+Status: complete.
 
 ### Phase 5: Frontend ecosystem majors
 
-Upgrade after the framework move:
-- `tailwindcss 3.4.19 -> 4.2.1`
-- `tailwind-merge 2.6.1 -> 3.5.0`
-- `date-fns 3.6.0 -> 4.1.0`
-- `zustand 4.5.7 -> 5.0.12`
-- `recharts 2.15.4 -> 3.8.0`
-- `next-themes 0.3.0 -> 0.4.6`
-- `lucide-react 0.383.0 -> 0.577.0`
-
-Treat Tailwind 4 as its own migration inside this phase because config and PostCSS setup usually change.
+Status: complete.
 
 ## Lower-Priority Or Already-Current Packages
 
@@ -139,7 +135,5 @@ These do not show the same immediate pressure:
 
 ## Recommended Execution Order
 
-1. Upgrade backend infrastructure and protocol packages
-2. Upgrade AI SDKs
-3. Upgrade frontend framework packages
-4. Upgrade frontend ecosystem packages
+1. Bootstrap Alembic migrations
+2. Remove `create_all()` startup schema creation
