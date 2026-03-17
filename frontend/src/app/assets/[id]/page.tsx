@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useRemoveAssetTag, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
+import { useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useRemoveAssetTag, useRestoreAssist, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
@@ -185,6 +185,21 @@ function ConfigBackupForm({ asset, target }: { asset: Asset; target: ConfigBacku
 function ConfigBackupCard({ asset }: { asset: Asset }) {
   const { data: target } = useConfigBackupTarget(asset.id)
   const { data: backups = [] } = useConfigBackups(asset.id)
+  const { mutateAsync: downloadBackup } = useDownloadConfigBackup()
+  const { mutateAsync: diffBackup } = useDiffConfigBackup()
+  const { mutateAsync: restoreAssist } = useRestoreAssist()
+  const [diffText, setDiffText] = useState<string | null>(null)
+  const [restoreText, setRestoreText] = useState<string | null>(null)
+
+  async function handleDownload(snapshotId: number) {
+    const data = await downloadBackup({ id: asset.id, snapshotId })
+    const url = URL.createObjectURL(data)
+    const link = document.createElement('a')
+    link.href = url
+    link.download = `argus-backup-${snapshotId}.txt`
+    link.click()
+    URL.revokeObjectURL(url)
+  }
 
   return (
     <Card>
@@ -214,10 +229,30 @@ function ConfigBackupCard({ asset }: { asset: Asset }) {
                   {backup.content}
                 </pre>
               )}
+              <div className="mt-3 flex flex-wrap gap-3">
+                <button onClick={() => handleDownload(backup.id)} className="text-sm text-sky-500 hover:text-sky-600">Download</button>
+                <button onClick={async () => setDiffText(await diffBackup({ id: asset.id, snapshotId: backup.id }))} className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200">Show diff</button>
+                <button onClick={async () => {
+                  const assist = await restoreAssist({ id: asset.id, snapshotId: backup.id })
+                  setRestoreText(`${assist.driver} restore guidance\n\n${assist.warnings.join('\n')}\n\n${assist.commands.join('\n')}`)
+                }} className="text-sm text-emerald-600 hover:text-emerald-700">Restore assist</button>
+              </div>
             </div>
           ))}
           {backups.length === 0 && (
             <p className="text-sm text-zinc-500">No config backups captured for this asset yet.</p>
+          )}
+          {diffText && (
+            <div>
+              <p className="text-xs text-zinc-500 mb-2">Snapshot diff</p>
+              <pre className="max-h-64 overflow-auto rounded-lg bg-zinc-950 text-zinc-200 p-3 text-xs">{diffText}</pre>
+            </div>
+          )}
+          {restoreText && (
+            <div>
+              <p className="text-xs text-zinc-500 mb-2">Restore assist</p>
+              <pre className="max-h-64 overflow-auto rounded-lg bg-zinc-950 text-zinc-200 p-3 text-xs">{restoreText}</pre>
+            </div>
           )}
         </div>
       </CardBody>

@@ -1,15 +1,17 @@
 from __future__ import annotations
 
 import asyncio
+import difflib
 import os
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from uuid import UUID
 
 import asyncssh
-from sqlalchemy import select
+from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, ConfigBackupSnapshot, ConfigBackupTarget
+from app.db.models import Asset, AssetTag, ConfigBackupPolicy, ConfigBackupSnapshot, ConfigBackupTarget
 
 
 @dataclass(frozen=True)
@@ -111,6 +113,16 @@ async def list_backup_snapshots(db: AsyncSession, asset_id: UUID) -> list[Config
     return result.scalars().all()
 
 
+async def get_backup_snapshot(db: AsyncSession, asset_id: UUID, snapshot_id: int) -> ConfigBackupSnapshot | None:
+    result = await db.execute(
+        select(ConfigBackupSnapshot).where(
+            ConfigBackupSnapshot.asset_id == asset_id,
+            ConfigBackupSnapshot.id == snapshot_id,
+        )
+    )
+    return result.scalar_one_or_none()
+
+
 async def get_backup_target(db: AsyncSession, asset_id: UUID) -> ConfigBackupTarget | None:
     result = await db.execute(select(ConfigBackupTarget).where(ConfigBackupTarget.asset_id == asset_id))
     return result.scalar_one_or_none()
@@ -144,9 +156,151 @@ async def capture_backup_for_asset(db: AsyncSession, asset_id: UUID) -> ConfigBa
         snapshot.status = "failed"
         snapshot.error = str(exc)[:1000]
 
-    await db.commit()
-    await db.refresh(snapshot)
+    await apply_backup_retention(db, asset.id)
     return snapshot
+
+
+async def apply_backup_retention(db: AsyncSession, asset_id: UUID, keep_latest: int | None = None) -> int:
+    policy = await get_backup_policy(db)
+    retain = keep_latest if keep_latest is not None else policy.retention_count
+    if retain <= 0:
+        return 0
+
+    snapshots = await list_backup_snapshots(db, asset_id)
+    stale = snapshots[retain:]
+    if not stale:
+        return 0
+
+    stale_ids = [snapshot.id for snapshot in stale]
+    await db.execute(delete(ConfigBackupSnapshot).where(ConfigBackupSnapshot.id.in_(stale_ids)))
+    await db.commit()
+    return len(stale_ids)
+
+
+async def get_backup_policy(db: AsyncSession) -> ConfigBackupPolicy:
+    result = await db.execute(select(ConfigBackupPolicy).order_by(ConfigBackupPolicy.id.asc()).limit(1))
+    policy = result.scalar_one_or_none()
+    if policy is None:
+        policy = ConfigBackupPolicy()
+        db.add(policy)
+        await db.commit()
+        await db.refresh(policy)
+    return policy
+
+
+async def update_backup_policy(
+    db: AsyncSession,
+    *,
+    enabled: bool,
+    interval_minutes: int,
+    tag_filter: str,
+    retention_count: int,
+) -> ConfigBackupPolicy:
+    policy = await get_backup_policy(db)
+    policy.enabled = enabled
+    policy.interval_minutes = interval_minutes
+    policy.tag_filter = tag_filter.strip() or "infrastructure"
+    policy.retention_count = retention_count
+    await db.commit()
+    await db.refresh(policy)
+    return policy
+
+
+async def run_scheduled_backups(db: AsyncSession) -> dict[str, int]:
+    policy = await get_backup_policy(db)
+    if not policy.enabled:
+        return {"scheduled": 0, "completed": 0}
+
+    now = datetime.now(timezone.utc)
+    if policy.last_run_at and now - policy.last_run_at < timedelta(minutes=policy.interval_minutes):
+        return {"scheduled": 0, "completed": 0}
+
+    result = await db.execute(
+        select(Asset.id)
+        .join(AssetTag, AssetTag.asset_id == Asset.id)
+        .join(ConfigBackupTarget, ConfigBackupTarget.asset_id == Asset.id)
+        .where(
+            AssetTag.tag == policy.tag_filter.lower(),
+            ConfigBackupTarget.enabled.is_(True),
+        )
+    )
+    asset_ids = [row[0] for row in result.all()]
+    completed = 0
+    for asset_id in asset_ids:
+        snapshot = await capture_backup_for_asset(db, asset_id)
+        if snapshot.status == "done":
+            completed += 1
+
+    policy.last_run_at = now
+    await db.commit()
+    return {"scheduled": len(asset_ids), "completed": completed}
+
+
+async def generate_backup_diff(db: AsyncSession, asset_id: UUID, snapshot_id: int, compare_to_id: int | None = None) -> str:
+    current = await get_backup_snapshot(db, asset_id, snapshot_id)
+    if current is None:
+        raise LookupError("Backup snapshot not found")
+
+    if compare_to_id is not None:
+        previous = await get_backup_snapshot(db, asset_id, compare_to_id)
+    else:
+        snapshots = await list_backup_snapshots(db, asset_id)
+        previous = next((snapshot for snapshot in snapshots if snapshot.id != snapshot_id), None)
+
+    if previous is None:
+        raise LookupError("No comparison snapshot available")
+
+    return "".join(
+        difflib.unified_diff(
+            (previous.content or "").splitlines(keepends=True),
+            (current.content or "").splitlines(keepends=True),
+            fromfile=f"snapshot-{previous.id}",
+            tofile=f"snapshot-{current.id}",
+        )
+    )
+
+
+async def generate_restore_assist(db: AsyncSession, asset_id: UUID, snapshot_id: int) -> dict[str, object]:
+    snapshot = await get_backup_snapshot(db, asset_id, snapshot_id)
+    asset = await db.get(Asset, asset_id)
+    if snapshot is None or asset is None:
+        raise LookupError("Backup snapshot not found")
+
+    target = await get_backup_target(db, asset_id)
+    if target is None:
+        raise LookupError("Config backup target is not configured")
+
+    driver = BACKUP_DRIVERS[snapshot.driver]
+    host = target.host_override or asset.ip_address
+    upload_name = f"argus-restore-{snapshot.id}.txt"
+    commands = {
+        "cisco_ios": [
+            f"scp ./snapshot-{snapshot.id}.txt {target.username}@{host}:{upload_name}",
+            f"ssh {target.username}@{host} 'copy {upload_name} running-config'",
+        ],
+        "juniper_junos": [
+            f"scp ./snapshot-{snapshot.id}.txt {target.username}@{host}:{upload_name}",
+            f"ssh {target.username}@{host} 'cli -c \"load set {upload_name}\"'",
+        ],
+        "mikrotik_routeros": [
+            f"scp ./snapshot-{snapshot.id}.txt {target.username}@{host}:{upload_name}",
+            f"ssh {target.username}@{host} 'import file-name={upload_name}'",
+        ],
+        "openwrt": [
+            f"scp ./snapshot-{snapshot.id}.txt {target.username}@{host}:{upload_name}",
+            f"ssh {target.username}@{host} 'uci import < {upload_name}'",
+        ],
+    }[snapshot.driver]
+    return {
+        "driver": driver.label,
+        "snapshot_id": snapshot.id,
+        "host": host,
+        "warnings": [
+            "Review the diff before applying any restore command.",
+            "Restore commands are generated guidance only and are not executed automatically by Argus.",
+        ],
+        "commands": commands,
+    }
 
 
 async def _run_backup(asset: Asset, target: ConfigBackupTarget) -> str:

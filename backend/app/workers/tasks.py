@@ -37,6 +37,10 @@ celery_app.conf.update(
         "scheduled-scan": {
             "task": "app.workers.tasks.run_scheduled_scan",
             "schedule": settings.SCANNER_INTERVAL_MINUTES * 60,
+        },
+        "scheduled-backups": {
+            "task": "app.workers.tasks.run_scheduled_backups",
+            "schedule": 60 * 60,
         }
     },
 )
@@ -61,6 +65,11 @@ def run_scan_job(self, job_id: str):
 def run_scheduled_scan():
     """Periodic task — enqueue a scan of all configured default targets."""
     asyncio.run(_enqueue_scheduled_scan())
+
+
+@celery_app.task(name="app.workers.tasks.run_scheduled_backups")
+def run_scheduled_backups():
+    asyncio.run(_run_scheduled_backups_async())
 
 
 async def _run_job_async(job_id: str) -> None:
@@ -161,6 +170,20 @@ async def _enqueue_scheduled_scan() -> None:
     # Enqueue the actual work
     run_scan_job.delay(job_id)
     log.info("Scheduled scan enqueued: job_id=%s targets=%s", job_id, settings.SCANNER_DEFAULT_TARGETS)
+
+
+async def _run_scheduled_backups_async() -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.backups import run_scheduled_backups as execute_scheduled_backups
+
+    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    Session = async_sessionmaker(engine, expire_on_commit=False)
+
+    async with Session() as db:
+        result = await execute_scheduled_backups(db)
+        log.info("Scheduled backups checked: %s", result)
+
+    await engine.dispose()
 
 
 def _get_broadcast_fn():

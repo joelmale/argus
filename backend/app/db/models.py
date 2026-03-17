@@ -244,3 +244,16 @@ class Finding(Base):
     finding_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ConfigBackupPolicy(Base):
+    __tablename__ = "config_backup_policies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=720)
+    tag_filter: Mapped[str] = mapped_column(String(64), default="infrastructure")
+    retention_count: Mapped[int] = mapped_column(Integer, default=5)
+    last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

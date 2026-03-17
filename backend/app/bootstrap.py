@@ -5,6 +5,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.core.security import hash_password
 from app.alerting import ensure_default_alert_rules
+from app.backups import get_backup_policy
 from app.db.models import User
 from app.db.session import AsyncSessionLocal
 
@@ -31,3 +32,4 @@ async def ensure_admin_user() -> None:
 async def ensure_system_defaults() -> None:
     async with AsyncSessionLocal() as db:
         await ensure_default_alert_rules(db)
+        await get_backup_policy(db)

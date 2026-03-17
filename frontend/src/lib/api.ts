@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { ConfigBackupTarget } from "@/types";
+import type { ConfigBackupPolicy, ConfigBackupTarget } from "@/types";
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
@@ -37,6 +37,9 @@ export const authApi = {
     api.patch(`/api/v1/auth/alert-rules/${id}`, payload),
   listBackupDrivers: () => api.get("/api/v1/system/backup-drivers"),
   listPlugins: () => api.get("/api/v1/system/plugins"),
+  getBackupPolicy: () => api.get("/api/v1/system/backup-policy"),
+  updateBackupPolicy: (payload: Omit<ConfigBackupPolicy, "id" | "last_run_at" | "created_at" | "updated_at">) =>
+    api.put("/api/v1/system/backup-policy", payload),
 };
 
 // ─── Asset endpoints ────────────────────────────────────────────
@@ -59,6 +62,10 @@ export const assetsApi = {
   ) => api.put(`/api/v1/assets/${id}/config-backup-target`, payload),
   listConfigBackups: (id: string) => api.get(`/api/v1/assets/${id}/config-backups`),
   triggerConfigBackup: (id: string) => api.post(`/api/v1/assets/${id}/config-backups`),
+  downloadConfigBackup: (id: string, snapshotId: number) => api.get(`/api/v1/assets/${id}/config-backups/${snapshotId}/download`, { responseType: "blob" }),
+  diffConfigBackup: (id: string, snapshotId: number, compareTo?: number) =>
+    api.get(`/api/v1/assets/${id}/config-backups/${snapshotId}/diff`, { params: compareTo ? { compare_to: compareTo } : undefined, responseType: "text" }),
+  getRestoreAssist: (id: string, snapshotId: number) => api.get(`/api/v1/assets/${id}/config-backups/${snapshotId}/restore-assist`),
   listWirelessClients: (id: string) => api.get(`/api/v1/assets/${id}/wireless-clients`),
   listFindings: (id: string) => api.get(`/api/v1/assets/${id}/findings`),
 };

@@ -11,7 +11,15 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin, get_current_user
-from app.backups import capture_backup_for_asset, get_backup_target, list_backup_snapshots, upsert_backup_target
+from app.backups import (
+    capture_backup_for_asset,
+    generate_backup_diff,
+    generate_restore_assist,
+    get_backup_snapshot,
+    get_backup_target,
+    list_backup_snapshots,
+    upsert_backup_target,
+)
 from app.db.models import Asset, AssetHistory, AssetTag, Port, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import render_ansible_inventory, render_terraform_inventory
@@ -446,3 +454,48 @@ async def trigger_config_backup(
         "error": snapshot.error,
         "captured_at": snapshot.captured_at.isoformat(),
     }
+
+
+@router.get("/{asset_id}/config-backups/{snapshot_id}/download")
+async def download_config_backup(
+    asset_id: UUID,
+    snapshot_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    snapshot = await get_backup_snapshot(db, asset_id, snapshot_id)
+    if snapshot is None or not snapshot.content:
+        raise HTTPException(status_code=404, detail="Backup snapshot not found")
+    return Response(
+        content=snapshot.content,
+        media_type="text/plain",
+        headers={"Content-Disposition": f'attachment; filename="argus-backup-{snapshot_id}.txt"'},
+    )
+
+
+@router.get("/{asset_id}/config-backups/{snapshot_id}/diff")
+async def diff_config_backup(
+    asset_id: UUID,
+    snapshot_id: int,
+    compare_to: int | None = Query(None),
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    try:
+        diff = await generate_backup_diff(db, asset_id, snapshot_id, compare_to)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    return Response(content=diff or "No diff\n", media_type="text/plain")
+
+
+@router.get("/{asset_id}/config-backups/{snapshot_id}/restore-assist")
+async def get_restore_assist(
+    asset_id: UUID,
+    snapshot_id: int,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    try:
+        return await generate_restore_assist(db, asset_id, snapshot_id)
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc

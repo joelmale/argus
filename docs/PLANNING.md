@@ -411,6 +411,28 @@ Notes:
 - Ansible and Terraform exports are available from the inventory UI and produce directly usable inventory/data files.
 - The Phase 4 plugin system is a lightweight Python entry-point hook surface for custom discovery or post-processing modules.
 
+### Phase 5 — Integrations, Assessment, and Operational Maturity
+
+Target: make Argus more useful as the source of truth for a homelab by connecting it to other tools, preserving richer history, and surfacing higher-value operational reports.
+
+- [ ] Vulnerability and assessment ingestion (OpenVAS, Nessus, Nmap NSE, or imported findings)
+- [ ] Findings view in the UI, linked back to affected assets and ports
+- [ ] Home Assistant / webhook-friendly event integration layer
+- [ ] Backup artifact UX improvements: download, diff, and retention controls
+- [ ] Scheduled backup jobs for tagged infrastructure devices
+- [ ] Richer reporting: change summary, offline/new devices, backup status, findings summary
+- [ ] Plugin packaging guide and example plugin templates
+- [ ] Plugin management page: loaded plugins, version, capabilities, and health
+- [ ] External inventory sync hooks (read-only export first; push/sync later if warranted)
+- [ ] Optional restore-assist workflows for supported backup drivers
+
+Notes:
+- Vulnerability support should start as ingestion and correlation, not as a built-in full scanner. Argus should integrate with purpose-built assessment tools instead of trying to replace them.
+- The most valuable first findings model is asset-centric: which device, which service, severity, source tool, first seen, last seen, and current status.
+- For homelab use, Home Assistant and generic webhook targets are likely more valuable early integrations than enterprise ticketing systems.
+- Backup restore should be approached conservatively. Start with downloadable artifacts and guided restore command generation before attempting fully automated push-back.
+- Plugin maturity in Phase 5 should focus on making the existing extension hooks usable by other developers, not on building a marketplace.
+
 ---
 
 ## 9. Docker Architecture

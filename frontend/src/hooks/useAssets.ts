@@ -123,6 +123,33 @@ export function useTriggerConfigBackup() {
   })
 }
 
+export function useDownloadConfigBackup() {
+  return useMutation({
+    mutationFn: async ({ id, snapshotId }: { id: string; snapshotId: number }) => {
+      const { data } = await assetsApi.downloadConfigBackup(id, snapshotId)
+      return data as Blob
+    },
+  })
+}
+
+export function useDiffConfigBackup() {
+  return useMutation({
+    mutationFn: async ({ id, snapshotId, compareTo }: { id: string; snapshotId: number; compareTo?: number }) => {
+      const { data } = await assetsApi.diffConfigBackup(id, snapshotId, compareTo)
+      return data as string
+    },
+  })
+}
+
+export function useRestoreAssist() {
+  return useMutation({
+    mutationFn: async ({ id, snapshotId }: { id: string; snapshotId: number }) => {
+      const { data } = await assetsApi.getRestoreAssist(id, snapshotId)
+      return data as { driver: string; snapshot_id: number; host: string; warnings: string[]; commands: string[] }
+    },
+  })
+}
+
 export function useWirelessClients(id: string, enabled = true) {
   return useQuery<WirelessAssociation[]>({
     queryKey: ['assets', id, 'wireless-clients'],

@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, CurrentUser, PluginInfo, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, PluginInfo, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -220,5 +220,30 @@ export function usePlugins(enabled = true) {
     },
     enabled,
     refetchInterval: 60_000,
+  })
+}
+
+export function useBackupPolicy(enabled = true) {
+  return useQuery<ConfigBackupPolicy>({
+    queryKey: ['system', 'backup-policy'],
+    queryFn: async () => {
+      const { data } = await authApi.getBackupPolicy()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function useUpdateBackupPolicy() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: Omit<ConfigBackupPolicy, "id" | "last_run_at" | "created_at" | "updated_at">) => {
+      const { data } = await authApi.updateBackupPolicy(payload)
+      return data as ConfigBackupPolicy
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'backup-policy'] })
+    },
   })
 }

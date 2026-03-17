@@ -20,6 +20,7 @@ APP_TABLES = {
     "config_backup_snapshots",
     "wireless_associations",
     "findings",
+    "config_backup_policies",
 }
 
 ROOT_DIR = Path(__file__).resolve().parents[1]

@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, usePlugins, useUpdateAlertRule, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, usePlugins, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateUser, useUsers } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -35,6 +35,65 @@ const SECTIONS = [
   },
 ]
 
+type BackupPolicyFormProps = {
+  backupPolicy?: {
+    enabled: boolean
+    interval_minutes: number
+    tag_filter: string
+    retention_count: number
+    last_run_at: string | null
+  }
+  isUpdatingBackupPolicy: boolean
+  onSave: (payload: {
+    enabled: boolean
+    interval_minutes: number
+    tag_filter: string
+    retention_count: number
+  }) => void
+}
+
+function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: BackupPolicyFormProps) {
+  const [backupEnabled, setBackupEnabled] = useState(backupPolicy?.enabled ?? false)
+  const [backupInterval, setBackupInterval] = useState(backupPolicy?.interval_minutes ?? 720)
+  const [backupTag, setBackupTag] = useState(backupPolicy?.tag_filter ?? 'infrastructure')
+  const [backupRetention, setBackupRetention] = useState(backupPolicy?.retention_count ?? 5)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Database className="w-4 h-4 inline mr-1.5" />Scheduled Backups</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={backupEnabled} onChange={(event) => setBackupEnabled(event.target.checked)} />
+            Enable scheduled backups
+          </label>
+          <input value={backupTag} onChange={(event) => setBackupTag(event.target.value)} placeholder="Tag filter" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+          <input value={backupInterval} type="number" onChange={(event) => setBackupInterval(Number(event.target.value) || 720)} placeholder="Interval minutes" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+          <input value={backupRetention} type="number" onChange={(event) => setBackupRetention(Number(event.target.value) || 5)} placeholder="Retention count" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+        </div>
+        <p className="text-xs text-zinc-500">
+          Last scheduled run: {backupPolicy?.last_run_at ? new Date(backupPolicy.last_run_at).toLocaleString() : 'never'}
+        </p>
+        <button
+          type="button"
+          disabled={isUpdatingBackupPolicy}
+          onClick={() => onSave({
+            enabled: backupEnabled,
+            interval_minutes: backupInterval,
+            tag_filter: backupTag,
+            retention_count: backupRetention,
+          })}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white"
+        >
+          Save backup policy
+        </button>
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()
   const { data: users = [] } = useUsers(currentUser?.role === 'admin')
@@ -42,12 +101,14 @@ export default function SettingsPage() {
   const { data: auditLogs = [] } = useAuditLogs(currentUser?.role === 'admin')
   const { data: alertRules = [] } = useAlertRules(currentUser?.role === 'admin')
   const { data: backupDrivers = [] } = useBackupDrivers(currentUser?.role === 'admin')
+  const { data: backupPolicy } = useBackupPolicy(currentUser?.role === 'admin')
   const { data: plugins = [] } = usePlugins(currentUser?.role === 'admin')
   const { mutate: createUser, isPending: isCreatingUser } = useCreateUser()
   const { mutate: updateUser, isPending: isUpdatingUser } = useUpdateUser()
   const { mutate: createApiKey, isPending: isCreatingApiKey } = useCreateApiKey()
   const { mutate: deleteApiKey, isPending: isDeletingApiKey } = useDeleteApiKey()
   const { mutate: updateAlertRule, isPending: isUpdatingAlertRule } = useUpdateAlertRule()
+  const { mutate: updateBackupPolicy, isPending: isUpdatingBackupPolicy } = useUpdateBackupPolicy()
   const [newUsername, setNewUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [newRole, setNewRole] = useState<'admin' | 'viewer'>('viewer')
@@ -294,6 +355,13 @@ export default function SettingsPage() {
                 </div>
               </CardBody>
             </Card>
+
+            <BackupPolicyCard
+              key={backupPolicy?.updated_at ?? 'backup-policy'}
+              backupPolicy={backupPolicy}
+              isUpdatingBackupPolicy={isUpdatingBackupPolicy}
+              onSave={(payload) => updateBackupPolicy(payload)}
+            />
 
             <Card>
               <CardHeader>

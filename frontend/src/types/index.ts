@@ -69,6 +69,17 @@ export interface ConfigBackupSnapshot {
   captured_at: string;
 }
 
+export interface ConfigBackupPolicy {
+  id: number;
+  enabled: boolean;
+  interval_minutes: number;
+  tag_filter: string;
+  retention_count: number;
+  last_run_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WirelessAssociation {
   id: number;
   access_point_asset_id: string;
