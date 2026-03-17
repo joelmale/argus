@@ -8,6 +8,10 @@ callers can override the profile or supply custom nmap_args.
 Key design: scan a batch of hosts at once using nmap's multi-target
 mode — far faster than one-host-at-a-time because nmap can parallelize
 its own probes internally across the entire batch.
+
+Return type for scan_hosts: list[tuple[list[PortResult], OSFingerprint, str, str|None]]
+The 4th element is the nmap-resolved hostname (if any), supplementing
+reverse-DNS lookups in the pipeline.
 """
 from __future__ import annotations
 
@@ -21,6 +25,13 @@ import nmap
 from app.scanner.models import NMAP_PROFILE_ARGS, DiscoveredHost, OSFingerprint, PortResult, ScanProfile
 
 log = logging.getLogger(__name__)
+
+# Minimum nmap OS-match accuracy (0–100) we will trust.
+# --osscan-guess can return wild results at very low confidence — the infamous
+# "Sanyo PLC-XU88 digital projector" fingerprint hits many IoT devices because
+# they share similar minimal TCP/IP stacks. A threshold of 85 keeps only
+# fingerprints that nmap itself is reasonably confident about.
+_MIN_OS_ACCURACY = 85
 
 # NSE scripts to run per service when in balanced/aggressive mode
 SERVICE_SCRIPTS: dict[str, str] = {
@@ -36,6 +47,10 @@ SERVICE_SCRIPTS: dict[str, str] = {
     "mqtt":    "mqtt-subscribe",
     "upnp":    "upnp-info",
 }
+
+# Type alias for clarity
+HostScanTuple = tuple[list[PortResult], OSFingerprint, str, str | None]
+# (ports, os_fingerprint, ip_address, nmap_hostname)
 
 
 def _first_cpe(value) -> str | None:
@@ -71,7 +86,10 @@ async def scan_host(
     """
     results = await scan_hosts([host], profile, custom_args)
     if results:
-        ports, os_fp, _ = results[0]
+        ports, os_fp, _, nmap_hostname = results[0]
+        # Attach nmap hostname back onto the host object for callers that need it
+        if nmap_hostname and not host.nmap_hostname:
+            host.nmap_hostname = nmap_hostname
         return ports, os_fp
     return [], OSFingerprint()
 
@@ -80,10 +98,12 @@ async def scan_hosts(
     hosts: list[DiscoveredHost],
     profile: ScanProfile = ScanProfile.BALANCED,
     custom_args: Optional[str] = None,
-) -> list[tuple[list[PortResult], OSFingerprint, str]]:
+) -> list[HostScanTuple]:
     """
-    Scan a list of hosts. Returns list of (ports, os_fingerprint, ip).
-    Batches hosts into groups for efficiency.
+    Scan a list of hosts.
+    Returns list of (ports, os_fingerprint, ip_address, nmap_hostname).
+    The nmap_hostname is whatever nmap resolved via forward/reverse DNS
+    during its scan — a useful supplement to our own reverse-DNS lookup.
     """
     if not hosts:
         return []
@@ -99,7 +119,7 @@ def _scan_sync(
     hosts: list[DiscoveredHost],
     profile: ScanProfile,
     custom_args: Optional[str],
-) -> list[tuple[list[PortResult], OSFingerprint, str]]:
+) -> list[HostScanTuple]:
     """Synchronous nmap scan — runs in thread executor."""
     target_str = " ".join(h.ip_address for h in hosts)
     args = custom_args or NMAP_PROFILE_ARGS.get(profile, NMAP_PROFILE_ARGS[ScanProfile.BALANCED])
@@ -116,11 +136,12 @@ def _scan_sync(
 
     log.info("Port scan complete in %.1fs", time.monotonic() - t0)
 
-    results = []
+    results: list[HostScanTuple] = []
     for ip in nm.all_hosts():
-        ports = _extract_ports(nm[ip])
-        os_fp = _extract_os(nm[ip])
-        results.append((ports, os_fp, ip))
+        ports      = _extract_ports(nm[ip])
+        os_fp      = _extract_os(nm[ip])
+        nm_hostname = _extract_hostname(nm[ip])
+        results.append((ports, os_fp, ip, nm_hostname))
 
     return results
 
@@ -165,22 +186,69 @@ def _extract_ports(host_data: dict) -> list[PortResult]:
 
 
 def _extract_os(host_data: dict) -> OSFingerprint:
+    """
+    Extract OS fingerprint from nmap host data.
+
+    Enforces a minimum accuracy threshold (_MIN_OS_ACCURACY) to avoid
+    low-confidence guesses poisoning the database. When nmap assigns 40%
+    confidence to "Sanyo PLC-XU88 digital projector" for a Raspberry Pi,
+    we return an empty fingerprint rather than propagate the wrong answer.
+    """
     os_matches = host_data.get("osmatch", [])
     if not os_matches:
         return OSFingerprint()
 
     best = os_matches[0]
-    osclass = best.get("osclass", [{}])[0] if best.get("osclass") else {}
+    accuracy = int(best.get("accuracy", 0))
+
+    if accuracy < _MIN_OS_ACCURACY:
+        log.debug(
+            "OS match '%s' rejected: accuracy %d%% < threshold %d%%",
+            best.get("name", "?"), accuracy, _MIN_OS_ACCURACY,
+        )
+        return OSFingerprint()
+
+    osclass  = best.get("osclass", [{}])[0] if best.get("osclass") else {}
     cpe_list = _flatten_cpes(best.get("osclass", []))
 
     return OSFingerprint(
         os_name=best.get("name"),
         os_family=osclass.get("osfamily"),
         os_version=osclass.get("osgen"),
-        os_accuracy=int(best.get("accuracy", 0)) or None,
+        os_accuracy=accuracy,
         device_type=osclass.get("type"),
         cpe=cpe_list,
     )
+
+
+def _extract_hostname(host_data: dict) -> str | None:
+    """
+    Extract the best hostname nmap resolved during scanning.
+
+    nmap stores hostnames in host_data["hostnames"] as a list of dicts like:
+      [{"name": "router.local", "type": "PTR"}, {"name": "myrouter", "type": "user"}]
+
+    We prefer "user" type (explicitly given) over "PTR" (reverse DNS) and
+    skip entries that are just the IP address in arpa notation.
+    """
+    entries: list[dict] = host_data.get("hostnames", [])
+    if not entries:
+        return None
+
+    # Prefer "user"-typed entries, then any non-empty non-arpa name
+    for type_pref in ("user", "PTR", ""):
+        for entry in entries:
+            name = (entry.get("name") or "").strip()
+            etype = entry.get("type", "")
+            if not name:
+                continue
+            # Skip reverse-arpa entries like "1.1.168.192.in-addr.arpa"
+            if name.endswith(".in-addr.arpa") or name.endswith(".ip6.arpa"):
+                continue
+            if type_pref == "" or etype == type_pref:
+                return name
+
+    return None
 
 
 def build_escalated_args(ports: list[PortResult]) -> str:

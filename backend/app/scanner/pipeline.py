@@ -96,8 +96,12 @@ async def run_scan(
     from app.scanner.stages import portscan
     port_results = await portscan.scan_hosts(hosts, profile)
 
-    # Build a map: ip → (ports, os_fp)
-    port_map: dict[str, tuple] = {ip: (ports, os_fp) for ports, os_fp, ip in port_results}
+    # Build a map: ip → (ports, os_fp, nmap_hostname)
+    # scan_hosts now returns 4-tuples: (ports, os_fp, ip, nmap_hostname)
+    port_map: dict[str, tuple] = {
+        ip: (ports, os_fp, nmap_hostname)
+        for ports, os_fp, ip, nmap_hostname in port_results
+    }
 
     # ── Stages 3–6: Per-host investigation (concurrent) ──────────────────────
     semaphore = asyncio.Semaphore(CONCURRENT_HOSTS)
@@ -110,8 +114,9 @@ async def run_scan(
         asyncio.create_task(
             _investigate_host(
                 host=host,
-                ports=port_map.get(host.ip_address, ([], OSFingerprint()))[0],
-                os_fp=port_map.get(host.ip_address, ([], OSFingerprint()))[1],
+                ports=port_map.get(host.ip_address, ([], OSFingerprint(), None))[0],
+                os_fp=port_map.get(host.ip_address, ([], OSFingerprint(), None))[1],
+                nmap_hostname=port_map.get(host.ip_address, ([], OSFingerprint(), None))[2],
                 profile=profile,
                 analyst=analyst,
                 semaphore=semaphore,
@@ -152,6 +157,7 @@ async def _investigate_host(
     host: DiscoveredHost,
     ports,
     os_fp: OSFingerprint,
+    nmap_hostname: str | None,
     profile: ScanProfile,
     analyst,
     semaphore: asyncio.Semaphore,
@@ -177,13 +183,18 @@ async def _investigate_host(
             dns_lookup.reverse_lookup(ip),
         )
 
+        # Hostname priority: reverse DNS > nmap-resolved > None
+        # We keep reverse_hostname as the primary field but fall back to
+        # nmap's own resolution when reverse DNS has no entry.
+        best_hostname = reverse_hostname or nmap_hostname
+
         # Build partial result
         result = HostScanResult(
             host=host,
             ports=ports,
             os_fingerprint=os_fp,
             mac_vendor=vendor,
-            reverse_hostname=reverse_hostname,
+            reverse_hostname=best_hostname,
             scan_profile=profile,
         )
 
@@ -192,12 +203,27 @@ async def _investigate_host(
         probe_results = await deep_probe.run(host, ports, priority_probes, profile)
         result.probes = probe_results
 
-        # Enrich hostname from DNS probe if not already set
+        # Further enrich hostname from probes if still missing
         if not result.reverse_hostname:
             for pr in probe_results:
                 if pr.probe_type == "dns" and pr.success:
                     result.reverse_hostname = pr.data.get("hostname")
                     break
+            # Also check mDNS and SNMP probes for human-readable names
+            if not result.reverse_hostname:
+                for pr in probe_results:
+                    if pr.probe_type == "mdns" and pr.success:
+                        services = pr.data.get("services", [])
+                        if services and services[0].get("host"):
+                            result.reverse_hostname = services[0]["host"]
+                            break
+            if not result.reverse_hostname:
+                for pr in probe_results:
+                    if pr.probe_type == "snmp" and pr.success:
+                        sys_name = pr.data.get("sys_name")
+                        if sys_name:
+                            result.reverse_hostname = sys_name
+                            break
 
         # Stage 5: AI analysis
         if analyst is not None:

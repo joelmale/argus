@@ -44,9 +44,27 @@ class DeviceClass(str, Enum):
 
 
 NMAP_PROFILE_ARGS: dict[ScanProfile, str] = {
-    ScanProfile.POLITE:     "-sV -O -T2 --top-ports 1000 --osscan-guess",
-    ScanProfile.BALANCED:   "-sV -O -T4 --top-ports 1000 --osscan-guess -A",
-    ScanProfile.AGGRESSIVE: "-sV -O -T5 -p- --osscan-guess -A --script=default,safe,vuln",
+    # Polite — version detection only, no OS probing, slow timing.
+    # Safe for fragile devices (industrial controllers, old printers, etc.)
+    ScanProfile.POLITE: (
+        "-sV -T2 --top-ports 1000 --host-timeout 30s"
+    ),
+
+    # Balanced — version detection + OS detection, but NO guessing.
+    # --osscan-guess is intentionally omitted: it forces nmap to guess even at
+    # 5-10% confidence, causing projector/printer fingerprints (e.g. the infamous
+    # "Sanyo PLC-XU88 digital projector") to be applied to most IoT devices that
+    # share similar minimal TCP/IP stacks. Trust only confident fingerprints.
+    # -A already includes -sV and -O so we avoid doubling up.
+    ScanProfile.BALANCED: (
+        "-sV -O -T4 --top-ports 1000 --host-timeout 60s"
+    ),
+
+    # Aggressive — full port range, OS guessing enabled (user explicitly asked
+    # for it), all default+safe+vuln NSE scripts. Loud but thorough.
+    ScanProfile.AGGRESSIVE: (
+        "-A -T5 -p- --osscan-guess --script=default,safe,vuln"
+    ),
 }
 
 
@@ -59,6 +77,7 @@ class DiscoveredHost(BaseModel):
     response_time_ms: float | None = None
     discovery_method: str = "arp"           # arp | ping | syn | passive
     ttl: int | None = None                   # TTL can hint at OS family
+    nmap_hostname: str | None = None         # hostname nmap resolved during scan
 
 
 # ─── Stage 2: Port scan ──────────────────────────────────────────────────────
@@ -81,7 +100,7 @@ class OSFingerprint(BaseModel):
     os_name: str | None = None
     os_family: str | None = None            # Linux | Windows | iOS | Android | etc.
     os_version: str | None = None
-    os_accuracy: int | None = None          # nmap accuracy percent
+    os_accuracy: int | None = None          # nmap accuracy percent (0–100)
     device_type: str | None = None          # nmap device type hint
     cpe: list[str] = Field(default_factory=list)
 
