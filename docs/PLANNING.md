@@ -109,7 +109,7 @@ Argus is a self-hosted, open-source network asset discovery and inventory platfo
 
 | Concern | Choice | Rationale |
 |---|---|---|
-| Framework | Next.js 14 (App Router) | RSC for static pages, client components for interactive map |
+| Framework | Next.js 16 (App Router) | RSC for static pages, client components for interactive map |
 | Language | TypeScript strict | Types eliminate entire classes of bugs, especially around API shapes |
 | Styling | Tailwind CSS | Utility-first — fast iteration, no CSS file management |
 | Components | shadcn/ui | Unstyled accessible primitives, composable, no vendor lock-in |
@@ -342,18 +342,18 @@ TanStack Query handles all server state (assets, scans, topology graph) with aut
 
 Target: working end-to-end discovery → inventory → topology map.
 
-- [ ] Docker Compose stack fully operational (db, redis, backend, scanner, frontend)
-- [ ] nmap active scanning with configurable CIDR targets
-- [ ] Asset upsert pipeline with change detection
-- [ ] AssetHistory audit trail
-- [ ] REST API: assets, scans, topology, auth
-- [ ] WebSocket real-time events
-- [ ] Frontend: Dashboard, Asset list, Asset detail
-- [ ] Topology map with Cytoscape.js (basic force layout)
-- [ ] Manual scan trigger from UI
-- [ ] JWT authentication (single admin user)
-- [ ] MAC vendor lookup
-- [ ] Scheduled scans via Celery Beat
+- [x] Docker Compose stack fully operational (db, redis, backend, scanner, frontend)
+- [x] nmap active scanning with configurable CIDR targets
+- [x] Asset upsert pipeline with change detection
+- [x] AssetHistory audit trail
+- [x] REST API: assets, scans, topology, auth
+- [x] WebSocket real-time events
+- [x] Frontend: Dashboard, Asset list, Asset detail
+- [x] Topology map with Cytoscape.js (basic force layout)
+- [x] Manual scan trigger from UI
+- [x] JWT authentication (single admin user)
+- [x] MAC vendor lookup
+- [x] Scheduled scans via Celery Beat
 
 ### Phase 2 — Enrichment
 
@@ -468,15 +468,15 @@ Argus runs on a private network and is not exposed to the internet by default. T
 ```bash
 git clone https://github.com/joelmale/argus.git
 cd argus
-./scripts/setup.sh
+npm run setup
 ```
 
-The setup script copies `.env.example` → `.env`, builds containers, and starts the stack.
+The setup script copies `.env.example` → `.env`, builds containers, runs migrations on backend startup, and starts the stack.
 
 ### Development Mode
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+npm run dev
 ```
 
 Source directories are volume-mounted; changes to Python or TypeScript files reload automatically.
@@ -502,16 +502,13 @@ npm run dev
 # Set NEXT_PUBLIC_API_URL=http://localhost:8000 in .env.local
 ```
 
-### Database Migrations (Phase 3 target)
-
-Phase 1 uses SQLAlchemy's `create_all` for simplicity. Before any production deployment, migrate to Alembic:
+### Database Migrations
 
 ```bash
-alembic init alembic
-# Edit alembic.ini and env.py
-alembic revision --autogenerate -m "initial schema"
-alembic upgrade head
+npm run db:migrate
 ```
+
+Alembic is now the active schema management path. The backend startup sequence runs migrations automatically, and existing dev databases are stamped to the initial revision when needed.
 
 ### Branch Strategy
 
