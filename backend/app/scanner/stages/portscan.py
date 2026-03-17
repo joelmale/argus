@@ -38,6 +38,28 @@ SERVICE_SCRIPTS: dict[str, str] = {
 }
 
 
+def _first_cpe(value) -> str | None:
+    if isinstance(value, list):
+        for item in value:
+            if isinstance(item, str) and item:
+                return item
+        return None
+    if isinstance(value, str) and value:
+        return value
+    return None
+
+
+def _flatten_cpes(items: list[dict]) -> list[str]:
+    cpes: list[str] = []
+    for item in items:
+        value = item.get("cpe")
+        if isinstance(value, list):
+            cpes.extend(entry for entry in value if isinstance(entry, str) and entry)
+        elif isinstance(value, str) and value:
+            cpes.append(value)
+    return cpes
+
+
 async def scan_host(
     host: DiscoveredHost,
     profile: ScanProfile = ScanProfile.BALANCED,
@@ -133,7 +155,7 @@ def _extract_ports(host_data: dict) -> list[PortResult]:
                 version=version_str,
                 product=info.get("product"),
                 extra_info=info.get("extrainfo"),
-                cpe=info.get("cpe") or None,
+                cpe=_first_cpe(info.get("cpe")),
                 banner=banner,
             ))
 
@@ -149,7 +171,7 @@ def _extract_os(host_data: dict) -> OSFingerprint:
 
     best = os_matches[0]
     osclass = best.get("osclass", [{}])[0] if best.get("osclass") else {}
-    cpe_list = [c.get("cpe", "") for c in best.get("osclass", []) if c.get("cpe")]
+    cpe_list = _flatten_cpes(best.get("osclass", []))
 
     return OSFingerprint(
         os_name=best.get("name"),
