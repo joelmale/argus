@@ -16,11 +16,11 @@ jobs:
         with:
           python-version: "3.12"
       - name: Install deps
-        run: pip install -r backend/requirements.txt ruff pytest pytest-asyncio
+        run: pip install -r backend/requirements-dev.txt
       - name: Lint
-        run: ruff check backend/
+        run: npm run lint:backend
       - name: Test
-        run: pytest backend/tests/ -v
+        run: npm run test:backend
 
   frontend-lint-typecheck:
     name: Frontend — lint & type-check
@@ -35,9 +35,11 @@ jobs:
       - name: Install deps
         run: cd frontend && npm ci
       - name: Lint
-        run: cd frontend && npm run lint
+        run: npm run lint:frontend
       - name: Type-check
-        run: cd frontend && npm run type-check
+        run: npm run type-check
+      - name: Build
+        run: npm run build:frontend
 
   docker-build:
     name: Docker — build all images

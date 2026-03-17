@@ -104,11 +104,16 @@ def _snmp_get_sync(ip: str, community: str, port: int) -> SnmpProbeData | None:
             value = str(var_bind[1])
             if i < len(oid_names):
                 key = oid_names[i]
-                if key == "sys_descr":     result.sys_descr     = value
-                elif key == "sys_name":    result.sys_name      = value
-                elif key == "sys_location":result.sys_location  = value
-                elif key == "sys_contact": result.sys_contact   = value
-                elif key == "sys_object_id": result.sys_object_id = value
+                if key == "sys_descr":
+                    result.sys_descr = value
+                elif key == "sys_name":
+                    result.sys_name = value
+                elif key == "sys_location":
+                    result.sys_location = value
+                elif key == "sys_contact":
+                    result.sys_contact = value
+                elif key == "sys_object_id":
+                    result.sys_object_id = value
 
         return result
 

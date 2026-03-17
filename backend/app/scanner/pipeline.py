@@ -28,9 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from datetime import datetime, timezone
 
-from app.core.config import settings
 from app.scanner.models import (
     DiscoveredHost,
     HostScanResult,

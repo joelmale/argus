@@ -7,9 +7,13 @@ Override with AI_BACKEND env var: "ollama" | "anthropic" | "none"
 from __future__ import annotations
 
 import logging
+from typing import TYPE_CHECKING
 
 from app.core.config import settings
 from app.scanner.agent.base import BaseAnalyst
+
+if TYPE_CHECKING:
+    from app.scanner.models import AIAnalysis
 
 log = logging.getLogger(__name__)
 

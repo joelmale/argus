@@ -2,9 +2,17 @@
   "name": "argus",
   "private": true,
   "scripts": {
+    "build": "npm run build:frontend",
+    "build:frontend": "cd frontend && npm run build",
+    "lint": "npm run lint:backend && npm run lint:frontend",
+    "lint:backend": "PYTHONPATH=backend ruff check backend/",
+    "lint:frontend": "cd frontend && npm run lint",
     "setup": "./scripts/setup.sh",
-    "dev": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build",
-    "dev:up": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build",
+    "test": "npm run test:backend",
+    "test:backend": "PYTHONPATH=backend pytest backend/tests -v",
+    "type-check": "cd frontend && npm run type-check",
+    "dev": "printf 'Argus local services:\\n- Frontend: http://localhost:3000\\n- API: http://localhost:8000\\n- API Docs: http://localhost:8000/docs\\n\\n' && docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build",
+    "dev:up": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build && printf '\\nArgus local services:\\n- Frontend: http://localhost:3000\\n- API: http://localhost:8000\\n- API Docs: http://localhost:8000/docs\\n'",
     "dev:down": "docker compose -f docker-compose.yml -f docker-compose.dev.yml down",
     "dev:logs": "docker compose -f docker-compose.yml -f docker-compose.dev.yml logs -f backend frontend scanner",
     "dev:ps": "docker compose -f docker-compose.yml -f docker-compose.dev.yml ps",
@@ -12,6 +20,7 @@
     "prod:down": "docker compose down",
     "prod:logs": "docker compose logs -f backend frontend scanner",
     "rebuild:frontend": "docker compose -f docker-compose.yml -f docker-compose.dev.yml build frontend",
-    "rebuild:backend": "docker compose -f docker-compose.yml -f docker-compose.dev.yml build backend scanner"
+    "rebuild:backend": "docker compose -f docker-compose.yml -f docker-compose.dev.yml build backend scanner",
+    "verify": "npm run lint && npm run type-check && npm run test && npm run build"
   }
 }

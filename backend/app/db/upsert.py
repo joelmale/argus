@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, AssetHistory, Port, TopologyLink
+from app.db.models import Asset, AssetHistory, Port
 from app.scanner.models import HostScanResult
 
 log = logging.getLogger(__name__)

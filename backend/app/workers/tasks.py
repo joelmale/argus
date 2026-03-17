@@ -61,7 +61,7 @@ def run_scheduled_scan():
 
 async def _run_job_async(job_id: str) -> None:
     """Async implementation of the scan job — runs the full pipeline."""
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.db.models import ScanJob
     from app.scanner.models import ScanProfile
     from app.scanner.pipeline import run_scan
@@ -114,7 +114,7 @@ async def _run_job_async(job_id: str) -> None:
 
 async def _enqueue_scheduled_scan() -> None:
     """Create and enqueue a ScanJob for the default targets."""
-    from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.db.models import ScanJob
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)

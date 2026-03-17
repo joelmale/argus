@@ -20,7 +20,6 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
-from ipaddress import IPv4Address
 
 from app.scanner.models import MdnsProbeData, ProbeResult
 
@@ -92,7 +91,6 @@ async def probe(ip: str, timeout: float = 6.0) -> ProbeResult:
 
 async def _query_mdns(target_ip: str) -> MdnsProbeData:
     """Use zeroconf to browse services and filter by IP."""
-    from zeroconf import ServiceBrowser, ServiceInfo, Zeroconf
     from zeroconf.asyncio import AsyncZeroconf
 
     data = MdnsProbeData()

@@ -32,7 +32,7 @@ from openai.types.chat import ChatCompletionMessageParam
 from app.core.config import settings
 from app.scanner.agent.base import BaseAnalyst, SYSTEM_PROMPT
 from app.scanner.agent.tools import TOOL_SCHEMAS, execute
-from app.scanner.models import AIAnalysis, DeviceClass, HostScanResult
+from app.scanner.models import AIAnalysis, HostScanResult
 from app.scanner.stages.fingerprint import classify, probe_priority
 
 log = logging.getLogger(__name__)

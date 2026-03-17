@@ -12,8 +12,6 @@ Model recommendation: claude-haiku-4-5 for cost efficiency on bulk scans;
 claude-sonnet-4-6 for high-confidence critical asset investigation.
 """
 from __future__ import annotations
-
-import json
 import logging
 
 import anthropic

@@ -25,6 +25,8 @@
 - Docker Desktop or Docker Engine with Compose
 - A machine where Docker can use host networking for the backend and scanner services
 - Permission to run containers with `NET_RAW` and `NET_ADMIN`
+- Node 20 for local frontend work (`.nvmrc`)
+- Python 3.12 for local backend work (`.python-version`)
 
 ## Quick Start
 
@@ -97,6 +99,23 @@ npm run dev:logs
 - In development, the backend and scanner use host networking so the scanner can access the local network more directly.
 - The frontend runs in containerized dev mode with a persistent `node_modules` volume and reinstalls dependencies only when `frontend/package-lock.json` changes.
 - Docker is currently the canonical way to run the app locally.
+
+## Local Quality Checks
+
+If you want to run backend lint/tests outside Docker, create a Python 3.12 virtualenv and install:
+
+```bash
+pip install -r backend/requirements-dev.txt
+```
+
+Then the root npm scripts are:
+
+```bash
+npm run lint
+npm run type-check
+npm run test
+npm run build
+```
 
 ## Stack
 

@@ -17,6 +17,7 @@ celery[redis]==5.3.6
 # ── Auth ───────────────────────────────────────────────────────
 python-jose[cryptography]==3.3.0
 passlib[bcrypt]==1.7.4
+bcrypt<5
 
 # ── Config ─────────────────────────────────────────────────────
 pydantic-settings==2.2.1

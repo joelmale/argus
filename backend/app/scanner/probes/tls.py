@@ -18,7 +18,7 @@ import asyncio
 import logging
 import ssl
 import time
-from datetime import datetime, timezone
+from datetime import datetime
 
 from app.scanner.models import ProbeResult, TlsProbeData
 

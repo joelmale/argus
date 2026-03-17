@@ -13,7 +13,7 @@ from datetime import datetime, timezone
 
 from sqlalchemy import (
     Boolean, DateTime, ForeignKey, Integer, String, Text,
-    UniqueConstraint, func,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
