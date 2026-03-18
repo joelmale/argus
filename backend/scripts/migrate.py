@@ -36,6 +36,8 @@ def _sync_database_url() -> str:
 def main() -> None:
     config = Config(str(ALEMBIC_INI_PATH))
     config.set_main_option("sqlalchemy.url", _sync_database_url())
+    config.set_main_option("script_location", str(ROOT_DIR / "alembic"))
+    config.set_main_option("prepend_sys_path", str(ROOT_DIR))
 
     engine = create_engine(_sync_database_url())
     inspector = inspect(engine)
