@@ -111,7 +111,7 @@ function AssetRow({ asset }: { asset: Asset }) {
             )}
           </div>
         ) : (
-          <span className="text-xs text-zinc-400">rule-based</span>
+          <span className="text-xs text-zinc-400">{asset.device_type ? 'stored classification' : '—'}</span>
         )}
       </td>
 

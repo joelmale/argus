@@ -50,12 +50,8 @@ export default function ScansPage() {
     e.preventDefault()
     setError(null)
     setLastResult(null)
-    if (!targets.trim()) {
-      setError('Please enter a target IP or CIDR range.')
-      return
-    }
     trigger(
-      { targets: targets.trim(), scan_type: profile },
+      { targets: targets.trim() || undefined, scan_type: profile },
       {
         onSuccess: () => { setLastResult('success'); setTargets('') },
         onError:   () => { setLastResult('error') },
@@ -100,7 +96,7 @@ export default function ScansPage() {
                       type="text"
                       value={targets}
                       onChange={(e) => { setTargets(e.target.value); setError(null) }}
-                      placeholder="192.168.1.0/24  or  10.0.0.1"
+                      placeholder="Leave blank to use the saved default target"
                       className={cn(
                         'w-full px-3 py-2.5 rounded-lg text-sm font-mono',
                         'bg-gray-50 dark:bg-zinc-800',
@@ -146,11 +142,11 @@ export default function ScansPage() {
                   <div className="flex items-center gap-3">
                     <button
                       type="submit"
-                      disabled={isViewer || isPending || !!activeScan || !targets.trim()}
+                      disabled={isViewer || isPending || !!activeScan}
                       className={cn(
                         'flex items-center gap-2 py-2.5 px-5 rounded-lg text-sm font-medium',
                         'transition-all duration-150',
-                        isViewer || isPending || activeScan || !targets.trim()
+                        isViewer || isPending || activeScan
                           ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
                           : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md hover:shadow-sky-500/20',
                       )}

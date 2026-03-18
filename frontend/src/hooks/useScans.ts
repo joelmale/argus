@@ -16,7 +16,7 @@ export function useScans() {
 export function useTriggerScan() {
   const qc = useQueryClient()
   return useMutation({
-    mutationFn: ({ targets, scan_type }: { targets: string; scan_type: string }) =>
+    mutationFn: ({ targets, scan_type }: { targets?: string; scan_type: string }) =>
       scansApi.trigger(targets, scan_type),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['scans'] })

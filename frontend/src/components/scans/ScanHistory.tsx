@@ -104,7 +104,17 @@ function ScanRow({ scan }: { scan: ScanJob }) {
 
       {/* Status */}
       <td className="px-4 py-3">
-        <ScanStatusBadge status={scan.status} />
+        <div className="space-y-1">
+          <ScanStatusBadge status={scan.status} />
+          {scan.status === 'running' && summary?.stage && (
+            <p className="text-[11px] text-zinc-500 capitalize">{summary.stage.replace('_', ' ')}</p>
+          )}
+          {scan.status === 'running' && summary?.message && (
+            <p className="text-[11px] text-zinc-400 max-w-[220px] truncate" title={summary.message}>
+              {summary.message}
+            </p>
+          )}
+        </div>
       </td>
 
       {/* Hosts */}
@@ -114,6 +124,9 @@ function ScanRow({ scan }: { scan: ScanJob }) {
             <span className="text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
               <Server className="w-3 h-3" /> {summary.hosts_found ?? '—'}
             </span>
+            {scan.status === 'running' && summary.hosts_investigated !== undefined && (
+              <span className="text-sky-600 dark:text-sky-400">{summary.hosts_investigated} done</span>
+            )}
             {summary.new_assets > 0 && (
               <span className="text-emerald-600 dark:text-emerald-400">+{summary.new_assets} new</span>
             )}

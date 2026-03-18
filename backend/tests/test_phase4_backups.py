@@ -1,5 +1,3 @@
-import pytest
-
 from app.backups import BACKUP_DRIVERS, list_backup_drivers
 
 

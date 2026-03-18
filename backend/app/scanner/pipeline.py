@@ -48,6 +48,7 @@ async def run_scan(
     targets: str,
     profile: ScanProfile = ScanProfile.BALANCED,
     enable_ai: bool = True,
+    concurrent_hosts: int = CONCURRENT_HOSTS,
     db_session=None,
     broadcast_fn=None,   # Optional: async callable(dict) for WebSocket events
 ) -> ScanSummary:
@@ -71,6 +72,16 @@ async def run_scan(
     log.info("=== Scan started: job=%s targets=%s profile=%s ai=%s ===",
              job_id, targets, profile.value, enable_ai)
 
+    await _broadcast(broadcast_fn, {
+        "event": "scan_progress",
+        "data": {
+            "job_id": job_id,
+            "stage": "discovery",
+            "progress": 0.05,
+            "message": f"Starting host discovery for {targets}",
+        },
+    })
+
     # ── Stage 1: Discovery ────────────────────────────────────────────────────
     from app.scanner.stages import discovery
     hosts = await discovery.sweep(targets)
@@ -87,12 +98,24 @@ async def run_scan(
         "data": {
             "job_id": job_id,
             "stage": "discovery",
+            "progress": 0.15,
             "hosts_found": len(hosts),
             "message": f"Discovered {len(hosts)} live hosts",
         },
     })
 
     # ── Stage 2: Port scan all hosts together (nmap batch) ───────────────────
+    await _broadcast(broadcast_fn, {
+        "event": "scan_progress",
+        "data": {
+            "job_id": job_id,
+            "stage": "port_scan",
+            "progress": 0.2,
+            "hosts_found": len(hosts),
+            "message": f"Running nmap port scan across {len(hosts)} hosts",
+        },
+    })
+
     from app.scanner.stages import portscan
     port_results = await portscan.scan_hosts(hosts, profile)
 
@@ -104,7 +127,7 @@ async def run_scan(
     }
 
     # ── Stages 3–6: Per-host investigation (concurrent) ──────────────────────
-    semaphore = asyncio.Semaphore(CONCURRENT_HOSTS)
+    semaphore = asyncio.Semaphore(max(1, concurrent_hosts))
     analyst = None
     if enable_ai:
         from app.scanner.agent import get_analyst
@@ -127,10 +150,53 @@ async def run_scan(
         for host in hosts
     ]
 
-    results: list[HostScanResult | None] = await asyncio.gather(*tasks, return_exceptions=False)
+    results: list[HostScanResult | None] = []
+    completed_hosts = 0
+    total_hosts = len(tasks)
+    await _broadcast(broadcast_fn, {
+        "event": "scan_progress",
+        "data": {
+            "job_id": job_id,
+            "stage": "investigation",
+            "progress": 0.25,
+            "hosts_found": len(hosts),
+            "hosts_investigated": 0,
+            "message": f"Investigating {total_hosts} discovered hosts",
+        },
+    })
+
+    for task in asyncio.as_completed(tasks):
+        result = await task
+        results.append(result)
+        completed_hosts += 1
+        progress = 0.25 + (0.6 * (completed_hosts / max(total_hosts, 1)))
+        current_host = result.host.ip_address if result else None
+        await _broadcast(broadcast_fn, {
+            "event": "scan_progress",
+            "data": {
+                "job_id": job_id,
+                "stage": "investigation",
+                "progress": round(progress, 3),
+                "hosts_found": len(hosts),
+                "hosts_investigated": completed_hosts,
+                "current_host": current_host,
+                "message": f"Investigated {completed_hosts}/{total_hosts} hosts",
+            },
+        })
 
     # ── Stage 6: Persist all results ─────────────────────────────────────────
     if db_session is not None:
+        await _broadcast(broadcast_fn, {
+            "event": "scan_progress",
+            "data": {
+                "job_id": job_id,
+                "stage": "persist",
+                "progress": 0.9,
+                "hosts_found": len(hosts),
+                "hosts_investigated": completed_hosts,
+                "message": f"Persisting results for {completed_hosts} investigated hosts",
+            },
+        })
         scanned_ips = {r.host.ip_address for r in results if r}
         await _persist_results(db_session, results, scanned_ips, summary, broadcast_fn, job_id)
 
@@ -259,6 +325,7 @@ async def _persist_results(
     """Persist all scan results to the database."""
     from app.db.upsert import mark_offline, upsert_scan_result
     from app.alerting import notify_devices_offline_if_enabled, notify_new_device_if_enabled
+    from app.scanner.config import has_meaningful_scan_evidence
     from app.scanner.topology import infer_topology_links_from_snmp
 
     # Find assets that were online before but not in this scan
@@ -270,6 +337,9 @@ async def _persist_results(
 
     for result in results:
         if result is None:
+            continue
+        if not has_meaningful_scan_evidence(result):
+            log.info("Skipping weak scan result for %s: insufficient evidence to persist asset", result.host.ip_address)
             continue
         try:
             asset, change_type = await upsert_scan_result(db_session, result)

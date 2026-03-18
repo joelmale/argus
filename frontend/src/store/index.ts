@@ -14,7 +14,9 @@ export interface ActiveScan {
   stage?: string
   current_host?: string
   hosts_found?: number
+  hosts_investigated?: number
   progress?: number
+  message?: string
 }
 
 interface AppState {
@@ -99,7 +101,9 @@ export function processWsEvent(payload: WsEvent, store: ReturnType<typeof useApp
         stage: payload.data.stage,
         current_host: payload.data.current_host,
         hosts_found: payload.data.hosts_found,
+        hosts_investigated: payload.data.hosts_investigated,
         progress: payload.data.progress,
+        message: payload.data.message,
       })
       break
 

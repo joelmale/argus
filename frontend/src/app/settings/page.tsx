@@ -5,7 +5,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useResetInventory, useScannerConfig, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateUser, useUsers } from '@/hooks/useAuth'
 
 const SECTIONS = [
   {
@@ -52,6 +52,30 @@ type BackupPolicyFormProps = {
   }) => void
 }
 
+type ScannerConfigCardProps = {
+  scannerConfig?: {
+    enabled: boolean
+    default_targets: string | null
+    auto_detect_targets: boolean
+    detected_targets: string | null
+    effective_targets: string | null
+    default_profile: string
+    interval_minutes: number
+    concurrent_hosts: number
+    last_scheduled_scan_at: string | null
+    updated_at: string
+  }
+  isUpdatingScannerConfig: boolean
+  onSave: (payload: {
+    enabled: boolean
+    default_targets: string | null
+    auto_detect_targets: boolean
+    default_profile: string
+    interval_minutes: number
+    concurrent_hosts: number
+  }) => void
+}
+
 function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: BackupPolicyFormProps) {
   const [backupEnabled, setBackupEnabled] = useState(backupPolicy?.enabled ?? false)
   const [backupInterval, setBackupInterval] = useState(backupPolicy?.interval_minutes ?? 720)
@@ -94,6 +118,94 @@ function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: Back
   )
 }
 
+function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: ScannerConfigCardProps) {
+  const [scannerEnabled, setScannerEnabled] = useState(scannerConfig?.enabled ?? true)
+  const [autoDetectTargets, setAutoDetectTargets] = useState(scannerConfig?.auto_detect_targets ?? true)
+  const [defaultTargets, setDefaultTargets] = useState(scannerConfig?.default_targets ?? '')
+  const [defaultProfile, setDefaultProfile] = useState(scannerConfig?.default_profile ?? 'balanced')
+  const [scanInterval, setScanInterval] = useState(scannerConfig?.interval_minutes ?? 60)
+  const [concurrentHosts, setConcurrentHosts] = useState(scannerConfig?.concurrent_hosts ?? 10)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><ScanLine className="w-4 h-4 inline mr-1.5" />Scanner Configuration</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={scannerEnabled} onChange={(event) => setScannerEnabled(event.target.checked)} />
+            Enable scheduled scans
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={autoDetectTargets} onChange={(event) => setAutoDetectTargets(event.target.checked)} />
+            Auto-detect local subnet when no explicit target is set
+          </label>
+          <input
+            value={defaultTargets}
+            onChange={(event) => setDefaultTargets(event.target.value)}
+            placeholder={autoDetectTargets ? 'Optional override, e.g. 192.168.96.0/20' : 'Required, e.g. 192.168.96.0/20'}
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <select
+            value={defaultProfile}
+            onChange={(event) => setDefaultProfile(event.target.value)}
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          >
+            <option value="balanced">Balanced</option>
+            <option value="polite">Polite</option>
+            <option value="aggressive">Aggressive</option>
+          </select>
+          <input
+            value={scanInterval}
+            type="number"
+            min={1}
+            onChange={(event) => setScanInterval(Number(event.target.value) || 60)}
+            placeholder="Scan interval minutes"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <input
+            value={concurrentHosts}
+            type="number"
+            min={1}
+            max={128}
+            onChange={(event) => setConcurrentHosts(Number(event.target.value) || 10)}
+            placeholder="Concurrent hosts"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+        </div>
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Effective target</p>
+          <p className="text-xs text-zinc-500">
+            {scannerConfig?.effective_targets ?? 'No target resolved yet. Save settings or enter an explicit range.'}
+          </p>
+          {scannerConfig?.detected_targets && (
+            <p className="text-xs text-zinc-500">Auto-detected subnet: {scannerConfig.detected_targets}</p>
+          )}
+          <p className="text-xs text-zinc-500">
+            Last scheduled run: {scannerConfig?.last_scheduled_scan_at ? new Date(scannerConfig.last_scheduled_scan_at).toLocaleString() : 'never'}
+          </p>
+        </div>
+        <button
+          type="button"
+          disabled={isUpdatingScannerConfig}
+          onClick={() => onSave({
+            enabled: scannerEnabled,
+            default_targets: defaultTargets.trim() || null,
+            auto_detect_targets: autoDetectTargets,
+            default_profile: defaultProfile,
+            interval_minutes: scanInterval,
+            concurrent_hosts: concurrentHosts,
+          })}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+        >
+          Save scanner settings
+        </button>
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()
   const { data: users = [] } = useUsers(currentUser?.role === 'admin')
@@ -102,6 +214,7 @@ export default function SettingsPage() {
   const { data: alertRules = [] } = useAlertRules(currentUser?.role === 'admin')
   const { data: backupDrivers = [] } = useBackupDrivers(currentUser?.role === 'admin')
   const { data: backupPolicy } = useBackupPolicy(currentUser?.role === 'admin')
+  const { data: scannerConfig } = useScannerConfig(currentUser?.role === 'admin')
   const { data: plugins = [] } = usePlugins(currentUser?.role === 'admin')
   const { data: integrationEvents = [] } = useIntegrationEvents(currentUser?.role === 'admin')
   const { data: homeAssistantExport } = useHomeAssistantEntities(currentUser?.role === 'admin')
@@ -111,12 +224,16 @@ export default function SettingsPage() {
   const { mutate: deleteApiKey, isPending: isDeletingApiKey } = useDeleteApiKey()
   const { mutate: updateAlertRule, isPending: isUpdatingAlertRule } = useUpdateAlertRule()
   const { mutate: updateBackupPolicy, isPending: isUpdatingBackupPolicy } = useUpdateBackupPolicy()
+  const { mutate: updateScannerConfig, isPending: isUpdatingScannerConfig } = useUpdateScannerConfig()
+  const { mutate: resetInventory, isPending: isResettingInventory } = useResetInventory()
   const [newUsername, setNewUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
   const [newRole, setNewRole] = useState<'admin' | 'viewer'>('viewer')
   const [userError, setUserError] = useState<string | null>(null)
   const [apiKeyName, setApiKeyName] = useState('')
   const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null)
+  const [inventoryConfirm, setInventoryConfirm] = useState('')
+  const [includeScanHistory, setIncludeScanHistory] = useState(false)
 
   function handleCreateUser(event: React.FormEvent) {
     event.preventDefault()
@@ -423,6 +540,13 @@ export default function SettingsPage() {
               onSave={(payload) => updateBackupPolicy(payload)}
             />
 
+            <ScannerConfigCard
+              key={scannerConfig?.updated_at ?? 'scanner-config'}
+              scannerConfig={scannerConfig}
+              isUpdatingScannerConfig={isUpdatingScannerConfig}
+              onSave={(payload) => updateScannerConfig(payload)}
+            />
+
             <Card>
               <CardHeader>
                 <CardTitle><Bell className="w-4 h-4 inline mr-1.5" />Alert Rules</CardTitle>
@@ -490,20 +614,40 @@ export default function SettingsPage() {
                 </a>
               </CardBody>
             </Card>
+
+            <Card>
+              <CardHeader>
+                <CardTitle><Trash2 className="w-4 h-4 inline mr-1.5 text-red-500" />Danger Zone</CardTitle>
+              </CardHeader>
+              <CardBody className="space-y-4">
+                <p className="text-sm text-zinc-500">
+                  Clear the discovered asset inventory if a bad scan polluted the database. This removes assets, ports, history, topology, findings, and config backup records.
+                </p>
+                <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+                  <input type="checkbox" checked={includeScanHistory} onChange={(event) => setIncludeScanHistory(event.target.checked)} />
+                  Also delete scan job history
+                </label>
+                <input
+                  value={inventoryConfirm}
+                  onChange={(event) => setInventoryConfirm(event.target.value)}
+                  placeholder="Type: reset inventory"
+                  className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-red-200 dark:border-red-900"
+                />
+                <button
+                  type="button"
+                  disabled={isResettingInventory || inventoryConfirm.trim().toLowerCase() !== 'reset inventory'}
+                  onClick={() => resetInventory(
+                    { confirm: inventoryConfirm, include_scan_history: includeScanHistory },
+                    { onSuccess: () => { setInventoryConfirm(''); setIncludeScanHistory(false) } },
+                  )}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-red-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+                >
+                  Clear inventory
+                </button>
+              </CardBody>
+            </Card>
           </>
         )}
-
-        {/* Coming soon banner */}
-        <div className="flex items-start gap-3 p-4 rounded-xl bg-yellow-500/10 border border-yellow-500/20">
-          <Construction className="w-5 h-5 text-yellow-500 flex-shrink-0 mt-0.5" />
-          <div>
-            <p className="text-sm font-medium text-yellow-700 dark:text-yellow-400">Settings UI coming soon</p>
-            <p className="text-xs text-yellow-600/80 dark:text-yellow-400/70 mt-0.5">
-              Configure Argus via <span className="font-mono">.env</span> for now.
-              A full settings UI is planned for a future release.
-            </p>
-          </div>
-        </div>
 
         {/* Upcoming sections preview */}
         <div className={currentUser?.role === 'viewer' ? 'space-y-3 opacity-50 pointer-events-none' : 'space-y-3'}>
@@ -534,8 +678,7 @@ export default function SettingsPage() {
           </CardHeader>
           <CardBody>
             <p className="text-xs text-zinc-500 mb-3">
-              All Argus settings are currently configured via environment variables in <span className="font-mono">.env</span>.
-              See <span className="font-mono">.env.example</span> in the project root for all available options.
+              Environment variables still bootstrap Argus at container start, but scanner defaults can now be updated live here without editing <span className="font-mono">.env</span>.
             </p>
             <div className="rounded-lg bg-zinc-900 text-zinc-300 p-4 text-xs font-mono space-y-1 overflow-x-auto">
               {[

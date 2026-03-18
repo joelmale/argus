@@ -257,3 +257,18 @@ class ConfigBackupPolicy(Base):
     last_run_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class ScannerConfig(Base):
+    __tablename__ = "scanner_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_targets: Mapped[str | None] = mapped_column(Text)
+    auto_detect_targets: Mapped[bool] = mapped_column(Boolean, default=True)
+    default_profile: Mapped[str] = mapped_column(String(32), default="balanced")
+    interval_minutes: Mapped[int] = mapped_column(Integer, default=60)
+    concurrent_hosts: Mapped[int] = mapped_column(Integer, default=10)
+    last_scheduled_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

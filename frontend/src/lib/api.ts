@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { ConfigBackupPolicy, ConfigBackupTarget } from "@/types";
+import type { ConfigBackupPolicy, ConfigBackupTarget, ScannerConfig } from "@/types";
 
 export const api = axios.create({
   baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
@@ -43,6 +43,11 @@ export const authApi = {
   getBackupPolicy: () => api.get("/api/v1/system/backup-policy"),
   updateBackupPolicy: (payload: Omit<ConfigBackupPolicy, "id" | "last_run_at" | "created_at" | "updated_at">) =>
     api.put("/api/v1/system/backup-policy", payload),
+  getScannerConfig: () => api.get("/api/v1/system/scanner-config"),
+  updateScannerConfig: (payload: Omit<ScannerConfig, "id" | "detected_targets" | "effective_targets" | "last_scheduled_scan_at" | "created_at" | "updated_at">) =>
+    api.put("/api/v1/system/scanner-config", payload),
+  resetInventory: (payload: { confirm: string; include_scan_history: boolean }) =>
+    api.post("/api/v1/system/inventory/reset", payload),
 };
 
 // ─── Asset endpoints ────────────────────────────────────────────
@@ -78,8 +83,8 @@ export const assetsApi = {
 // ─── Scan endpoints ─────────────────────────────────────────────
 export const scansApi = {
   list: () => api.get("/api/v1/scans/"),
-  trigger: (targets: string, scan_type = "balanced") =>
-    api.post("/api/v1/scans/trigger", { targets, scan_type }),
+  trigger: (targets?: string, scan_type = "balanced") =>
+    api.post("/api/v1/scans/trigger", { targets: targets?.trim() || undefined, scan_type }),
   get: (id: string) => api.get(`/api/v1/scans/${id}`),
 };
 

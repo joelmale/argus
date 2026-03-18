@@ -24,6 +24,35 @@ from app.scanner.models import HostScanResult
 
 log = logging.getLogger(__name__)
 
+_AI_PERSIST_CONFIDENCE = 0.8
+
+
+def _has_probe_evidence(result: HostScanResult) -> bool:
+    return any(probe.success and probe.probe_type != "dns" and probe.data for probe in result.probes)
+
+
+def _should_persist_os_name(result: HostScanResult) -> bool:
+    if not result.os_fingerprint.os_name:
+        return False
+    if result.open_ports:
+        return True
+    if result.host.mac_address or result.reverse_hostname or _has_probe_evidence(result):
+        return True
+    return False
+
+
+def _should_persist_ai_fields(result: HostScanResult) -> bool:
+    ai = result.ai_analysis
+    if ai is None or ai.device_class.value == "unknown":
+        return False
+    if ai.confidence >= _AI_PERSIST_CONFIDENCE:
+        return True
+    if _has_probe_evidence(result):
+        return True
+    if result.mac_vendor and result.open_ports:
+        return True
+    return False
+
 
 async def upsert_scan_result(
     db: AsyncSession,
@@ -46,10 +75,10 @@ async def upsert_scan_result(
     new_vendor = result.mac_vendor
     new_device_type = None
 
-    if result.os_fingerprint.os_name:
+    if _should_persist_os_name(result):
         new_os = result.os_fingerprint.os_name
 
-    if result.ai_analysis:
+    if result.ai_analysis and _should_persist_ai_fields(result):
         ai = result.ai_analysis
         if ai.os_guess:
             new_os = ai.os_guess

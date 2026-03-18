@@ -21,8 +21,7 @@ export function QuickScan() {
 
   function handleScan(e: React.FormEvent) {
     e.preventDefault()
-    if (!targets.trim()) return
-    trigger({ targets: targets.trim(), scan_type: profile })
+    trigger({ targets: targets.trim() || undefined, scan_type: profile })
   }
 
   return (
@@ -44,7 +43,7 @@ export function QuickScan() {
               type="text"
               value={targets}
               onChange={(e) => setTargets(e.target.value)}
-              placeholder="192.168.1.0/24"
+              placeholder="Leave blank to use saved scanner default"
               className={cn(
                 'w-full px-3 py-2 rounded-lg text-sm',
                 'bg-gray-50 dark:bg-zinc-800',
@@ -79,11 +78,11 @@ export function QuickScan() {
 
           <button
             type="submit"
-            disabled={isPending || !!activeScan || !targets.trim()}
+            disabled={isPending || !!activeScan}
             className={cn(
               'w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-medium',
               'transition-all duration-150',
-              isPending || activeScan || !targets.trim()
+              isPending || activeScan
                 ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
                 : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-sky-500/25',
             )}

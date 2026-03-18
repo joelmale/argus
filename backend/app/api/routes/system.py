@@ -1,18 +1,20 @@
 from __future__ import annotations
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin
+from app.audit import log_audit_event
 from app.backups import get_backup_policy, list_backup_drivers, update_backup_policy
 from app.db.models import Asset, User
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot
 from app.integrations import build_home_assistant_entities, list_integration_events
 from app.plugins import list_plugins
+from app.scanner.config import clear_inventory, read_effective_scanner_config, update_scanner_config
 
 router = APIRouter()
 
@@ -22,6 +24,37 @@ class BackupPolicyUpdateRequest(BaseModel):
     interval_minutes: int
     tag_filter: str
     retention_count: int
+
+
+class ScannerConfigUpdateRequest(BaseModel):
+    enabled: bool
+    default_targets: str | None = None
+    auto_detect_targets: bool
+    default_profile: str
+    interval_minutes: int
+    concurrent_hosts: int
+
+
+class ResetInventoryRequest(BaseModel):
+    include_scan_history: bool = False
+    confirm: str
+
+
+def _serialize_scanner_config(config, effective) -> dict:
+    return {
+        "id": config.id,
+        "enabled": config.enabled,
+        "default_targets": config.default_targets,
+        "auto_detect_targets": config.auto_detect_targets,
+        "detected_targets": effective.detected_targets,
+        "effective_targets": effective.effective_targets,
+        "default_profile": config.default_profile,
+        "interval_minutes": config.interval_minutes,
+        "concurrent_hosts": config.concurrent_hosts,
+        "last_scheduled_scan_at": config.last_scheduled_scan_at.isoformat() if config.last_scheduled_scan_at else None,
+        "created_at": config.created_at.isoformat(),
+        "updated_at": config.updated_at.isoformat(),
+    }
 
 
 @router.get("/backup-drivers")
@@ -88,6 +121,58 @@ async def read_backup_policy(
         "created_at": policy.created_at.isoformat(),
         "updated_at": policy.updated_at.isoformat(),
     }
+
+
+@router.get("/scanner-config")
+async def get_scanner_config(
+    _: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    config, effective = await read_effective_scanner_config(db)
+    return _serialize_scanner_config(config, effective)
+
+
+@router.put("/scanner-config")
+async def write_scanner_config(
+    payload: ScannerConfigUpdateRequest,
+    user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        config, effective = await update_scanner_config(
+            db,
+            enabled=payload.enabled,
+            default_targets=payload.default_targets,
+            auto_detect_targets=payload.auto_detect_targets,
+            default_profile=payload.default_profile,
+            interval_minutes=payload.interval_minutes,
+            concurrent_hosts=payload.concurrent_hosts,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="scanner.config.updated",
+        user=user,
+        target_type="scanner_config",
+        target_id=str(config.id),
+        details={"effective_targets": effective.effective_targets},
+    )
+    await db.commit()
+    return _serialize_scanner_config(config, effective)
+
+
+@router.post("/inventory/reset")
+async def reset_inventory(
+    payload: ResetInventoryRequest,
+    user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    if payload.confirm.strip().lower() != "reset inventory":
+        raise HTTPException(status_code=400, detail="Confirmation text must be 'reset inventory'")
+    result = await clear_inventory(db, include_scan_history=payload.include_scan_history, actor=user)
+    await db.commit()
+    return result
 
 
 @router.put("/backup-policy")

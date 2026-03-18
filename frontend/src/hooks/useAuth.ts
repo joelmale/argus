@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, HomeAssistantExport, IntegrationEvent, PluginInfo, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, HomeAssistantExport, IntegrationEvent, PluginInfo, ScannerConfig, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -256,6 +256,17 @@ export function useBackupPolicy(enabled = true) {
   })
 }
 
+export function useScannerConfig(enabled = true) {
+  return useQuery<ScannerConfig>({
+    queryKey: ['system', 'scanner-config'],
+    queryFn: async () => {
+      const { data } = await authApi.getScannerConfig()
+      return data
+    },
+    enabled,
+  })
+}
+
 export function useUpdateBackupPolicy() {
   const queryClient = useQueryClient()
 
@@ -266,6 +277,40 @@ export function useUpdateBackupPolicy() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['system', 'backup-policy'] })
+    },
+  })
+}
+
+export function useUpdateScannerConfig() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: Omit<ScannerConfig, 'id' | 'detected_targets' | 'effective_targets' | 'last_scheduled_scan_at' | 'created_at' | 'updated_at'>) => {
+      const { data } = await authApi.updateScannerConfig(payload)
+      return data as ScannerConfig
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'scanner-config'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useResetInventory() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: { confirm: string; include_scan_history: boolean }) => {
+      const { data } = await authApi.resetInventory(payload)
+      return data as { assets_deleted: number; scans_deleted: number }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['assets'] })
+      await queryClient.invalidateQueries({ queryKey: ['scans'] })
+      await queryClient.invalidateQueries({ queryKey: ['topology'] })
+      await queryClient.invalidateQueries({ queryKey: ['findings'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+      await queryClient.invalidateQueries({ queryKey: ['system', 'home-assistant-entities'] })
     },
   })
 }

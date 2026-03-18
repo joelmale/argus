@@ -80,6 +80,21 @@ export interface ConfigBackupPolicy {
   updated_at: string;
 }
 
+export interface ScannerConfig {
+  id: number;
+  enabled: boolean;
+  default_targets: string | null;
+  auto_detect_targets: boolean;
+  detected_targets: string | null;
+  effective_targets: string | null;
+  default_profile: string;
+  interval_minutes: number;
+  concurrent_hosts: number;
+  last_scheduled_scan_at: string | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface WirelessAssociation {
   id: number;
   access_point_asset_id: string;
@@ -215,7 +230,7 @@ export interface TopologyGraph {
 
 export type WsEvent =
   | { event: "device_discovered"; data: Asset }
-  | { event: "scan_progress"; data: { job_id: string; stage?: string; progress?: number; current_host?: string; hosts_found?: number; message?: string } }
+  | { event: "scan_progress"; data: { job_id: string; stage?: string; progress?: number; current_host?: string; hosts_found?: number; hosts_investigated?: number; message?: string } }
   | { event: "scan_complete"; data: Record<string, unknown> }
   | { event: "device_investigated"; data: { job_id: string; ip: string; device_class: string; vendor: string | null; confidence: number } }
   | { event: "device_status_change"; data: { id: string; status: AssetStatus } }

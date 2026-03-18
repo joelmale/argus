@@ -13,6 +13,7 @@ import asyncio
 import json
 import logging
 import threading
+import time
 
 from celery import Celery
 from celery.signals import worker_ready
@@ -36,7 +37,7 @@ celery_app.conf.update(
     beat_schedule={
         "scheduled-scan": {
             "task": "app.workers.tasks.run_scheduled_scan",
-            "schedule": settings.SCANNER_INTERVAL_MINUTES * 60,
+            "schedule": 60,
         },
         "scheduled-backups": {
             "task": "app.workers.tasks.run_scheduled_backups",
@@ -76,6 +77,7 @@ async def _run_job_async(job_id: str) -> None:
     """Async implementation of the scan job — runs the full pipeline."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.db.models import ScanJob
+    from app.scanner.config import get_or_create_scanner_config, materialize_scan_targets
     from app.scanner.models import ScanProfile
     from app.scanner.pipeline import run_scan
 
@@ -90,19 +92,18 @@ async def _run_job_async(job_id: str) -> None:
             return
 
         # Mark as running
+        job.targets = materialize_scan_targets(job.targets)
         job.status = "running"
         job.started_at = datetime.now(timezone.utc)
+        config = await get_or_create_scanner_config(db)
         await db.commit()
 
-        await _publish_event({
-            "event": "scan_progress",
-            "data": {
-                "job_id": job_id,
-                "stage": "queued",
-                "progress": 0.0,
-                "message": f"Queued scan for {job.targets}",
-            },
-        })
+        job.result_summary = {
+            "stage": "queued",
+            "progress": 0.0,
+            "message": f"Queued scan for {job.targets}",
+        }
+        await db.commit()
 
         try:
             try:
@@ -116,8 +117,9 @@ async def _run_job_async(job_id: str) -> None:
                 targets=job.targets,
                 profile=profile,
                 enable_ai=enable_ai,
+                concurrent_hosts=config.concurrent_hosts,
                 db_session=db,
-                broadcast_fn=_get_broadcast_fn(),
+                broadcast_fn=_get_job_broadcast_fn(db, job),
             )
 
             job.status = "done"
@@ -149,17 +151,32 @@ async def _run_job_async(job_id: str) -> None:
 async def _enqueue_scheduled_scan() -> None:
     """Create and enqueue a ScanJob for the default targets."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy import select
     from app.db.models import ScanJob
+    from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets, should_enqueue_scheduled_scan
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with Session() as db:
+        config = await get_or_create_scanner_config(db)
+        if not should_enqueue_scheduled_scan(config):
+            return
+        existing_job = (
+            await db.execute(
+                select(ScanJob).where(ScanJob.status.in_(("pending", "running")))
+            )
+        ).scalar_one_or_none()
+        if existing_job is not None:
+            log.info("Skipping scheduled scan enqueue; scan already active: job_id=%s status=%s", existing_job.id, existing_job.status)
+            return
+        targets = resolve_scan_targets(config, None)
         job = ScanJob(
-            targets=settings.SCANNER_DEFAULT_TARGETS,
-            scan_type=settings.SCANNER_DEFAULT_PROFILE,
+            targets=targets,
+            scan_type=config.default_profile,
             triggered_by="schedule",
         )
+        config.last_scheduled_scan_at = datetime.now(timezone.utc)
         db.add(job)
         await db.commit()
         await db.refresh(job)
@@ -169,7 +186,7 @@ async def _enqueue_scheduled_scan() -> None:
 
     # Enqueue the actual work
     run_scan_job.delay(job_id)
-    log.info("Scheduled scan enqueued: job_id=%s targets=%s", job_id, settings.SCANNER_DEFAULT_TARGETS)
+    log.info("Scheduled scan enqueued: job_id=%s targets=%s", job_id, targets)
 
 
 async def _run_scheduled_backups_async() -> None:
@@ -188,14 +205,38 @@ async def _run_scheduled_backups_async() -> None:
 
 def _get_broadcast_fn():
     """Return a broadcast function that publishes events to Redis pub/sub."""
-    import redis
-
-    r = redis.from_url(settings.REDIS_URL)
-
     async def broadcast(payload: dict):
         await _publish_event(payload)
 
     return broadcast
+
+
+def _get_job_broadcast_fn(db, job):
+    progress_state = {"last_flush": 0.0, "last_stage": None}
+
+    async def broadcast(payload: dict):
+        await _record_job_progress(db, job, payload, progress_state)
+        await _publish_event(payload)
+
+    return broadcast
+
+
+async def _record_job_progress(db, job, payload: dict, progress_state: dict) -> None:
+    if payload.get("event") != "scan_progress":
+        return
+
+    data = payload.get("data", {})
+    summary = dict(job.result_summary or {})
+    summary.update(data)
+    job.result_summary = summary
+
+    now = time.monotonic()
+    stage = data.get("stage")
+    should_flush = stage != progress_state["last_stage"] or (now - progress_state["last_flush"]) >= 5.0
+    if should_flush:
+        progress_state["last_stage"] = stage
+        progress_state["last_flush"] = now
+        await db.commit()
 
 
 async def _publish_event(payload: dict) -> None:

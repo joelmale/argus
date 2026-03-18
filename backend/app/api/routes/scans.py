@@ -1,7 +1,7 @@
 """Scan job management endpoints."""
 from uuid import UUID
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -13,13 +13,14 @@ from app.db.session import get_db
 from app.db.upsert import upsert_scan_result
 from app.ingestion.logs import parse_dns_dhcp_logs
 from app.notifications import notify_new_device
+from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets
 from app.workers.tasks import run_scan_job
 
 router = APIRouter()
 
 
 class TriggerScanRequest(BaseModel):
-    targets: str = Field(min_length=1)
+    targets: str | None = Field(default=None)
     scan_type: str = "balanced"
 
 
@@ -44,7 +45,12 @@ async def trigger_scan(
     _: User = Depends(get_current_admin),
 ):
     """Enqueue a manual scan. The scanner worker picks this up via Redis."""
-    job = ScanJob(targets=payload.targets, scan_type=payload.scan_type, triggered_by="manual")
+    config = await get_or_create_scanner_config(db)
+    try:
+        targets = resolve_scan_targets(config, payload.targets)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    job = ScanJob(targets=targets, scan_type=payload.scan_type, triggered_by="manual")
     db.add(job)
     await db.commit()
     await db.refresh(job)

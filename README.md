@@ -49,7 +49,8 @@ This script now:
 Equivalent manual command:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up --build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml build
+docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 ```
 
 Notes:
@@ -75,6 +76,18 @@ Start in the background:
 
 ```bash
 npm run dev:up
+```
+
+Rebuild all dev images explicitly:
+
+```bash
+npm run dev:build
+```
+
+Rebuild and restart the dev stack:
+
+```bash
+npm run dev:rebuild
 ```
 
 Stop the stack:
@@ -107,6 +120,7 @@ npm run db:migrate
 - In development, the backend and scanner use host networking so the scanner can access the local network more directly.
 - The frontend runs in containerized dev mode with a persistent `node_modules` volume and reinstalls dependencies only when `frontend/package-lock.json` changes.
 - Docker is currently the canonical way to run the app locally.
+- `npm run dev` and `npm run dev:up` do not force image rebuilds anymore; use `npm run dev:build` or `npm run dev:rebuild` when you actually want fresh images.
 
 ## Local Quality Checks
 
@@ -123,6 +137,21 @@ npm run lint
 npm run type-check
 npm run test
 npm run build
+```
+
+For Docker-first development, the backend npm scripts now use the dev backend container automatically:
+
+```bash
+npm run lint:backend
+npm run test:backend
+npm run db:migrate
+```
+
+If you explicitly want host-local Python checks, use:
+
+```bash
+npm run lint:backend:local
+npm run test:backend:local
 ```
 
 Inside the Docker dev backend container, test tooling is available directly:
