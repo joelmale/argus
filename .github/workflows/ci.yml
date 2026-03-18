@@ -10,6 +10,24 @@ jobs:
   backend-lint-test:
     name: Backend — lint & test
     runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_DB: argus
+          POSTGRES_USER: argus
+          POSTGRES_PASSWORD: argus_dev_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U argus -d argus"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    env:
+      DATABASE_URL: postgresql+asyncpg://argus:argus_dev_password@127.0.0.1:5432/argus
+      APP_SECRET_KEY: ci-test-secret
+      APP_DEBUG: "false"
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -17,6 +35,8 @@ jobs:
           python-version: "3.12"
       - name: Install deps
         run: pip install -r backend/requirements-dev.txt
+      - name: Run migrations
+        run: python backend/scripts/migrate.py
       - name: Lint
         run: npm run lint:backend:local
       - name: Test

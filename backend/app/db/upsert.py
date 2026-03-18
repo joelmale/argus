@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, AssetHistory, Port
+from app.db.models import Asset, AssetAIAnalysis, AssetHistory, Port
 from app.scanner.models import HostScanResult
 
 log = logging.getLogger(__name__)
@@ -105,6 +105,8 @@ async def upsert_scan_result(
         db.add(asset)
         await db.flush()  # Get the generated ID
 
+        await _upsert_ai_analysis(db, asset, result)
+
         await _upsert_ports(db, asset, result)
 
         db.add(AssetHistory(
@@ -142,6 +144,8 @@ async def upsert_scan_result(
         _check("mac_address", result.host.mac_address)
 
     existing.last_seen = now
+
+    await _upsert_ai_analysis(db, existing, result)
 
     # ── Upsert ports ──────────────────────────────────────────────────────────
     port_changes = await _upsert_ports(db, existing, result)
@@ -228,3 +232,49 @@ async def mark_offline(db: AsyncSession, ip_addresses: list[str]) -> int:
             count += 1
             offline_assets.append(asset)
     return count, offline_assets
+
+
+async def _upsert_ai_analysis(db: AsyncSession, asset: Asset, result: HostScanResult) -> None:
+    if result.ai_analysis is None:
+        return
+
+    stmt = select(AssetAIAnalysis).where(AssetAIAnalysis.asset_id == asset.id)
+    existing = (await db.execute(stmt)).scalar_one_or_none()
+    analysis = result.ai_analysis
+
+    if existing is None:
+        db.add(
+            AssetAIAnalysis(
+                asset_id=asset.id,
+                device_class=analysis.device_class.value,
+                confidence=analysis.confidence,
+                vendor=analysis.vendor,
+                model=analysis.model,
+                os_guess=analysis.os_guess,
+                device_role=analysis.device_role,
+                open_services_summary=analysis.open_services_summary,
+                security_findings=[finding.model_dump() for finding in analysis.security_findings],
+                investigation_notes=analysis.investigation_notes,
+                suggested_tags=analysis.suggested_tags,
+                ai_backend=analysis.ai_backend,
+                model_used=analysis.model_used,
+                agent_steps=analysis.agent_steps,
+                analyzed_at=result.scanned_at,
+            )
+        )
+        return
+
+    existing.device_class = analysis.device_class.value
+    existing.confidence = analysis.confidence
+    existing.vendor = analysis.vendor
+    existing.model = analysis.model
+    existing.os_guess = analysis.os_guess
+    existing.device_role = analysis.device_role
+    existing.open_services_summary = analysis.open_services_summary
+    existing.security_findings = [finding.model_dump() for finding in analysis.security_findings]
+    existing.investigation_notes = analysis.investigation_notes
+    existing.suggested_tags = analysis.suggested_tags
+    existing.ai_backend = analysis.ai_backend
+    existing.model_used = analysis.model_used
+    existing.agent_steps = analysis.agent_steps
+    existing.analyzed_at = result.scanned_at

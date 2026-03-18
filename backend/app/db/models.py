@@ -63,6 +63,7 @@ class Asset(Base):
     ports: Mapped[list["Port"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     tags: Mapped[list["AssetTag"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     history: Mapped[list["AssetHistory"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    ai_analysis: Mapped["AssetAIAnalysis | None"] = relationship(back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
 
@@ -104,6 +105,34 @@ class AssetHistory(Base):
     diff: Mapped[dict | None] = mapped_column(JSONB)      # {field: {old, new}}
 
     asset: Mapped["Asset"] = relationship(back_populates="history")
+
+
+class AssetAIAnalysis(Base):
+    __tablename__ = "asset_ai_analyses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    device_class: Mapped[str] = mapped_column(String(32), default="unknown")
+    confidence: Mapped[float] = mapped_column()
+    vendor: Mapped[str | None] = mapped_column(String(256))
+    model: Mapped[str | None] = mapped_column(String(256))
+    os_guess: Mapped[str | None] = mapped_column(String(256))
+    device_role: Mapped[str | None] = mapped_column(String(256))
+    open_services_summary: Mapped[list | None] = mapped_column(JSONB)
+    security_findings: Mapped[list | None] = mapped_column(JSONB)
+    investigation_notes: Mapped[str | None] = mapped_column(Text)
+    suggested_tags: Mapped[list | None] = mapped_column(JSONB)
+    ai_backend: Mapped[str] = mapped_column(String(32), default="none")
+    model_used: Mapped[str | None] = mapped_column(String(128))
+    agent_steps: Mapped[int] = mapped_column(Integer, default=0)
+    analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="ai_analysis")
 
 
 class TopologyLink(Base):

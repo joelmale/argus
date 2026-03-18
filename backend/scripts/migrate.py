@@ -14,6 +14,7 @@ APP_TABLES = {
     "ports",
     "asset_tags",
     "asset_history",
+    "asset_ai_analyses",
     "topology_links",
     "scan_jobs",
     "config_backup_targets",

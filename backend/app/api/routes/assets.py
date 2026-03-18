@@ -20,11 +20,63 @@ from app.backups import (
     list_backup_snapshots,
     upsert_backup_target,
 )
-from app.db.models import Asset, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, User, WirelessAssociation
+from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 
 router = APIRouter()
+
+
+def _serialize_ai_analysis(ai: AssetAIAnalysis | None) -> dict | None:
+    if ai is None:
+        return None
+    return {
+        "device_class": ai.device_class,
+        "confidence": ai.confidence,
+        "vendor": ai.vendor,
+        "model": ai.model,
+        "os_guess": ai.os_guess,
+        "device_role": ai.device_role,
+        "open_services_summary": ai.open_services_summary or [],
+        "security_findings": ai.security_findings or [],
+        "investigation_notes": ai.investigation_notes or "",
+        "suggested_tags": ai.suggested_tags or [],
+        "ai_backend": ai.ai_backend,
+        "model_used": ai.model_used,
+        "agent_steps": ai.agent_steps,
+        "analyzed_at": ai.analyzed_at.isoformat(),
+    }
+
+
+def _serialize_asset(asset: Asset) -> dict:
+    return {
+        "id": str(asset.id),
+        "ip_address": asset.ip_address,
+        "mac_address": asset.mac_address,
+        "hostname": asset.hostname,
+        "vendor": asset.vendor,
+        "os_name": asset.os_name,
+        "os_version": asset.os_version,
+        "device_type": asset.device_type,
+        "status": asset.status,
+        "notes": asset.notes,
+        "custom_fields": asset.custom_fields,
+        "first_seen": asset.first_seen.isoformat(),
+        "last_seen": asset.last_seen.isoformat(),
+        "ports": [
+            {
+                "id": port.id,
+                "port_number": port.port_number,
+                "protocol": port.protocol,
+                "service": port.service,
+                "version": port.version,
+                "state": port.state,
+            }
+            for port in asset.ports
+        ],
+        "tags": [{"tag": tag.tag} for tag in asset.tags],
+        "ai_analysis": _serialize_ai_analysis(asset.ai_analysis),
+    }
 
 
 class AssetTagRequest(BaseModel):
@@ -51,7 +103,7 @@ async def list_assets(
     _: User = Depends(get_current_user),
 ):
     """Return all discovered assets with optional filtering."""
-    q = select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports))
+    q = select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis))
     if status:
         q = q.where(Asset.status == status)
     if search:
@@ -65,12 +117,12 @@ async def list_assets(
         q = q.join(AssetTag).where(AssetTag.tag == tag)
     q = q.offset(skip).limit(limit)
     result = await db.execute(q)
-    return result.scalars().all()
+    return [_serialize_asset(asset) for asset in result.scalars().all()]
 
 
 @router.get("/export.csv")
 async def export_assets_csv(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
 
     buffer = StringIO()
@@ -116,7 +168,7 @@ async def export_assets_csv(db: AsyncSession = Depends(get_db), _: User = Depend
 
 @router.get("/export.ansible.ini")
 async def export_assets_ansible(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
     return Response(
         content=render_ansible_inventory(assets),
@@ -127,7 +179,7 @@ async def export_assets_ansible(db: AsyncSession = Depends(get_db), _: User = De
 
 @router.get("/export.terraform.tf.json")
 async def export_assets_terraform(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
     return Response(
         content=render_terraform_inventory(assets),
@@ -138,14 +190,14 @@ async def export_assets_terraform(db: AsyncSession = Depends(get_db), _: User = 
 
 @router.get("/export.inventory.json")
 async def export_assets_inventory_json(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
     return build_inventory_snapshot(assets)
 
 
 @router.get("/report.json")
 async def export_assets_report_json(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
+    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
     open_findings = await db.scalar(select(func.count()).select_from(Finding).where(Finding.status == "open")) or 0
     total_findings = await db.scalar(select(func.count()).select_from(Finding)) or 0
@@ -243,13 +295,14 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
             selectinload(Asset.ports),
             selectinload(Asset.tags),
             selectinload(Asset.history),
+            selectinload(Asset.ai_analysis),
         )
         .where(Asset.id == asset_id)
     )
     asset = (await db.execute(stmt)).scalar_one_or_none()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
-    return asset
+    return _serialize_asset(asset)
 
 
 @router.patch("/{asset_id}")
@@ -269,7 +322,15 @@ async def update_asset(
             setattr(asset, key, val)
     await db.commit()
     await db.refresh(asset)
-    return asset
+    await db.refresh(asset)
+    refreshed = (
+        await db.execute(
+            select(Asset)
+            .options(selectinload(Asset.ports), selectinload(Asset.tags), selectinload(Asset.ai_analysis))
+            .where(Asset.id == asset_id)
+        )
+    ).scalar_one()
+    return _serialize_asset(refreshed)
 
 
 @router.delete("/{asset_id}", status_code=204)

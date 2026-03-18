@@ -162,6 +162,23 @@ export interface HomeAssistantExport {
   notes: string[];
 }
 
+export interface AssetAIAnalysis {
+  device_class: DeviceClass | string;
+  confidence: number;
+  vendor: string | null;
+  model: string | null;
+  os_guess: string | null;
+  device_role: string | null;
+  open_services_summary: string[];
+  security_findings: Array<{ severity: string; title: string; detail: string }>;
+  investigation_notes: string;
+  suggested_tags: string[];
+  ai_backend: string;
+  model_used: string | null;
+  agent_steps: number;
+  analyzed_at: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;
@@ -187,6 +204,7 @@ export interface Asset {
   last_seen: string;
   ports: Port[];
   tags: { tag: string }[];
+  ai_analysis: AssetAIAnalysis | null;
 }
 
 export interface ScanJob {
