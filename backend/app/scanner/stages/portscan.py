@@ -122,7 +122,8 @@ def _scan_sync(
 ) -> list[HostScanTuple]:
     """Synchronous nmap scan — runs in thread executor."""
     target_str = " ".join(h.ip_address for h in hosts)
-    args = custom_args or NMAP_PROFILE_ARGS.get(profile, NMAP_PROFILE_ARGS[ScanProfile.BALANCED])
+    base_args = custom_args or NMAP_PROFILE_ARGS.get(profile, NMAP_PROFILE_ARGS[ScanProfile.BALANCED])
+    args = base_args if "-Pn" in base_args.split() else f"-Pn {base_args}"
 
     log.info("Port scan [%s] %d hosts | args: %s", profile.value, len(hosts), args)
     t0 = time.monotonic()
