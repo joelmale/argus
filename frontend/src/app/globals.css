@@ -50,6 +50,7 @@
   :root {
     --scrollbar-track: #f4f4f5;
     --scrollbar-thumb: #d4d4d8;
+    font-family: "Segoe UI", "Helvetica Neue", Helvetica, Arial, sans-serif;
   }
   .dark {
     --scrollbar-track: #18181b;
