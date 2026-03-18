@@ -18,9 +18,9 @@ jobs:
       - name: Install deps
         run: pip install -r backend/requirements-dev.txt
       - name: Lint
-        run: npm run lint:backend
+        run: npm run lint:backend:local
       - name: Test
-        run: npm run test:backend
+        run: npm run test:backend:local
 
   frontend-lint-typecheck:
     name: Frontend — lint & type-check
