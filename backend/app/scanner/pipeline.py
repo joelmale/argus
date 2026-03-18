@@ -240,14 +240,13 @@ async def _investigate_host(
         from app.scanner.stages.fingerprint import classify, probe_priority
         from app.scanner.enrichment import mac_vendor, dns_lookup
 
-        hint = classify(host, ports, os_fp)
-        priority_probes = probe_priority(host, ports, hint)
-
         # Enrichment: MAC vendor + reverse DNS (quick, always run)
         vendor, reverse_hostname = await asyncio.gather(
             asyncio.get_event_loop().run_in_executor(None, mac_vendor.lookup, host.mac_address),
             dns_lookup.reverse_lookup(ip),
         )
+        hint = classify(host, ports, os_fp, vendor)
+        priority_probes = probe_priority(host, ports, hint)
 
         # Hostname priority: reverse DNS > nmap-resolved > None
         # We keep reverse_hostname as the primary field but fall back to

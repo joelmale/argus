@@ -21,10 +21,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Asset, AssetAIAnalysis, AssetHistory, Port
 from app.scanner.models import HostScanResult
+from app.scanner.stages.fingerprint import classify
 
 log = logging.getLogger(__name__)
 
 _AI_PERSIST_CONFIDENCE = 0.8
+_RULE_PERSIST_CONFIDENCE = 0.6
 
 
 def _has_probe_evidence(result: HostScanResult) -> bool:
@@ -54,6 +56,23 @@ def _should_persist_ai_fields(result: HostScanResult) -> bool:
     return False
 
 
+def _effective_rule_hint(result: HostScanResult):
+    return classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
+
+
+def _determine_detected_device_type(result: HostScanResult) -> tuple[str | None, str]:
+    if result.ai_analysis and _should_persist_ai_fields(result):
+        ai = result.ai_analysis
+        if ai.device_class and ai.device_class.value != "unknown":
+            return ai.device_class.value, "ai"
+
+    hint = _effective_rule_hint(result)
+    if hint.device_class.value != "unknown" and hint.confidence >= _RULE_PERSIST_CONFIDENCE:
+        return hint.device_class.value, "rule"
+
+    return None, "unknown"
+
+
 async def upsert_scan_result(
     db: AsyncSession,
     result: HostScanResult,
@@ -73,7 +92,7 @@ async def upsert_scan_result(
     new_hostname = result.reverse_hostname
     new_os = None
     new_vendor = result.mac_vendor
-    new_device_type = None
+    new_device_type, new_device_type_source = _determine_detected_device_type(result)
 
     if _should_persist_os_name(result):
         new_os = result.os_fingerprint.os_name
@@ -84,8 +103,6 @@ async def upsert_scan_result(
             new_os = ai.os_guess
         if ai.vendor:
             new_vendor = ai.vendor
-        if ai.device_class and ai.device_class.value != "unknown":
-            new_device_type = ai.device_class.value
 
     now = datetime.now(timezone.utc)
 
@@ -98,6 +115,7 @@ async def upsert_scan_result(
             vendor=new_vendor,
             os_name=new_os,
             device_type=new_device_type,
+            device_type_source=new_device_type_source,
             status="online",
             first_seen=now,
             last_seen=now,
@@ -135,10 +153,13 @@ async def upsert_scan_result(
         changes["status"] = {"old": "offline", "new": "online"}
         existing.status = "online"
 
-    _check("hostname",    new_hostname)
-    _check("vendor",      new_vendor)
-    _check("os_name",     new_os)
-    _check("device_type", new_device_type)
+    _check("hostname", new_hostname)
+    _check("vendor", new_vendor)
+    _check("os_name", new_os)
+    if not existing.device_type_override:
+        _check("device_type", new_device_type)
+        if new_device_type is not None:
+            _check("device_type_source", new_device_type_source)
 
     if result.host.mac_address and not existing.mac_address:
         _check("mac_address", result.host.mac_address)

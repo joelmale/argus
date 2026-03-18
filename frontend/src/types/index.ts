@@ -1,8 +1,21 @@
 /** Core domain types — mirrors backend DB models */
 
 export type AssetStatus = "online" | "offline" | "unknown";
-export type DeviceType = "router" | "switch" | "server" | "workstation" | "iot" | "printer" | "unknown";
-export type DeviceClass = DeviceType | "access_point" | "firewall" | "nas" | "ip_camera" | "smart_tv" | "iot_device" | "voip";
+export type DeviceType =
+  | "router"
+  | "switch"
+  | "access_point"
+  | "firewall"
+  | "server"
+  | "workstation"
+  | "nas"
+  | "printer"
+  | "ip_camera"
+  | "smart_tv"
+  | "iot_device"
+  | "voip"
+  | "unknown";
+export type DeviceClass = DeviceType;
 export type UserRole = "admin" | "viewer";
 
 export interface CurrentUser {
@@ -197,6 +210,8 @@ export interface Asset {
   os_name: string | null;
   os_version: string | null;
   device_type: DeviceType | null;
+  device_type_source: string;
+  device_type_override: DeviceType | null;
   status: AssetStatus;
   notes: string | null;
   custom_fields: Record<string, unknown> | null;

@@ -48,7 +48,7 @@ class AnthropicAnalyst(BaseAnalyst):
         self.model = settings.ANTHROPIC_MODEL
 
     async def investigate(self, result: HostScanResult) -> AIAnalysis:
-        hint = classify(result.host, result.ports, result.os_fingerprint)
+        hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
         priorities = probe_priority(result.host, result.ports, hint)
         initial_context = self._build_context(result, hint.device_class.value, hint.confidence, priorities)
 

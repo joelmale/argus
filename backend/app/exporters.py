@@ -17,11 +17,11 @@ def render_ansible_inventory(assets: list[Asset]) -> str:
             f"{host_name} ansible_host={asset.ip_address} "
             f"argus_status={_quote(asset.status)} "
             f"argus_vendor={_quote(asset.vendor or '')} "
-            f"argus_device_type={_quote(asset.device_type or 'unknown')}"
+            f"argus_device_type={_quote(asset.effective_device_type)}"
         )
         groups["argus"].append(host_line)
         groups[asset.status].append(host_name)
-        groups[asset.device_type or "unknown"].append(host_name)
+        groups[asset.effective_device_type].append(host_name)
         for tag in sorted({tag.tag for tag in asset.tags}):
             groups[f"tag_{tag}"].append(host_name)
 
@@ -45,7 +45,7 @@ def render_terraform_inventory(assets: list[Asset]) -> str:
                 "mac_address": asset.mac_address,
                 "vendor": asset.vendor,
                 "os_name": asset.os_name,
-                "device_type": asset.device_type,
+                "device_type": asset.effective_device_type,
                 "status": asset.status,
                 "tags": sorted(tag.tag for tag in asset.tags),
                 "custom_fields": asset.custom_fields or {},
@@ -63,7 +63,7 @@ def render_terraform_inventory(assets: list[Asset]) -> str:
                         "id": str(asset.id),
                         "ip_address": asset.ip_address,
                         "hostname": asset.hostname,
-                        "device_type": asset.device_type,
+                        "device_type": asset.effective_device_type,
                         "status": asset.status,
                     }
                     for asset in sorted(assets, key=lambda item: item.ip_address)
@@ -87,7 +87,7 @@ def build_inventory_snapshot(assets: list[Asset]) -> dict[str, object]:
                 "vendor": asset.vendor,
                 "os_name": asset.os_name,
                 "os_version": asset.os_version,
-                "device_type": asset.device_type,
+                "device_type": asset.effective_device_type,
                 "status": asset.status,
                 "tags": sorted(tag.tag for tag in asset.tags),
                 "ports": [

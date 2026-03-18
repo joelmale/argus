@@ -53,7 +53,9 @@ class Asset(Base):
     vendor: Mapped[str | None] = mapped_column(String(256))        # MAC OUI lookup
     os_name: Mapped[str | None] = mapped_column(String(256))
     os_version: Mapped[str | None] = mapped_column(String(128))
-    device_type: Mapped[str | None] = mapped_column(String(64))    # router, switch, server, etc.
+    device_type: Mapped[str | None] = mapped_column(String(64))    # detected type from scanner/AI
+    device_type_override: Mapped[str | None] = mapped_column(String(64))
+    device_type_source: Mapped[str] = mapped_column(String(16), default="unknown")
     status: Mapped[str] = mapped_column(String(16), default="online")  # online | offline | unknown
     notes: Mapped[str | None] = mapped_column(Text)
     custom_fields: Mapped[dict | None] = mapped_column(JSONB)
@@ -66,6 +68,18 @@ class Asset(Base):
     ai_analysis: Mapped["AssetAIAnalysis | None"] = relationship(back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
+
+    @property
+    def effective_device_type(self) -> str:
+        return self.device_type_override or self.device_type or "unknown"
+
+    @property
+    def effective_device_type_source(self) -> str:
+        if self.device_type_override:
+            return "manual"
+        if self.device_type:
+            return self.device_type_source or "detected"
+        return "unknown"
 
 
 class Port(Base):

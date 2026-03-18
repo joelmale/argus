@@ -66,7 +66,7 @@ def build_home_assistant_entities(assets: list[Asset]) -> dict[str, object]:
                 "device": {
                     "identifiers": [str(asset.id)],
                     "manufacturer": asset.vendor or "Unknown",
-                    "model": asset.device_type or "unknown",
+                    "model": asset.effective_device_type,
                     "name": asset.hostname or asset.ip_address,
                 },
                 "attributes": {
@@ -74,7 +74,7 @@ def build_home_assistant_entities(assets: list[Asset]) -> dict[str, object]:
                     "mac_address": asset.mac_address,
                     "os_name": asset.os_name,
                     "os_version": asset.os_version,
-                    "device_type": asset.device_type,
+                    "device_type": asset.effective_device_type,
                     "tags": tags,
                 },
             }

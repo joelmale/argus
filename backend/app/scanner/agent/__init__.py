@@ -29,7 +29,7 @@ class RuleBasedFallback(BaseAnalyst):
         from app.scanner.models import AIAnalysis
         from app.scanner.stages.fingerprint import classify
 
-        hint = classify(result.host, result.ports, result.os_fingerprint)
+        hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
         return AIAnalysis(
             device_class=hint.device_class,
             confidence=hint.confidence,

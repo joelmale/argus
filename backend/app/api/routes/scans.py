@@ -78,7 +78,7 @@ async def ingest_logs(
                     "ip": asset.ip_address,
                     "mac": asset.mac_address,
                     "hostname": asset.hostname,
-                    "device_class": asset.device_type or "unknown",
+                    "device_class": asset.effective_device_type,
                 }
             )
         elif change_type == "updated":

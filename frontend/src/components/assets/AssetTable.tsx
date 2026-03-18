@@ -51,7 +51,7 @@ function buildAssetView(asset: Asset): AssetView {
     openPorts,
     vendorLabel: ai?.vendor ?? asset.vendor ?? asset.os_name ?? '—',
     hostnameLabel: asset.hostname ?? '—',
-    confidenceLabel: ai ? confidenceLabel(ai.confidence).label : asset.device_type ? 'Stored' : '—',
+    confidenceLabel: ai ? confidenceLabel(ai.confidence).label : asset.device_type_source === 'manual' ? 'Manual' : asset.device_type ? 'Stored' : '—',
     confidenceValue: confidence,
     statusLabel: asset.status,
     lastSeenBucket: bucketLastSeen(asset.last_seen),
@@ -370,7 +370,7 @@ function AssetRow({ asset }: { asset: Asset }) {
             )}
           </div>
         ) : (
-          <span className="text-xs text-zinc-400">{asset.device_type ? 'stored classification' : '—'}</span>
+          <span className="text-xs text-zinc-400">{asset.device_type ? `${asset.device_type_source} classification` : '—'}</span>
         )}
       </td>
       <td className="px-4 py-3">

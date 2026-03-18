@@ -12,6 +12,22 @@ import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { Asset, ConfigBackupTarget } from '@/types'
 
+const DEVICE_TYPE_OPTIONS = [
+  'router',
+  'switch',
+  'access_point',
+  'firewall',
+  'server',
+  'workstation',
+  'nas',
+  'printer',
+  'ip_camera',
+  'smart_tv',
+  'iot_device',
+  'voip',
+  'unknown',
+] as const
+
 function AssetMetadataEditor({ asset }: { asset: Asset }) {
   const { mutate: updateAsset, isPending: isSaving } = useUpdateAsset()
   const { mutate: addTag, isPending: isAddingTag } = useAddAssetTag()
@@ -87,11 +103,21 @@ function AssetMetadataEditor({ asset }: { asset: Asset }) {
 
         <div>
           <p className="text-xs text-zinc-500 mb-1.5">Device type</p>
-          <input
+          <select
             value={deviceType}
             onChange={(e) => setDeviceType(e.target.value)}
             className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
+          >
+            <option value="">Auto-detect</option>
+            {DEVICE_TYPE_OPTIONS.map((option) => (
+              <option key={option} value={option}>
+                {option.replaceAll('_', ' ')}
+              </option>
+            ))}
+          </select>
+          <p className="text-xs text-zinc-400 mt-1">
+            Current source: {asset.device_type_source}
+          </p>
         </div>
 
         <div>
@@ -384,6 +410,7 @@ export default function AssetDetailPage() {
                     { label: 'MAC Address', value: asset.mac_address || '—' },
                     { label: 'Vendor',      value: ai?.vendor ?? asset.vendor ?? '—' },
                     { label: 'OS',          value: ai?.os_guess ?? asset.os_name ?? '—' },
+                    { label: 'Type Source', value: asset.device_type_source ?? 'unknown' },
                     { label: 'Device Role', value: ai?.device_role ?? '—' },
                     { label: 'First Seen',  value: formatDate(asset.first_seen) },
                     { label: 'Last Seen',   value: timeAgo(asset.last_seen) },

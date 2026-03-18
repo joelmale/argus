@@ -55,7 +55,7 @@ class OllamaAnalyst(BaseAnalyst):
 
     async def investigate(self, result: HostScanResult) -> AIAnalysis:
         # Get heuristic hint to prime the agent's context
-        hint = classify(result.host, result.ports, result.os_fingerprint)
+        hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
         priorities = probe_priority(result.host, result.ports, hint)
 
         initial_context = self._build_context(

@@ -41,7 +41,7 @@ async def get_topology_graph(db: AsyncSession = Depends(get_db), _: User = Depen
                 "vendor": a.vendor,
                 "os": a.os_name,
                 "status": a.status,
-                "device_type": a.device_type,
+                "device_type": a.effective_device_type,
             }
         }
         for a in assets

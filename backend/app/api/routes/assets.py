@@ -23,8 +23,10 @@ from app.backups import (
 from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
+from app.scanner.models import DeviceClass
 
 router = APIRouter()
+VALID_DEVICE_TYPES = {member.value for member in DeviceClass}
 
 
 def _serialize_ai_analysis(ai: AssetAIAnalysis | None) -> dict | None:
@@ -57,7 +59,9 @@ def _serialize_asset(asset: Asset) -> dict:
         "vendor": asset.vendor,
         "os_name": asset.os_name,
         "os_version": asset.os_version,
-        "device_type": asset.device_type,
+        "device_type": asset.effective_device_type,
+        "device_type_source": asset.effective_device_type_source,
+        "device_type_override": asset.device_type_override,
         "status": asset.status,
         "notes": asset.notes,
         "custom_fields": asset.custom_fields,
@@ -150,7 +154,7 @@ async def export_assets_csv(db: AsyncSession = Depends(get_db), _: User = Depend
                 asset.mac_address or "",
                 asset.vendor or "",
                 asset.os_name or "",
-                asset.device_type or "",
+                asset.effective_device_type,
                 asset.status,
                 asset.first_seen.isoformat(),
                 asset.last_seen.isoformat(),
@@ -247,7 +251,7 @@ async def export_assets_report_html(db: AsyncSession = Depends(get_db), _: User 
     ) or 0
 
     rows = "".join(
-        f"<tr><td>{asset.ip_address}</td><td>{asset.hostname or ''}</td><td>{asset.vendor or ''}</td><td>{asset.device_type or ''}</td><td>{asset.status}</td><td>{', '.join(tag.tag for tag in asset.tags)}</td></tr>"
+        f"<tr><td>{asset.ip_address}</td><td>{asset.hostname or ''}</td><td>{asset.vendor or ''}</td><td>{asset.effective_device_type}</td><td>{asset.status}</td><td>{', '.join(tag.tag for tag in asset.tags)}</td></tr>"
         for asset in assets
     )
     return HTMLResponse(
@@ -318,8 +322,17 @@ async def update_asset(
         raise HTTPException(status_code=404, detail="Asset not found")
     allowed = {"hostname", "notes", "custom_fields", "device_type"}
     for key, val in payload.items():
-        if key in allowed:
-            setattr(asset, key, val)
+        if key not in allowed:
+            continue
+        if key == "device_type":
+            if val in ("", None):
+                asset.device_type_override = None
+            else:
+                if val not in VALID_DEVICE_TYPES:
+                    raise HTTPException(status_code=422, detail=f"Invalid device_type '{val}'")
+                asset.device_type_override = val
+            continue
+        setattr(asset, key, val)
     await db.commit()
     await db.refresh(asset)
     await db.refresh(asset)

@@ -295,7 +295,7 @@ async def _passive_arp_loop() -> None:
                             "ip": asset.ip_address,
                             "mac": asset.mac_address,
                             "hostname": asset.hostname,
-                            "device_class": asset.device_type or "unknown",
+                            "device_class": asset.effective_device_type,
                         },
                     }
                     await _publish_event(payload)
