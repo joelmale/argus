@@ -1,10 +1,15 @@
 'use client'
 
+import { useState } from 'react'
 import Link from 'next/link'
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot, Check, ChevronDown } from 'lucide-react'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
-import { timeAgo } from '@/lib/utils'
-import { AlertTriangle, Bot } from 'lucide-react'
+import { confidenceLabel, timeAgo, cn } from '@/lib/utils'
 import type { Asset } from '@/types'
+
+type SortKey = 'ip' | 'hostname' | 'vendor' | 'type' | 'confidence' | 'ports' | 'status' | 'last_seen'
+type SortDirection = 'asc' | 'desc'
+type FilterKey = Exclude<SortKey, 'ip'>
 
 interface AssetTableProps {
   assets: Asset[]
@@ -12,7 +17,87 @@ interface AssetTableProps {
   isError: boolean
 }
 
+type AssetView = {
+  asset: Asset
+  ai: any
+  deviceClass: string
+  openPorts: number
+  vendorLabel: string
+  hostnameLabel: string
+  confidenceLabel: string
+  confidenceValue: number
+  statusLabel: string
+  lastSeenBucket: string
+}
+
+type ColumnDef = {
+  key: SortKey
+  label: string
+  filterKey?: FilterKey
+  options?: Array<{ value: string; label: string }>
+}
+
+const EMPTY_VALUE = '__empty__'
+const LAST_SEEN_BUCKETS = ['Last Hour', 'Today', 'This Week', 'Older']
+
+function buildAssetView(asset: Asset): AssetView {
+  const ai = (asset as any).ai_analysis
+  const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open').length
+  const confidence = ai?.confidence ?? -1
+  return {
+    asset,
+    ai,
+    deviceClass: ai?.device_class ?? asset.device_type ?? 'unknown',
+    openPorts,
+    vendorLabel: ai?.vendor ?? asset.vendor ?? asset.os_name ?? '—',
+    hostnameLabel: asset.hostname ?? '—',
+    confidenceLabel: ai ? confidenceLabel(ai.confidence).label : asset.device_type ? 'Stored' : '—',
+    confidenceValue: confidence,
+    statusLabel: asset.status,
+    lastSeenBucket: bucketLastSeen(asset.last_seen),
+  }
+}
+
+function bucketLastSeen(value: string): string {
+  const ageMs = Date.now() - new Date(value).getTime()
+  if (ageMs <= 60 * 60 * 1000) return 'Last Hour'
+  if (ageMs <= 24 * 60 * 60 * 1000) return 'Today'
+  if (ageMs <= 7 * 24 * 60 * 60 * 1000) return 'This Week'
+  return 'Older'
+}
+
+function compareIp(a: string, b: string): number {
+  const left = a.split('.').map((segment) => Number(segment))
+  const right = b.split('.').map((segment) => Number(segment))
+  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+    const delta = (left[index] ?? 0) - (right[index] ?? 0)
+    if (delta !== 0) return delta
+  }
+  return 0
+}
+
+function normalizeFilterValue(value: string | null | undefined): string {
+  return value && value.trim() ? value : EMPTY_VALUE
+}
+
+function filterValueMatches(current: string, selected: string) {
+  return selected === '' || current === selected
+}
+
 export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
+  const [sortKey, setSortKey] = useState<SortKey>('ip')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [openFilter, setOpenFilter] = useState<FilterKey | null>(null)
+  const [filters, setFilters] = useState<Record<FilterKey, string>>({
+    hostname: '',
+    vendor: '',
+    type: '',
+    confidence: '',
+    ports: '',
+    status: '',
+    last_seen: '',
+  })
+
   if (isError) {
     return (
       <div className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-6 text-center">
@@ -22,15 +107,192 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
     )
   }
 
+  const views = assets.map(buildAssetView)
+
+  const columns: ColumnDef[] = [
+    { key: 'ip', label: 'IP Address' },
+    {
+      key: 'hostname',
+      label: 'Hostname',
+      filterKey: 'hostname',
+      options: uniqueOptions(views.map((view) => view.asset.hostname)),
+    },
+    {
+      key: 'vendor',
+      label: 'Vendor / OS',
+      filterKey: 'vendor',
+      options: uniqueOptions(views.map((view) => view.ai?.vendor ?? view.asset.vendor ?? view.asset.os_name ?? null)),
+    },
+    {
+      key: 'type',
+      label: 'Type',
+      filterKey: 'type',
+      options: uniqueOptions(views.map((view) => view.deviceClass)),
+    },
+    {
+      key: 'confidence',
+      label: 'AI Confidence',
+      filterKey: 'confidence',
+      options: uniqueOptions(views.map((view) => view.confidenceLabel)),
+    },
+    {
+      key: 'ports',
+      label: 'Ports',
+      filterKey: 'ports',
+      options: uniqueOptions(views.map((view) => String(view.openPorts))),
+    },
+    {
+      key: 'status',
+      label: 'Status',
+      filterKey: 'status',
+      options: uniqueOptions(views.map((view) => view.statusLabel)),
+    },
+    {
+      key: 'last_seen',
+      label: 'Last Seen',
+      filterKey: 'last_seen',
+      options: LAST_SEEN_BUCKETS.map((bucket) => ({ value: bucket, label: bucket })),
+    },
+  ]
+
+  const filteredViews = views.filter((view) =>
+    filterValueMatches(normalizeFilterValue(view.asset.hostname), filters.hostname)
+    && filterValueMatches(normalizeFilterValue(view.ai?.vendor ?? view.asset.vendor ?? view.asset.os_name), filters.vendor)
+    && filterValueMatches(normalizeFilterValue(view.deviceClass), filters.type)
+    && filterValueMatches(normalizeFilterValue(view.confidenceLabel), filters.confidence)
+    && filterValueMatches(String(view.openPorts), filters.ports)
+    && filterValueMatches(normalizeFilterValue(view.statusLabel), filters.status)
+    && filterValueMatches(normalizeFilterValue(view.lastSeenBucket), filters.last_seen)
+  )
+
+  const sortedViews = [...filteredViews].sort((left, right) => {
+    const direction = sortDirection === 'asc' ? 1 : -1
+    switch (sortKey) {
+      case 'ip':
+        return compareIp(left.asset.ip_address, right.asset.ip_address) * direction
+      case 'hostname':
+        return left.hostnameLabel.localeCompare(right.hostnameLabel) * direction
+      case 'vendor':
+        return left.vendorLabel.localeCompare(right.vendorLabel) * direction
+      case 'type':
+        return left.deviceClass.localeCompare(right.deviceClass) * direction
+      case 'confidence':
+        return (left.confidenceValue - right.confidenceValue) * direction
+      case 'ports':
+        return (left.openPorts - right.openPorts) * direction
+      case 'status':
+        return left.statusLabel.localeCompare(right.statusLabel) * direction
+      case 'last_seen':
+        return (new Date(left.asset.last_seen).getTime() - new Date(right.asset.last_seen).getTime()) * direction
+    }
+  })
+
+  const hasColumnFilters = Object.values(filters).some(Boolean)
+
+  function handleSort(column: SortKey) {
+    if (sortKey === column) {
+      setSortDirection((current) => (current === 'asc' ? 'desc' : 'asc'))
+      return
+    }
+    setSortKey(column)
+    setSortDirection('asc')
+  }
+
+  function clearColumnFilters() {
+    setFilters({
+      hostname: '',
+      vendor: '',
+      type: '',
+      confidence: '',
+      ports: '',
+      status: '',
+      last_seen: '',
+    })
+    setOpenFilter(null)
+  }
+
   return (
     <div className="rounded-xl border border-gray-200 dark:border-zinc-800 overflow-hidden bg-white dark:bg-zinc-900">
+      {hasColumnFilters && (
+        <div className="flex items-center justify-between gap-3 border-b border-gray-100 dark:border-zinc-800 px-4 py-2 text-xs text-zinc-500">
+          <span>Column filters active</span>
+          <button
+            type="button"
+            onClick={clearColumnFilters}
+            className="text-sky-500 hover:text-sky-600"
+          >
+            Clear column filters
+          </button>
+        </div>
+      )}
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800/50">
-              {['IP Address', 'Hostname', 'Vendor / OS', 'Type', 'AI Confidence', 'Ports', 'Status', 'Last Seen'].map((h) => (
-                <th key={h} className="text-left px-4 py-3 text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider whitespace-nowrap">
-                  {h}
+              {columns.map((column) => (
+                <th key={column.key} className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider whitespace-nowrap">
+                  <div className="flex items-center gap-1.5">
+                    <button
+                      type="button"
+                      onClick={() => handleSort(column.key)}
+                      className="inline-flex items-center gap-1 text-left hover:text-zinc-800 dark:hover:text-zinc-200"
+                    >
+                      {column.label}
+                      {sortKey === column.key ? (
+                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />
+                      ) : (
+                        <ArrowUpDown className="w-3.5 h-3.5 opacity-70" />
+                      )}
+                    </button>
+                    {column.filterKey && column.options && (() => {
+                      const filterKey = column.filterKey
+                      return (
+                        <div className="relative">
+                          <button
+                            type="button"
+                            onClick={() => setOpenFilter((current) => (current === filterKey ? null : filterKey))}
+                            className={cn(
+                              'inline-flex items-center gap-1 rounded-md border px-1.5 py-1 normal-case',
+                              filters[filterKey]
+                                ? 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400'
+                                : 'border-gray-200 dark:border-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200',
+                            )}
+                          >
+                            <ChevronDown className="w-3.5 h-3.5" />
+                          </button>
+                          {openFilter === filterKey && (
+                            <div className="absolute left-0 top-8 z-20 min-w-44 rounded-lg border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg">
+                              <button
+                                type="button"
+                                onClick={() => {
+                                  setFilters((current) => ({ ...current, [filterKey]: '' }))
+                                  setOpenFilter(null)
+                                }}
+                                className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
+                              >
+                                <span>All</span>
+                                {!filters[filterKey] && <Check className="w-3.5 h-3.5 text-sky-500" />}
+                              </button>
+                              {column.options.map((option) => (
+                                <button
+                                  key={option.value}
+                                  type="button"
+                                  onClick={() => {
+                                    setFilters((current) => ({ ...current, [filterKey]: option.value }))
+                                    setOpenFilter(null)
+                                  }}
+                                  className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
+                                >
+                                  <span>{option.label}</span>
+                                  {filters[filterKey] === option.value && <Check className="w-3.5 h-3.5 text-sky-500" />}
+                                </button>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      )
+                    })()}
+                  </div>
                 </th>
               ))}
             </tr>
@@ -38,21 +300,28 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
           <tbody className="divide-y divide-gray-100 dark:divide-zinc-800">
             {isLoading
               ? [...Array(8)].map((_, i) => <SkeletonRow key={i} />)
-              : assets.length === 0
-              ? (
-                <tr>
-                  <td colSpan={8} className="px-4 py-16 text-center text-zinc-400">
-                    No assets found. Run a scan to discover devices on your network.
-                  </td>
-                </tr>
-              )
-              : assets.map((asset) => <AssetRow key={asset.id} asset={asset} />)
+              : sortedViews.length === 0
+                ? (
+                  <tr>
+                    <td colSpan={8} className="px-4 py-16 text-center text-zinc-400">
+                      No assets match the current filters.
+                    </td>
+                  </tr>
+                )
+                : sortedViews.map((view) => <AssetRow key={view.asset.id} asset={view.asset} />)
             }
           </tbody>
         </table>
       </div>
     </div>
   )
+}
+
+function uniqueOptions(values: Array<string | null | undefined>) {
+  return [...new Set(values.map(normalizeFilterValue))].sort((left, right) => left.localeCompare(right)).map((value) => ({
+    value,
+    label: value === EMPTY_VALUE ? 'Blank' : value,
+  }))
 }
 
 function AssetRow({ asset }: { asset: Asset }) {
@@ -63,15 +332,11 @@ function AssetRow({ asset }: { asset: Asset }) {
 
   return (
     <tr className="hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors group">
-      {/* IP */}
       <td className="px-4 py-3">
-        <Link href={`/assets/${asset.id}`}
-          className="font-mono text-sky-600 dark:text-sky-400 hover:underline tabular">
+        <Link href={`/assets/${asset.id}`} className="font-mono text-sky-600 dark:text-sky-400 hover:underline tabular">
           {asset.ip_address}
         </Link>
       </td>
-
-      {/* Hostname */}
       <td className="px-4 py-3">
         <span className="text-zinc-700 dark:text-zinc-300 truncate max-w-32 block">
           {asset.hostname || <span className="text-zinc-400">—</span>}
@@ -80,8 +345,6 @@ function AssetRow({ asset }: { asset: Asset }) {
           <span className="text-xs text-zinc-400">{ai.model}</span>
         )}
       </td>
-
-      {/* Vendor / OS */}
       <td className="px-4 py-3">
         <span className="text-zinc-700 dark:text-zinc-300 block truncate max-w-36">
           {ai?.vendor ?? asset.vendor ?? <span className="text-zinc-400">—</span>}
@@ -92,13 +355,9 @@ function AssetRow({ asset }: { asset: Asset }) {
           </span>
         )}
       </td>
-
-      {/* Device class */}
       <td className="px-4 py-3">
         <DeviceClassBadge deviceClass={deviceClass} />
       </td>
-
-      {/* AI confidence */}
       <td className="px-4 py-3">
         {ai ? (
           <div className="flex items-center gap-1.5">
@@ -114,18 +373,12 @@ function AssetRow({ asset }: { asset: Asset }) {
           <span className="text-xs text-zinc-400">{asset.device_type ? 'stored classification' : '—'}</span>
         )}
       </td>
-
-      {/* Open ports count */}
       <td className="px-4 py-3">
         <span className="text-zinc-700 dark:text-zinc-300 tabular">{openPorts}</span>
       </td>
-
-      {/* Status */}
       <td className="px-4 py-3">
         <StatusBadge status={asset.status} />
       </td>
-
-      {/* Last seen */}
       <td className="px-4 py-3 text-xs text-zinc-400 whitespace-nowrap">
         {timeAgo(asset.last_seen)}
       </td>

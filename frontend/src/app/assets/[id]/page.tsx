@@ -348,7 +348,7 @@ export default function AssetDetailPage() {
 
   return (
     <AppShell>
-      <div className="max-w-5xl mx-auto space-y-5">
+      <div className="max-w-7xl mx-auto space-y-5">
         {/* Back + header */}
         <div>
           <Link href="/assets" className="inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white mb-3">
@@ -370,9 +370,9 @@ export default function AssetDetailPage() {
           </div>
         </div>
 
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
           {/* Left column: overview + ports */}
-          <div className="lg:col-span-2 space-y-5">
+          <div className="xl:col-span-5 space-y-5">
 
             {/* Overview */}
             <Card>
@@ -466,9 +466,29 @@ export default function AssetDetailPage() {
             )}
           </div>
 
+          {/* Center column: editable metadata + operations */}
+          <div className="xl:col-span-4 space-y-5">
+            {currentUser?.role === 'admin' ? (
+              <div className="space-y-5">
+                <AssetFindingsCard asset={asset} />
+                <WirelessAssociationsCard asset={asset} />
+                <ConfigBackupCard asset={asset} />
+                <AssetMetadataEditor key={asset.id} asset={asset} />
+              </div>
+            ) : (
+              <Card>
+                <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
+                <CardBody>
+                  <p className="text-sm text-zinc-500">
+                    Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
+                  </p>
+                </CardBody>
+              </Card>
+            )}
+          </div>
+
           {/* Right column: AI summary + security findings */}
-          <div className="space-y-5">
-            {/* AI Summary card */}
+          <div className="xl:col-span-3 space-y-5">
             {ai && (
               <Card>
                 <CardHeader>
@@ -508,7 +528,6 @@ export default function AssetDetailPage() {
               </Card>
             )}
 
-            {/* Security Findings */}
             {ai?.security_findings?.length > 0 && (
               <Card>
                 <CardHeader>
@@ -517,7 +536,7 @@ export default function AssetDetailPage() {
                 </CardHeader>
                 <CardBody className="space-y-3 p-0">
                   {ai.security_findings.map((f: any, i: number) => (
-                    <div key={i} className={`px-5 py-3 border-b last:border-0 border-gray-100 dark:border-zinc-800`}>
+                    <div key={i} className="px-5 py-3 border-b last:border-0 border-gray-100 dark:border-zinc-800">
                       <div className="flex items-start gap-2">
                         <span className={`mt-0.5 inline-flex px-1.5 py-0.5 rounded text-xs font-medium border ${severityColor(f.severity)}`}>
                           {f.severity}
@@ -533,20 +552,14 @@ export default function AssetDetailPage() {
               </Card>
             )}
 
-            {/* Notes */}
-            {currentUser?.role === 'admin' ? (
-              <div className="space-y-5">
-                <AssetFindingsCard asset={asset} />
-                <WirelessAssociationsCard asset={asset} />
-                <ConfigBackupCard asset={asset} />
-                <AssetMetadataEditor key={asset.id} asset={asset} />
-              </div>
-            ) : (
+            {!ai && (
               <Card>
-                <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
+                <CardHeader>
+                  <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Analysis</CardTitle>
+                </CardHeader>
                 <CardBody>
                   <p className="text-sm text-zinc-500">
-                    Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
+                    No persisted AI analysis is attached to this asset record yet. Current AI investigation happens during scans and emits live events, but the detailed narrative is not consistently stored and returned on this page.
                   </p>
                 </CardBody>
               </Card>
