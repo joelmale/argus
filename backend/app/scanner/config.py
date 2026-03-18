@@ -24,7 +24,7 @@ from app.db.models import (
     User,
     WirelessAssociation,
 )
-from app.scanner.models import HostScanResult, ScanProfile
+from app.scanner.models import HostScanResult
 
 DEFAULT_TARGET_PLACEHOLDER = "192.168.1.0/24"
 AUTO_TARGET_SENTINEL = "auto"
