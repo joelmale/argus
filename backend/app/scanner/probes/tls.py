@@ -15,6 +15,7 @@ SANs (Subject Alternative Names) also reveal hostnames the device thinks it has.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import ssl
 import time
@@ -64,9 +65,10 @@ def _get_cert_sync(ip: str, port: int) -> TlsProbeData | None:
             server_hostname=ip,
         ) as ssock:
             cert = ssock.getpeercert()
+            cert_der = ssock.getpeercert(binary_form=True)
             cipher = ssock.cipher()
             tls_ver = ssock.version()
-            return _parse_cert(cert, cipher, tls_ver)
+            return _parse_cert(cert, cert_der, cipher, tls_ver)
     except ssl.SSLError:
         # Retry without hostname verification (catches self-signed properly)
         try:
@@ -74,17 +76,18 @@ def _get_cert_sync(ip: str, port: int) -> TlsProbeData | None:
             raw_sock = socket.create_connection((ip, port), timeout=4)
             ssock = ctx.wrap_socket(raw_sock, server_hostname=ip)
             cert = ssock.getpeercert()
+            cert_der = ssock.getpeercert(binary_form=True)
             cipher = ssock.cipher()
             tls_ver = ssock.version()
             ssock.close()
-            return _parse_cert(cert, cipher, tls_ver)
+            return _parse_cert(cert, cert_der, cipher, tls_ver)
         except Exception:
             return None
     except Exception:
         return None
 
 
-def _parse_cert(cert: dict, cipher: tuple | None, tls_ver: str | None) -> TlsProbeData:
+def _parse_cert(cert: dict, cert_der: bytes | None, cipher: tuple | None, tls_ver: str | None) -> TlsProbeData:
     data = TlsProbeData()
 
     subject = dict(x[0] for x in cert.get("subject", []))
@@ -99,6 +102,8 @@ def _parse_cert(cert: dict, cipher: tuple | None, tls_ver: str | None) -> TlsPro
         subject.get("commonName") == issuer.get("commonName")
         or subject.get("organizationName") == issuer.get("organizationName")
     )
+    if cert_der:
+        data.fingerprint_sha256 = hashlib.sha256(cert_der).hexdigest()
 
     # SANs
     for typ, val in cert.get("subjectAltName", []):

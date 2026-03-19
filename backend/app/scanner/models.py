@@ -124,7 +124,11 @@ class HttpProbeData(BaseModel):
     server: str | None = None               # Server: header
     title: str | None = None               # <title> tag content
     powered_by: str | None = None          # X-Powered-By header
+    auth_header: str | None = None         # WWW-Authenticate header
     content_type: str | None = None
+    redirect_host: str | None = None
+    favicon_hash: str | None = None
+    detected_app: str | None = None
     redirects: list[str] = Field(default_factory=list)
     headers: dict[str, str] = Field(default_factory=dict)
     body_snippet: str | None = None        # first 500 chars of body (for AI analysis)

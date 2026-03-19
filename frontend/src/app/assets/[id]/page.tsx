@@ -344,6 +344,75 @@ function AssetFindingsCard({ asset }: { asset: Asset }) {
   )
 }
 
+function FingerprintEvidenceCard({ asset }: { asset: Asset }) {
+  const evidence = [...(asset.evidence ?? [])].sort((a, b) => {
+    if (b.confidence !== a.confidence) return b.confidence - a.confidence
+    return a.category.localeCompare(b.category)
+  })
+  const topEvidence = evidence.slice(0, 10)
+  const confidence = topEvidence.length > 0
+    ? topEvidence.reduce((sum, item) => sum + item.confidence, 0) / topEvidence.length
+    : 0
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Info className="w-4 h-4 inline mr-1.5" />Fingerprint Evidence</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        <div>
+          <p className="text-xs text-zinc-500 mb-1">Evidence confidence</p>
+          <div className="flex items-center gap-2">
+            <div className="flex-1 h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800">
+              <div className="h-1.5 rounded-full bg-emerald-500" style={{ width: `${Math.min(confidence, 1) * 100}%` }} />
+            </div>
+            <ConfidenceBadge confidence={confidence} />
+          </div>
+        </div>
+        {topEvidence.length === 0 ? (
+          <p className="text-sm text-zinc-500">No normalized fingerprint evidence has been recorded for this asset yet.</p>
+        ) : (
+          <div className="space-y-2">
+            {topEvidence.map((item) => (
+              <div key={item.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
+                <div className="flex items-start justify-between gap-3">
+                  <div className="min-w-0">
+                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100 break-words">{item.value}</p>
+                    <p className="text-xs text-zinc-500 mt-1">
+                      {item.category} · {item.key} · {item.source}
+                    </p>
+                  </div>
+                  <ConfidenceBadge confidence={item.confidence} />
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+        {(asset.probe_runs?.length ?? 0) > 0 && (
+          <div>
+            <p className="text-xs text-zinc-500 mb-2">Latest probes</p>
+            <div className="space-y-2">
+              {asset.probe_runs.slice(0, 6).map((probe) => (
+                <div key={probe.id} className="rounded-lg bg-zinc-50 dark:bg-zinc-900/70 px-3 py-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <p className="text-xs font-medium text-zinc-700 dark:text-zinc-200">
+                      {probe.probe_type}{probe.target_port ? `:${probe.target_port}` : ''}
+                    </p>
+                    <span className="text-[11px] text-zinc-500">{probe.success ? 'ok' : 'failed'}</span>
+                  </div>
+                  {probe.summary && (
+                    <p className="text-xs text-zinc-500 mt-1 break-words">{probe.summary}</p>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -523,6 +592,7 @@ export default function AssetDetailPage() {
 
           {/* Right column: AI summary + security findings */}
           <div className="xl:col-span-3 space-y-5">
+            <FingerprintEvidenceCard asset={asset} />
             {ai && (
               <Card>
                 <CardHeader>

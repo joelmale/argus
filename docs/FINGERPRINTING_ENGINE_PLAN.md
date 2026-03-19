@@ -21,11 +21,11 @@ Notes:
 
 ## Phase 2 — Anonymous Fingerprinting Expansion
 
-- [ ] Expand HTTP/TLS/mDNS/UPnP normalization depth
-- [ ] Add favicon hashing
-- [ ] Add stronger TCP/IP stack evidence
-- [ ] Expand homelab vendor/model signatures
-- [ ] Add evidence/confidence panel in the UI
+- [x] Expand HTTP/TLS/mDNS/UPnP normalization depth
+- [x] Add favicon hashing
+- [x] Add stronger TCP/IP stack evidence
+- [x] Expand homelab vendor/model signatures
+- [x] Add evidence/confidence panel in the UI
 
 ## Phase 3 — Passive Radar
 

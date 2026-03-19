@@ -11,9 +11,11 @@ Also probes a handful of common admin paths to detect known applications.
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import logging
 import re
 import time
+from urllib.parse import urlparse
 
 import httpx
 
@@ -61,9 +63,14 @@ async def probe(ip: str, port: int, use_https: bool = False, timeout: float = 5.
             data.content_type = resp.headers.get("content-type")
             data.server = resp.headers.get("server")
             data.powered_by = resp.headers.get("x-powered-by")
+            data.auth_header = resp.headers.get("www-authenticate")
             data.auth_required = resp.status_code in (401, 403)
             data.redirects = [str(r.url) for r in resp.history]
             data.headers = dict(resp.headers)
+            if resp.history:
+                final_host = urlparse(str(resp.url)).hostname
+                if final_host and final_host != ip:
+                    data.redirect_host = final_host
 
             body = resp.text[:2000]
             raw_parts.append(f"GET / -> {resp.status_code}\n{resp.headers}\n\n{body[:500]}")
@@ -75,6 +82,11 @@ async def probe(ip: str, port: int, use_https: bool = False, timeout: float = 5.
 
             # Body snippet for AI
             data.body_snippet = body[:500]
+            data.detected_app = _detect_app(data.server, data.powered_by, data.auth_header, data.title, body)
+
+            favicon_hash = await _fetch_favicon_hash(client, base_url)
+            if favicon_hash:
+                data.favicon_hash = favicon_hash
 
             # ── Probe interesting paths (non-root only) ───────────────────
             found_paths: list[str] = []
@@ -112,3 +124,60 @@ async def _probe_path(client: httpx.AsyncClient, base_url: str, path: str) -> in
         return r.status_code
     except Exception:
         return 0
+
+
+async def _fetch_favicon_hash(client: httpx.AsyncClient, base_url: str) -> str | None:
+    try:
+        resp = await client.get(base_url + "/favicon.ico", follow_redirects=True)
+        if resp.status_code != 200 or not resp.content:
+            return None
+        content_type = resp.headers.get("content-type", "")
+        if not any(token in content_type.lower() for token in ("image", "icon", "octet-stream")):
+            return None
+        return hashlib.sha256(resp.content).hexdigest()[:16]
+    except Exception:
+        return None
+
+
+def _detect_app(
+    server: str | None,
+    powered_by: str | None,
+    auth_header: str | None,
+    title: str | None,
+    body: str,
+) -> str | None:
+    haystack = " ".join(
+        part for part in (server, powered_by, auth_header, title, body[:1500]) if part
+    ).lower()
+
+    signatures = [
+        ("proxmox", "Proxmox VE"),
+        ("pve", "Proxmox VE"),
+        ("home assistant", "Home Assistant"),
+        ("synology", "Synology DSM"),
+        ("diskstation", "Synology DSM"),
+        ("qnap", "QNAP"),
+        ("truenas", "TrueNAS"),
+        ("freenas", "TrueNAS"),
+        ("unifi", "UniFi"),
+        ("omada", "TP-Link Omada"),
+        ("tplink", "TP-Link"),
+        ("tp-link", "TP-Link"),
+        ("deco", "TP-Link Deco"),
+        ("routeros", "MikroTik RouterOS"),
+        ("mikrotik", "MikroTik RouterOS"),
+        ("openwrt", "OpenWrt"),
+        ("luci", "OpenWrt LuCI"),
+        ("pfsense", "pfSense"),
+        ("opnsense", "OPNsense"),
+        ("jellyfin", "Jellyfin"),
+        ("plex", "Plex"),
+        ("immich", "Immich"),
+        ("frigate", "Frigate"),
+        ("grafana", "Grafana"),
+        ("prometheus", "Prometheus"),
+    ]
+    for needle, label in signatures:
+        if needle in haystack:
+            return label
+    return None

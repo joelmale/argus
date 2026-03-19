@@ -17,6 +17,64 @@ class EvidenceItem:
     details: dict[str, Any]
 
 
+def _ttl_stack_hint(ttl: int) -> tuple[str, float, dict[str, Any]] | None:
+    if ttl <= 0:
+        return None
+    if ttl <= 70:
+        return ("linux_like", 0.42, {"ttl": ttl, "initial_ttl_guess": 64})
+    if ttl <= 138:
+        return ("windows_like", 0.42, {"ttl": ttl, "initial_ttl_guess": 128})
+    if ttl <= 255:
+        return ("network_appliance_like", 0.42, {"ttl": ttl, "initial_ttl_guess": 255})
+    return None
+
+
+def _signature_evidence(value: str, source: str, details: dict[str, Any]) -> list[EvidenceItem]:
+    text = value.lower()
+    matches: list[EvidenceItem] = []
+    signatures: list[tuple[str, str, str, float]] = [
+        ("proxmox", "device_type", "server", 0.88),
+        ("synology", "device_type", "nas", 0.9),
+        ("diskstation", "device_type", "nas", 0.9),
+        ("qnap", "device_type", "nas", 0.9),
+        ("truenas", "device_type", "nas", 0.92),
+        ("freenas", "device_type", "nas", 0.9),
+        ("unifi", "device_type", "access_point", 0.86),
+        ("omada", "device_type", "access_point", 0.84),
+        ("deco", "device_type", "access_point", 0.84),
+        ("openwrt", "device_type", "router", 0.88),
+        ("luci", "device_type", "router", 0.82),
+        ("routeros", "device_type", "router", 0.88),
+        ("mikrotik", "device_type", "router", 0.88),
+        ("pfsense", "device_type", "firewall", 0.92),
+        ("opnsense", "device_type", "firewall", 0.92),
+        ("jellyfin", "device_type", "server", 0.74),
+        ("plex", "device_type", "server", 0.72),
+        ("home assistant", "device_type", "iot_device", 0.84),
+        ("frigate", "device_type", "server", 0.7),
+        ("axis", "device_type", "ip_camera", 0.85),
+        ("hikvision", "device_type", "ip_camera", 0.85),
+        ("dahua", "device_type", "ip_camera", 0.85),
+        ("brother", "device_type", "printer", 0.82),
+        ("epson", "device_type", "printer", 0.82),
+        ("hewlett packard", "device_type", "printer", 0.82),
+        ("hp ", "device_type", "printer", 0.76),
+        ("canon", "device_type", "printer", 0.82),
+        ("ubiquiti", "vendor", "Ubiquiti", 0.88),
+        ("synology", "vendor", "Synology", 0.9),
+        ("qnap", "vendor", "QNAP", 0.9),
+        ("mikrotik", "vendor", "MikroTik", 0.88),
+        ("tp-link", "vendor", "TP-Link", 0.86),
+        ("tplink", "vendor", "TP-Link", 0.86),
+        ("deco", "vendor", "TP-Link", 0.82),
+        ("netgate", "vendor", "Netgate", 0.88),
+    ]
+    for needle, category, normalized, confidence in signatures:
+        if needle in text:
+            matches.append(EvidenceItem(source, category, f"signature:{needle}", normalized, confidence, details))
+    return matches
+
+
 def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
     evidence: list[EvidenceItem] = []
 
@@ -34,6 +92,10 @@ def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
                 {"ttl": result.host.ttl},
             )
         )
+        ttl_hint = _ttl_stack_hint(result.host.ttl)
+        if ttl_hint:
+            value, confidence, details = ttl_hint
+            evidence.append(EvidenceItem("tcpip_stack", "os_hint", "ttl_family", value, confidence, details))
 
     if result.os_fingerprint.os_name and result.os_fingerprint.os_accuracy:
         evidence.append(
@@ -57,6 +119,7 @@ def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
         evidence.append(
             EvidenceItem("hostname", "identity", "hostname", result.reverse_hostname, 0.60, {})
         )
+        evidence.extend(_signature_evidence(result.reverse_hostname, "hostname", {"hostname": result.reverse_hostname}))
 
     for port in result.open_ports:
         evidence.append(
@@ -113,24 +176,42 @@ def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
         if not probe.success:
             continue
         data = probe.data or {}
-        if probe.probe_type == "http":
+        if probe.probe_type in {"http", "https"}:
             if data.get("server"):
                 evidence.append(EvidenceItem("probe_http", "service", "server_header", str(data["server"]), 0.80, data))
+                evidence.extend(_signature_evidence(str(data["server"]), "probe_http", data))
             if data.get("title"):
                 evidence.append(EvidenceItem("probe_http", "identity", "http_title", str(data["title"]), 0.72, data))
+                evidence.extend(_signature_evidence(str(data["title"]), "probe_http", data))
             if data.get("powered_by"):
                 evidence.append(EvidenceItem("probe_http", "service", "powered_by", str(data["powered_by"]), 0.72, data))
+                evidence.extend(_signature_evidence(str(data["powered_by"]), "probe_http", data))
+            if data.get("auth_header"):
+                evidence.append(EvidenceItem("probe_http", "service", "auth_header", str(data["auth_header"]), 0.72, data))
+            if data.get("favicon_hash"):
+                evidence.append(EvidenceItem("probe_http", "identity", "favicon_hash", str(data["favicon_hash"]), 0.76, data))
+            if data.get("detected_app"):
+                evidence.append(EvidenceItem("probe_http", "identity", "detected_app", str(data["detected_app"]), 0.86, data))
+                evidence.extend(_signature_evidence(str(data["detected_app"]), "probe_http", data))
+            if data.get("redirect_host"):
+                evidence.append(EvidenceItem("probe_http", "identity", "redirect_host", str(data["redirect_host"]), 0.74, data))
         elif probe.probe_type == "tls":
             if data.get("subject_cn"):
                 evidence.append(EvidenceItem("probe_tls", "identity", "cert_cn", str(data["subject_cn"]), 0.82, data))
+                evidence.extend(_signature_evidence(str(data["subject_cn"]), "probe_tls", data))
             if data.get("cert_org"):
                 evidence.append(EvidenceItem("probe_tls", "vendor", "cert_org", str(data["cert_org"]), 0.84, data))
+                evidence.extend(_signature_evidence(str(data["cert_org"]), "probe_tls", data))
+            if data.get("fingerprint_sha256"):
+                evidence.append(EvidenceItem("probe_tls", "identity", "cert_sha256", str(data["fingerprint_sha256"]), 0.7, data))
         elif probe.probe_type == "ssh":
             if data.get("banner"):
                 evidence.append(EvidenceItem("probe_ssh", "service", "ssh_banner", str(data["banner"]), 0.80, data))
+                evidence.extend(_signature_evidence(str(data["banner"]), "probe_ssh", data))
         elif probe.probe_type == "snmp":
             if data.get("sys_descr"):
                 evidence.append(EvidenceItem("probe_snmp", "os", "sys_descr", str(data["sys_descr"]), 0.92, data))
+                evidence.extend(_signature_evidence(str(data["sys_descr"]), "probe_snmp", data))
             if data.get("sys_name"):
                 evidence.append(EvidenceItem("probe_snmp", "identity", "sys_name", str(data["sys_name"]), 0.86, data))
             if data.get("sys_object_id"):
@@ -141,20 +222,35 @@ def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
                     evidence.append(
                         EvidenceItem("probe_mdns", "identity", "service_type", str(service["type"]), 0.78, service)
                     )
+                    evidence.extend(_signature_evidence(str(service["type"]), "probe_mdns", service))
                 if service.get("host"):
                     evidence.append(
                         EvidenceItem("probe_mdns", "identity", "service_host", str(service["host"]), 0.78, service)
                     )
+                if service.get("name"):
+                    evidence.append(
+                        EvidenceItem("probe_mdns", "identity", "service_name", str(service["name"]), 0.8, service)
+                    )
+                    evidence.extend(_signature_evidence(str(service["name"]), "probe_mdns", service))
+                for prop_key, prop_value in (service.get("properties") or {}).items():
+                    if prop_value:
+                        evidence.extend(_signature_evidence(f"{prop_key}={prop_value}", "probe_mdns", service))
         elif probe.probe_type == "upnp":
             if data.get("manufacturer"):
                 evidence.append(EvidenceItem("probe_upnp", "vendor", "manufacturer", str(data["manufacturer"]), 0.86, data))
+                evidence.extend(_signature_evidence(str(data["manufacturer"]), "probe_upnp", data))
             if data.get("model_name"):
                 evidence.append(EvidenceItem("probe_upnp", "model", "model_name", str(data["model_name"]), 0.88, data))
+                evidence.extend(_signature_evidence(str(data["model_name"]), "probe_upnp", data))
             if data.get("friendly_name"):
                 evidence.append(EvidenceItem("probe_upnp", "identity", "friendly_name", str(data["friendly_name"]), 0.82, data))
+                evidence.extend(_signature_evidence(str(data["friendly_name"]), "probe_upnp", data))
+            if data.get("device_type"):
+                evidence.append(EvidenceItem("probe_upnp", "identity", "device_type", str(data["device_type"]), 0.8, data))
         elif probe.probe_type == "smb":
             if data.get("os_string"):
                 evidence.append(EvidenceItem("probe_smb", "os", "os_string", str(data["os_string"]), 0.82, data))
+                evidence.extend(_signature_evidence(str(data["os_string"]), "probe_smb", data))
             if data.get("netbios_name"):
                 evidence.append(EvidenceItem("probe_smb", "identity", "netbios_name", str(data["netbios_name"]), 0.78, data))
 
