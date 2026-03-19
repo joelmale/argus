@@ -3,7 +3,7 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useRemoveAssetTag, useRestoreAssist, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
+import { useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useRefreshAssetAiAnalysis, useRemoveAssetTag, useRestoreAssist, useRunAssetPortScan, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
@@ -349,6 +349,8 @@ export default function AssetDetailPage() {
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
   const { data: asset, isLoading, isError } = useAsset(assetId)
   const { data: currentUser } = useCurrentUser()
+  const { mutate: runPortScan, isPending: isPortScanPending } = useRunAssetPortScan()
+  const { mutate: refreshAiAnalysis, isPending: isAiLookupPending } = useRefreshAssetAiAnalysis()
 
   if (isLoading) return (
     <AppShell>
@@ -438,7 +440,20 @@ export default function AssetDetailPage() {
             {/* Open Ports */}
             <Card>
               <CardHeader>
-                <CardTitle><Network className="w-4 h-4 inline mr-1.5" />Open Ports ({openPorts.length})</CardTitle>
+                <div className="flex items-center justify-between gap-3">
+                  <CardTitle><Network className="w-4 h-4 inline mr-1.5" />Open Ports ({openPorts.length})</CardTitle>
+                  {currentUser?.role === 'admin' && (
+                    <button
+                      type="button"
+                      onClick={() => runPortScan(asset.id)}
+                      disabled={isPortScanPending}
+                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+                    >
+                      <Play className="w-3.5 h-3.5" />
+                      {isPortScanPending ? 'Scanning…' : 'Port Scan'}
+                    </button>
+                  )}
+                </div>
               </CardHeader>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -500,17 +515,9 @@ export default function AssetDetailPage() {
                 <AssetFindingsCard asset={asset} />
                 <WirelessAssociationsCard asset={asset} />
                 <ConfigBackupCard asset={asset} />
-                <AssetMetadataEditor key={asset.id} asset={asset} />
               </div>
             ) : (
-              <Card>
-                <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
-                <CardBody>
-                  <p className="text-sm text-zinc-500">
-                    Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
-                  </p>
-                </CardBody>
-              </Card>
+              <AssetFindingsCard asset={asset} />
             )}
           </div>
 
@@ -519,7 +526,20 @@ export default function AssetDetailPage() {
             {ai && (
               <Card>
                 <CardHeader>
-                  <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Classification</CardTitle>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Classification</CardTitle>
+                    {currentUser?.role === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => refreshAiAnalysis(asset.id)}
+                        disabled={isAiLookupPending}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+                      >
+                        <Bot className="w-3.5 h-3.5" />
+                        {isAiLookupPending ? 'Looking up…' : 'Lookup'}
+                      </button>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardBody className="space-y-3">
                   <div>
@@ -582,11 +602,37 @@ export default function AssetDetailPage() {
             {!ai && (
               <Card>
                 <CardHeader>
-                  <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Analysis</CardTitle>
+                  <div className="flex items-center justify-between gap-3">
+                    <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Analysis</CardTitle>
+                    {currentUser?.role === 'admin' && (
+                      <button
+                        type="button"
+                        onClick={() => refreshAiAnalysis(asset.id)}
+                        disabled={isAiLookupPending}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+                      >
+                        <Bot className="w-3.5 h-3.5" />
+                        {isAiLookupPending ? 'Looking up…' : 'Lookup'}
+                      </button>
+                    )}
+                  </div>
                 </CardHeader>
                 <CardBody>
                   <p className="text-sm text-zinc-500">
-                    No persisted AI analysis is attached to this asset record yet. Current AI investigation happens during scans and emits live events, but the detailed narrative is not consistently stored and returned on this page.
+                    No persisted AI analysis is attached to this asset record yet.
+                  </p>
+                </CardBody>
+              </Card>
+            )}
+
+            {currentUser?.role === 'admin' ? (
+              <AssetMetadataEditor key={asset.id} asset={asset} />
+            ) : (
+              <Card>
+                <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
+                <CardBody>
+                  <p className="text-sm text-zinc-500">
+                    Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
                   </p>
                 </CardBody>
               </Card>

@@ -65,6 +65,8 @@ export const assetsApi = {
   addTag: (id: string, tag: string) => api.post(`/api/v1/assets/${id}/tags`, { tag }),
   removeTag: (id: string, tag: string) => api.delete(`/api/v1/assets/${id}/tags/${encodeURIComponent(tag)}`),
   delete: (id: string) => api.delete(`/api/v1/assets/${id}`),
+  runPortScan: (id: string) => api.post(`/api/v1/assets/${id}/port-scan`),
+  refreshAiAnalysis: (id: string) => api.post(`/api/v1/assets/${id}/ai-analysis/refresh`),
   getConfigBackupTarget: (id: string) => api.get(`/api/v1/assets/${id}/config-backup-target`),
   upsertConfigBackupTarget: (
     id: string,

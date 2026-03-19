@@ -1,4 +1,5 @@
 """Assets CRUD — the core inventory endpoints."""
+import asyncio
 import csv
 from io import StringIO
 from uuid import UUID
@@ -23,7 +24,10 @@ from app.backups import (
 from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
-from app.scanner.models import DeviceClass
+from app.scanner.agent import get_analyst
+from app.scanner.models import DeviceClass, DiscoveredHost, HostScanResult, ScanProfile
+from app.scanner.pipeline import _investigate_host
+from app.scanner.stages import portscan
 
 router = APIRouter()
 VALID_DEVICE_TYPES = {member.value for member in DeviceClass}
@@ -94,6 +98,18 @@ class ConfigBackupTargetRequest(BaseModel):
     port: int = 22
     host_override: str | None = None
     enabled: bool = True
+
+
+async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
+    stmt = (
+        select(Asset)
+        .options(selectinload(Asset.ports), selectinload(Asset.tags), selectinload(Asset.ai_analysis))
+        .where(Asset.id == asset_id)
+    )
+    asset = (await db.execute(stmt)).scalar_one_or_none()
+    if not asset:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    return asset
 
 
 @router.get("/")
@@ -307,6 +323,68 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
     return _serialize_asset(asset)
+
+
+@router.post("/{asset_id}/port-scan")
+async def run_asset_port_scan(
+    asset_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    asset = await _load_asset(db, asset_id)
+    host = DiscoveredHost(
+        ip_address=asset.ip_address,
+        mac_address=asset.mac_address,
+        discovery_method="manual",
+        nmap_hostname=asset.hostname,
+    )
+    ports, os_fp = await portscan.scan_host(host, ScanProfile.BALANCED)
+    result = HostScanResult(
+        host=host,
+        ports=ports,
+        os_fingerprint=os_fp,
+        reverse_hostname=asset.hostname,
+        scan_profile=ScanProfile.BALANCED,
+    )
+
+    from app.db.upsert import upsert_scan_result
+
+    await upsert_scan_result(db, result)
+    await db.commit()
+    return _serialize_asset(await _load_asset(db, asset_id))
+
+
+@router.post("/{asset_id}/ai-analysis/refresh")
+async def run_asset_ai_refresh(
+    asset_id: UUID,
+    db: AsyncSession = Depends(get_db),
+    _: User = Depends(get_current_admin),
+):
+    asset = await _load_asset(db, asset_id)
+    host = DiscoveredHost(
+        ip_address=asset.ip_address,
+        mac_address=asset.mac_address,
+        discovery_method="manual",
+        nmap_hostname=asset.hostname,
+    )
+    ports, os_fp = await portscan.scan_host(host, ScanProfile.BALANCED)
+    result = await _investigate_host(
+        host=host,
+        ports=ports,
+        os_fp=os_fp,
+        nmap_hostname=host.nmap_hostname,
+        profile=ScanProfile.BALANCED,
+        analyst=get_analyst(),
+        semaphore=asyncio.Semaphore(1),
+        broadcast_fn=None,
+        job_id=f"asset-{asset.id}",
+    )
+
+    from app.db.upsert import upsert_scan_result
+
+    await upsert_scan_result(db, result)
+    await db.commit()
+    return _serialize_asset(await _load_asset(db, asset_id))
 
 
 @router.patch("/{asset_id}")

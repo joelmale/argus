@@ -39,6 +39,28 @@ export function useUpdateAsset() {
   })
 }
 
+export function useRunAssetPortScan() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => assetsApi.runPortScan(id),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['assets', id] })
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
+export function useRefreshAssetAiAnalysis() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => assetsApi.refreshAiAnalysis(id),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['assets', id] })
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
 export function useAddAssetTag() {
   const qc = useQueryClient()
   return useMutation({
