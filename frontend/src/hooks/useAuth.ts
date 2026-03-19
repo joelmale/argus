@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, FingerprintDataset, HomeAssistantExport, IntegrationEvent, PluginInfo, ScannerConfig, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, FingerprintDataset, HomeAssistantExport, IntegrationEvent, PluginInfo, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -278,6 +278,17 @@ export function useScannerConfig(enabled = true) {
   })
 }
 
+export function useTplinkDecoModule(enabled = true) {
+  return useQuery<{ config: TplinkDecoConfig; recent_runs: TplinkDecoSyncRun[] }>({
+    queryKey: ['system', 'tplink-deco-module'],
+    queryFn: async () => {
+      const { data } = await authApi.getTplinkDecoModule()
+      return data
+    },
+    enabled,
+  })
+}
+
 export function useUpdateBackupPolicy() {
   const queryClient = useQueryClient()
 
@@ -302,6 +313,52 @@ export function useUpdateScannerConfig() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['system', 'scanner-config'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useUpdateTplinkDecoModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: Omit<TplinkDecoConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>) => {
+      const { data } = await authApi.updateTplinkDecoModule(payload)
+      return data as TplinkDecoConfig
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'tplink-deco-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useTestTplinkDecoModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.testTplinkDecoModule()
+      return data as { status: string; client_count: number; base_url: string }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'tplink-deco-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useSyncTplinkDecoModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.syncTplinkDecoModule()
+      return data as { status: string; client_count: number; ingested_assets: number; log_excerpt_present: boolean; run_id: number }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'tplink-deco-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['assets'] })
       await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
     },
   })

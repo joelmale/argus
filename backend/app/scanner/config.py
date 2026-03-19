@@ -43,6 +43,17 @@ class EffectiveScannerConfig:
     default_profile: str
     interval_minutes: int
     concurrent_hosts: int
+    passive_arp_enabled: bool
+    passive_arp_interface: str
+    snmp_enabled: bool
+    snmp_version: str
+    snmp_community: str
+    snmp_timeout: int
+    snmp_v3_username: str
+    snmp_v3_auth_key: str
+    snmp_v3_priv_key: str
+    snmp_v3_auth_protocol: str
+    snmp_v3_priv_protocol: str
     fingerprint_ai_enabled: bool
     fingerprint_ai_model: str
     fingerprint_ai_min_confidence: float
@@ -143,6 +154,17 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
         default_profile=settings.SCANNER_DEFAULT_PROFILE,
         interval_minutes=settings.SCANNER_INTERVAL_MINUTES,
         concurrent_hosts=settings.SCANNER_CONCURRENT_HOSTS,
+        passive_arp_enabled=settings.SCANNER_PASSIVE_ARP,
+        passive_arp_interface=settings.SCANNER_PASSIVE_ARP_INTERFACE,
+        snmp_enabled=True,
+        snmp_version=settings.SNMP_VERSION,
+        snmp_community=settings.SNMP_COMMUNITY,
+        snmp_timeout=settings.SNMP_TIMEOUT,
+        snmp_v3_username=settings.SNMP_V3_USERNAME,
+        snmp_v3_auth_key=settings.SNMP_V3_AUTH_KEY,
+        snmp_v3_priv_key=settings.SNMP_V3_PRIV_KEY,
+        snmp_v3_auth_protocol=settings.SNMP_V3_AUTH_PROTOCOL,
+        snmp_v3_priv_protocol=settings.SNMP_V3_PRIV_PROTOCOL,
         fingerprint_ai_enabled=False,
         fingerprint_ai_model=settings.OLLAMA_MODEL,
         fingerprint_ai_min_confidence=0.75,
@@ -168,6 +190,17 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         default_profile=config.default_profile,
         interval_minutes=config.interval_minutes,
         concurrent_hosts=config.concurrent_hosts,
+        passive_arp_enabled=config.passive_arp_enabled,
+        passive_arp_interface=config.passive_arp_interface,
+        snmp_enabled=config.snmp_enabled,
+        snmp_version=config.snmp_version,
+        snmp_community=config.snmp_community,
+        snmp_timeout=config.snmp_timeout,
+        snmp_v3_username=config.snmp_v3_username or "",
+        snmp_v3_auth_key=config.snmp_v3_auth_key or "",
+        snmp_v3_priv_key=config.snmp_v3_priv_key or "",
+        snmp_v3_auth_protocol=config.snmp_v3_auth_protocol,
+        snmp_v3_priv_protocol=config.snmp_v3_priv_protocol,
         fingerprint_ai_enabled=config.fingerprint_ai_enabled,
         fingerprint_ai_model=config.fingerprint_ai_model or settings.OLLAMA_MODEL,
         fingerprint_ai_min_confidence=config.fingerprint_ai_min_confidence,
@@ -194,6 +227,17 @@ async def update_scanner_config(
     default_profile: str,
     interval_minutes: int,
     concurrent_hosts: int,
+    passive_arp_enabled: bool,
+    passive_arp_interface: str,
+    snmp_enabled: bool,
+    snmp_version: str,
+    snmp_community: str | None,
+    snmp_timeout: int,
+    snmp_v3_username: str | None,
+    snmp_v3_auth_key: str | None,
+    snmp_v3_priv_key: str | None,
+    snmp_v3_auth_protocol: str,
+    snmp_v3_priv_protocol: str,
     fingerprint_ai_enabled: bool,
     fingerprint_ai_model: str | None,
     fingerprint_ai_min_confidence: float,
@@ -214,6 +258,17 @@ async def update_scanner_config(
     config.default_profile = default_profile
     config.interval_minutes = interval_minutes
     config.concurrent_hosts = concurrent_hosts
+    config.passive_arp_enabled = passive_arp_enabled
+    config.passive_arp_interface = (passive_arp_interface or "").strip() or settings.SCANNER_PASSIVE_ARP_INTERFACE
+    config.snmp_enabled = snmp_enabled
+    config.snmp_version = (snmp_version or "2c").lower()
+    config.snmp_community = (snmp_community or "").strip() or settings.SNMP_COMMUNITY
+    config.snmp_timeout = max(1, snmp_timeout)
+    config.snmp_v3_username = (snmp_v3_username or "").strip() or None
+    config.snmp_v3_auth_key = (snmp_v3_auth_key or "").strip() or None
+    config.snmp_v3_priv_key = (snmp_v3_priv_key or "").strip() or None
+    config.snmp_v3_auth_protocol = (snmp_v3_auth_protocol or "sha").lower()
+    config.snmp_v3_priv_protocol = (snmp_v3_priv_protocol or "aes").lower()
     config.fingerprint_ai_enabled = fingerprint_ai_enabled
     config.fingerprint_ai_model = (fingerprint_ai_model or "").strip() or settings.OLLAMA_MODEL
     config.fingerprint_ai_min_confidence = max(0.0, min(1.0, fingerprint_ai_min_confidence))

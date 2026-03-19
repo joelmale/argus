@@ -14,6 +14,16 @@ from app.db.session import get_db
 from app.exporters import build_inventory_snapshot
 from app.fingerprinting.datasets import list_datasets, refresh_dataset
 from app.integrations import build_home_assistant_entities, list_integration_events
+from app.modules.tplink_deco import (
+    audit_tplink_config_change,
+    get_or_create_tplink_deco_config,
+    list_recent_tplink_deco_sync_runs,
+    serialize_tplink_deco_config,
+    serialize_tplink_deco_sync_run,
+    sync_tplink_deco_module,
+    test_tplink_deco_connection,
+    update_tplink_deco_config,
+)
 from app.plugins import list_plugins
 from app.scanner.config import clear_inventory, read_effective_scanner_config, update_scanner_config
 
@@ -34,6 +44,17 @@ class ScannerConfigUpdateRequest(BaseModel):
     default_profile: str
     interval_minutes: int
     concurrent_hosts: int
+    passive_arp_enabled: bool = True
+    passive_arp_interface: str = "eth0"
+    snmp_enabled: bool = True
+    snmp_version: str = "2c"
+    snmp_community: str | None = None
+    snmp_timeout: int = 5
+    snmp_v3_username: str | None = None
+    snmp_v3_auth_key: str | None = None
+    snmp_v3_priv_key: str | None = None
+    snmp_v3_auth_protocol: str = "sha"
+    snmp_v3_priv_protocol: str = "aes"
     fingerprint_ai_enabled: bool = False
     fingerprint_ai_model: str | None = None
     fingerprint_ai_min_confidence: float = 0.75
@@ -47,6 +68,17 @@ class ScannerConfigUpdateRequest(BaseModel):
 class ResetInventoryRequest(BaseModel):
     include_scan_history: bool = False
     confirm: str
+
+
+class TplinkDecoConfigUpdateRequest(BaseModel):
+    enabled: bool
+    base_url: str = "http://tplinkdeco.net"
+    owner_username: str | None = None
+    owner_password: str | None = None
+    fetch_connected_clients: bool = True
+    fetch_portal_logs: bool = True
+    request_timeout_seconds: int = 10
+    verify_tls: bool = False
 
 
 def _serialize_dataset(row) -> dict:
@@ -85,6 +117,17 @@ def _serialize_scanner_config(config, effective) -> dict:
         "default_profile": config.default_profile,
         "interval_minutes": config.interval_minutes,
         "concurrent_hosts": config.concurrent_hosts,
+        "passive_arp_enabled": config.passive_arp_enabled,
+        "passive_arp_interface": config.passive_arp_interface,
+        "snmp_enabled": config.snmp_enabled,
+        "snmp_version": config.snmp_version,
+        "snmp_community": config.snmp_community,
+        "snmp_timeout": config.snmp_timeout,
+        "snmp_v3_username": config.snmp_v3_username,
+        "snmp_v3_auth_key": config.snmp_v3_auth_key,
+        "snmp_v3_priv_key": config.snmp_v3_priv_key,
+        "snmp_v3_auth_protocol": config.snmp_v3_auth_protocol,
+        "snmp_v3_priv_protocol": config.snmp_v3_priv_protocol,
         "fingerprint_ai_enabled": config.fingerprint_ai_enabled,
         "fingerprint_ai_model": effective.fingerprint_ai_model,
         "fingerprint_ai_min_confidence": config.fingerprint_ai_min_confidence,
@@ -206,6 +249,86 @@ async def get_scanner_config(
     return _serialize_scanner_config(config, effective)
 
 
+@router.get("/modules/tplink-deco")
+async def get_tplink_deco_module(
+    _: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    config = await get_or_create_tplink_deco_config(db)
+    runs = await list_recent_tplink_deco_sync_runs(db)
+    return {
+        "config": serialize_tplink_deco_config(config),
+        "recent_runs": [serialize_tplink_deco_sync_run(row) for row in runs],
+    }
+
+
+@router.put("/modules/tplink-deco")
+async def write_tplink_deco_module(
+    payload: TplinkDecoConfigUpdateRequest,
+    user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    config = await update_tplink_deco_config(
+        db,
+        enabled=payload.enabled,
+        base_url=payload.base_url,
+        owner_username=payload.owner_username,
+        owner_password=payload.owner_password,
+        fetch_connected_clients=payload.fetch_connected_clients,
+        fetch_portal_logs=payload.fetch_portal_logs,
+        request_timeout_seconds=payload.request_timeout_seconds,
+        verify_tls=payload.verify_tls,
+    )
+    await audit_tplink_config_change(db, user=user, config=config)
+    await db.commit()
+    return serialize_tplink_deco_config(config)
+
+
+@router.post("/modules/tplink-deco/test")
+async def test_tplink_deco_module(
+    user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await test_tplink_deco_connection(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="module.tplink_deco.tested",
+        user=user,
+        target_type="tplink_deco_config",
+        details=result,
+    )
+    await db.commit()
+    return result
+
+
+@router.post("/modules/tplink-deco/sync")
+async def run_tplink_deco_module_sync(
+    user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        result = await sync_tplink_deco_module(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="module.tplink_deco.synced",
+        user=user,
+        target_type="tplink_deco_sync",
+        target_id=str(result.get("run_id")),
+        details=result,
+    )
+    await db.commit()
+    return result
+
+
 @router.put("/scanner-config")
 async def write_scanner_config(
     payload: ScannerConfigUpdateRequest,
@@ -221,6 +344,17 @@ async def write_scanner_config(
             default_profile=payload.default_profile,
             interval_minutes=payload.interval_minutes,
             concurrent_hosts=payload.concurrent_hosts,
+            passive_arp_enabled=payload.passive_arp_enabled,
+            passive_arp_interface=payload.passive_arp_interface,
+            snmp_enabled=payload.snmp_enabled,
+            snmp_version=payload.snmp_version,
+            snmp_community=payload.snmp_community,
+            snmp_timeout=payload.snmp_timeout,
+            snmp_v3_username=payload.snmp_v3_username,
+            snmp_v3_auth_key=payload.snmp_v3_auth_key,
+            snmp_v3_priv_key=payload.snmp_v3_priv_key,
+            snmp_v3_auth_protocol=payload.snmp_v3_auth_protocol,
+            snmp_v3_priv_protocol=payload.snmp_v3_priv_protocol,
             fingerprint_ai_enabled=payload.fingerprint_ai_enabled,
             fingerprint_ai_model=payload.fingerprint_ai_model,
             fingerprint_ai_min_confidence=payload.fingerprint_ai_min_confidence,

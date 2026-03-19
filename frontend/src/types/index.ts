@@ -193,6 +193,36 @@ export interface FingerprintDataset {
   updated_at: string;
 }
 
+export interface TplinkDecoConfig {
+  id: number;
+  enabled: boolean;
+  base_url: string;
+  owner_username: string | null;
+  owner_password: string | null;
+  fetch_connected_clients: boolean;
+  fetch_portal_logs: boolean;
+  request_timeout_seconds: number;
+  verify_tls: boolean;
+  last_tested_at: string | null;
+  last_sync_at: string | null;
+  last_status: string;
+  last_error: string | null;
+  last_client_count: number | null;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface TplinkDecoSyncRun {
+  id: number;
+  status: string;
+  client_count: number | null;
+  clients_payload: Array<Record<string, unknown>>;
+  logs_excerpt: string | null;
+  error: string | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
 export interface HomeAssistantEntity {
   unique_id: string;
   name: string;

@@ -436,6 +436,17 @@ class ScannerConfig(Base):
     default_profile: Mapped[str] = mapped_column(String(32), default="balanced")
     interval_minutes: Mapped[int] = mapped_column(Integer, default=60)
     concurrent_hosts: Mapped[int] = mapped_column(Integer, default=10)
+    passive_arp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    passive_arp_interface: Mapped[str] = mapped_column(String(64), default="eth0")
+    snmp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    snmp_version: Mapped[str] = mapped_column(String(8), default="2c")
+    snmp_community: Mapped[str] = mapped_column(String(128), default="public")
+    snmp_timeout: Mapped[int] = mapped_column(Integer, default=5)
+    snmp_v3_username: Mapped[str | None] = mapped_column(String(128))
+    snmp_v3_auth_key: Mapped[str | None] = mapped_column(String(256))
+    snmp_v3_priv_key: Mapped[str | None] = mapped_column(String(256))
+    snmp_v3_auth_protocol: Mapped[str] = mapped_column(String(16), default="sha")
+    snmp_v3_priv_protocol: Mapped[str] = mapped_column(String(16), default="aes")
     fingerprint_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     fingerprint_ai_model: Mapped[str | None] = mapped_column(String(128))
     fingerprint_ai_min_confidence: Mapped[float] = mapped_column(default=0.75)
@@ -472,3 +483,37 @@ class FingerprintDataset(Base):
     notes: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TplinkDecoConfig(Base):
+    __tablename__ = "tplink_deco_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    base_url: Mapped[str] = mapped_column(String(255), default="http://tplinkdeco.net")
+    owner_username: Mapped[str | None] = mapped_column(String(128))
+    owner_password: Mapped[str | None] = mapped_column(String(256))
+    fetch_connected_clients: Mapped[bool] = mapped_column(Boolean, default=True)
+    fetch_portal_logs: Mapped[bool] = mapped_column(Boolean, default=True)
+    request_timeout_seconds: Mapped[int] = mapped_column(Integer, default=10)
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=False)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str] = mapped_column(String(32), default="idle")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_client_count: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class TplinkDecoSyncRun(Base):
+    __tablename__ = "tplink_deco_sync_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    client_count: Mapped[int | None] = mapped_column(Integer)
+    clients_payload: Mapped[list | None] = mapped_column(JSONB)
+    logs_excerpt: Mapped[str | None] = mapped_column(Text)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

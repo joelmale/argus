@@ -5,8 +5,8 @@ import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateUser, useUsers } from '@/hooks/useAuth'
-import type { FingerprintDataset } from '@/types'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncTplinkDecoModule, useTestTplinkDecoModule, useTplinkDecoModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import type { FingerprintDataset, TplinkDecoConfig, TplinkDecoSyncRun } from '@/types'
 import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 
 type BackupPolicyFormProps = {
@@ -326,6 +326,165 @@ function FingerprintDatasetsCard({
   )
 }
 
+function TplinkDecoModuleCard({
+  moduleConfig,
+  recentRuns,
+  isSaving,
+  isTesting,
+  isSyncing,
+  onSave,
+  onTest,
+  onSync,
+}: {
+  moduleConfig?: TplinkDecoConfig
+  recentRuns: TplinkDecoSyncRun[]
+  isSaving: boolean
+  isTesting: boolean
+  isSyncing: boolean
+  onSave: (payload: Omit<TplinkDecoConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>) => void
+  onTest: () => void
+  onSync: () => void
+}) {
+  const [enabled, setEnabled] = useState(moduleConfig?.enabled ?? false)
+  const [baseUrl, setBaseUrl] = useState(moduleConfig?.base_url ?? 'http://tplinkdeco.net')
+  const [ownerUsername, setOwnerUsername] = useState(moduleConfig?.owner_username ?? '')
+  const [ownerPassword, setOwnerPassword] = useState(moduleConfig?.owner_password ?? '')
+  const [fetchConnectedClients, setFetchConnectedClients] = useState(moduleConfig?.fetch_connected_clients ?? true)
+  const [fetchPortalLogs, setFetchPortalLogs] = useState(moduleConfig?.fetch_portal_logs ?? true)
+  const [requestTimeoutSeconds, setRequestTimeoutSeconds] = useState(moduleConfig?.request_timeout_seconds ?? 10)
+  const [verifyTls, setVerifyTls] = useState(moduleConfig?.verify_tls ?? false)
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Wifi className="w-4 h-4 inline mr-1.5" />TP-Link Deco Module</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        <p className="text-sm text-zinc-500">
+          Pull connected-client data and portal log exports directly from the local Deco portal using the owner password. Disable this module to unload it operationally.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+            Enable Deco module
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={fetchConnectedClients} onChange={(event) => setFetchConnectedClients(event.target.checked)} />
+            Pull connected clients
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={fetchPortalLogs} onChange={(event) => setFetchPortalLogs(event.target.checked)} />
+            Pull portal logs
+          </label>
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={verifyTls} onChange={(event) => setVerifyTls(event.target.checked)} />
+            Verify TLS
+          </label>
+          <input
+            value={baseUrl}
+            onChange={(event) => setBaseUrl(event.target.value)}
+            placeholder="http://tplinkdeco.net"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <input
+            value={ownerUsername}
+            onChange={(event) => setOwnerUsername(event.target.value)}
+            placeholder="Owner username (optional)"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <input
+            type="password"
+            value={ownerPassword}
+            onChange={(event) => setOwnerPassword(event.target.value)}
+            placeholder="Owner password"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <input
+            type="number"
+            min={3}
+            max={60}
+            value={requestTimeoutSeconds}
+            onChange={(event) => setRequestTimeoutSeconds(Number(event.target.value) || 10)}
+            placeholder="Timeout seconds"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+        </div>
+
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Module health</p>
+          <p className="text-xs text-zinc-500">Status: {moduleConfig?.last_status ?? 'idle'}</p>
+          <p className="text-xs text-zinc-500">Last tested: {moduleConfig?.last_tested_at ? new Date(moduleConfig.last_tested_at).toLocaleString() : 'never'}</p>
+          <p className="text-xs text-zinc-500">Last sync: {moduleConfig?.last_sync_at ? new Date(moduleConfig.last_sync_at).toLocaleString() : 'never'}</p>
+          <p className="text-xs text-zinc-500">Last client count: {moduleConfig?.last_client_count ?? '—'}</p>
+          {moduleConfig?.last_error && <p className="text-xs text-rose-500">{moduleConfig.last_error}</p>}
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={isSaving}
+            onClick={() => onSave({
+              enabled,
+              base_url: baseUrl.trim() || 'http://tplinkdeco.net',
+              owner_username: ownerUsername.trim() || null,
+              owner_password: ownerPassword.trim() || null,
+              fetch_connected_clients: fetchConnectedClients,
+              fetch_portal_logs: fetchPortalLogs,
+              request_timeout_seconds: requestTimeoutSeconds,
+              verify_tls: verifyTls,
+            })}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+          >
+            Save module settings
+          </button>
+          <button
+            type="button"
+            disabled={isTesting}
+            onClick={onTest}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700"
+          >
+            {isTesting ? 'Testing…' : 'Test connection'}
+          </button>
+          <button
+            type="button"
+            disabled={isSyncing || !enabled}
+            onClick={onSync}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700 disabled:opacity-50"
+          >
+            {isSyncing ? 'Syncing…' : 'Sync now'}
+          </button>
+        </div>
+
+        <div className="space-y-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Recent sync runs</p>
+          {recentRuns.length === 0 ? (
+            <p className="text-sm text-zinc-500">No Deco sync runs recorded yet.</p>
+          ) : recentRuns.map((run) => (
+            <div key={run.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Run #{run.id}</p>
+                <span className="text-xs text-zinc-500">{run.status}</span>
+              </div>
+              <p className="text-xs text-zinc-500">
+                Started {new Date(run.started_at).toLocaleString()}
+                {run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ''}
+                {run.client_count !== null ? ` · clients ${run.client_count}` : ''}
+              </p>
+              {run.error && <p className="text-xs text-rose-500">{run.error}</p>}
+              {run.logs_excerpt && (
+                <pre className="rounded-lg bg-zinc-950 text-zinc-200 p-3 text-[11px] overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto">
+                  {run.logs_excerpt}
+                </pre>
+              )}
+            </div>
+          ))}
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
 function SettingsSection({
   id,
   title,
@@ -357,6 +516,7 @@ export default function SettingsPage() {
   const { data: backupDrivers = [] } = useBackupDrivers(currentUser?.role === 'admin')
   const { data: backupPolicy } = useBackupPolicy(currentUser?.role === 'admin')
   const { data: scannerConfig } = useScannerConfig(currentUser?.role === 'admin')
+  const { data: tplinkDecoModule } = useTplinkDecoModule(currentUser?.role === 'admin')
   const { data: fingerprintDatasets = [] } = useFingerprintDatasets(currentUser?.role === 'admin')
   const { data: plugins = [] } = usePlugins(currentUser?.role === 'admin')
   const { data: integrationEvents = [] } = useIntegrationEvents(currentUser?.role === 'admin')
@@ -368,6 +528,9 @@ export default function SettingsPage() {
   const { mutate: updateAlertRule, isPending: isUpdatingAlertRule } = useUpdateAlertRule()
   const { mutate: updateBackupPolicy, isPending: isUpdatingBackupPolicy } = useUpdateBackupPolicy()
   const { mutate: updateScannerConfig, isPending: isUpdatingScannerConfig } = useUpdateScannerConfig()
+  const { mutate: updateTplinkDecoModule, isPending: isUpdatingTplinkDecoModule } = useUpdateTplinkDecoModule()
+  const { mutate: testTplinkDecoModule, isPending: isTestingTplinkDecoModule } = useTestTplinkDecoModule()
+  const { mutate: syncTplinkDecoModule, isPending: isSyncingTplinkDecoModule } = useSyncTplinkDecoModule()
   const { mutate: refreshFingerprintDataset, isPending: isRefreshingFingerprintDataset } = useRefreshFingerprintDataset()
   const [refreshingDatasetKey, setRefreshingDatasetKey] = useState<string | null>(null)
   const { mutate: resetInventory, isPending: isResettingInventory } = useResetInventory()
@@ -496,18 +659,31 @@ export default function SettingsPage() {
                 <SettingsSection
                   id="network-snmp"
                   title="Network & SNMP"
-                  description="Passive discovery and SNMP-specific controls are only partially implemented today."
+                  description="Passive discovery, SNMP, and local controller integrations."
                 >
-                  <Card>
-                    <CardBody className="space-y-3">
-                      <p className="text-sm text-zinc-500">
-                        Current state: network target auto-detect, passive observations in the backend, and SNMP evidence ingestion all exist, but there is no dedicated settings surface yet for community strings, SNMP v3 profiles, interface selection, or passive listener tuning.
-                      </p>
-                      <p className="text-sm text-zinc-500">
-                        This section still needs a real form rather than documentation text.
-                      </p>
-                    </CardBody>
-                  </Card>
+                  <div className="space-y-4">
+                    <Card>
+                      <CardBody className="space-y-3">
+                        <p className="text-sm text-zinc-500">
+                          Scanner-level SNMP and passive listener controls now live in the scanner configuration model, but the dedicated form surface still needs to be split out cleanly from general scan settings.
+                        </p>
+                        <p className="text-sm text-zinc-500">
+                          The Deco module below is a separate local-portal integration that can enrich transient client inventory beyond what SNMP exposes on consumer AP hardware.
+                        </p>
+                      </CardBody>
+                    </Card>
+                    <TplinkDecoModuleCard
+                      key={tplinkDecoModule?.config.updated_at ?? 'tplink-deco-module'}
+                      moduleConfig={tplinkDecoModule?.config}
+                      recentRuns={tplinkDecoModule?.recent_runs ?? []}
+                      isSaving={isUpdatingTplinkDecoModule}
+                      isTesting={isTestingTplinkDecoModule}
+                      isSyncing={isSyncingTplinkDecoModule}
+                      onSave={(payload) => updateTplinkDecoModule(payload)}
+                      onTest={() => testTplinkDecoModule()}
+                      onSync={() => syncTplinkDecoModule()}
+                    />
+                  </div>
                 </SettingsSection>
 
                 <SettingsSection

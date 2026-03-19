@@ -36,12 +36,32 @@ OIDS = {
 }
 
 
-async def probe(ip: str, community: str = "public", port: int = 161, timeout: float = 5.0) -> ProbeResult:
+async def probe(
+    ip: str,
+    community: str = "public",
+    port: int = 161,
+    timeout: float = 5.0,
+    version: str = "2c",
+    v3_username: str | None = None,
+    v3_auth_key: str | None = None,
+    v3_priv_key: str | None = None,
+    v3_auth_protocol: str | None = None,
+    v3_priv_protocol: str | None = None,
+) -> ProbeResult:
     """Query SNMP MIB-II system group."""
     t0 = time.monotonic()
 
     try:
-        poller = SnmpPoller(community=community)
+        poller = SnmpPoller(
+            community=community,
+            version=version,
+            timeout=int(timeout),
+            v3_username=v3_username,
+            v3_auth_key=v3_auth_key,
+            v3_priv_key=v3_priv_key,
+            v3_auth_protocol=v3_auth_protocol,
+            v3_priv_protocol=v3_priv_protocol,
+        )
         system_info, interfaces, arp_table, neighbors, wireless_clients = await asyncio.wait_for(
             asyncio.gather(
                 poller.get_system_info(ip),

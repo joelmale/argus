@@ -66,9 +66,25 @@ CDP_OIDS = {
 
 
 class SnmpPoller:
-    def __init__(self, community: str | None = None, version: str | None = None):
+    def __init__(
+        self,
+        community: str | None = None,
+        version: str | None = None,
+        timeout: int | None = None,
+        v3_username: str | None = None,
+        v3_auth_key: str | None = None,
+        v3_priv_key: str | None = None,
+        v3_auth_protocol: str | None = None,
+        v3_priv_protocol: str | None = None,
+    ):
         self.community = community or settings.SNMP_COMMUNITY
         self.version = (version or settings.SNMP_VERSION).lower()
+        self.timeout = timeout or settings.SNMP_TIMEOUT
+        self.v3_username = v3_username or settings.SNMP_V3_USERNAME
+        self.v3_auth_key = v3_auth_key or settings.SNMP_V3_AUTH_KEY
+        self.v3_priv_key = v3_priv_key or settings.SNMP_V3_PRIV_KEY
+        self.v3_auth_protocol = (v3_auth_protocol or settings.SNMP_V3_AUTH_PROTOCOL).lower()
+        self.v3_priv_protocol = (v3_priv_protocol or settings.SNMP_V3_PRIV_PROTOCOL).lower()
 
     async def get_system_info(self, host: str) -> dict:
         """Return sysDescr, sysName, sysLocation for a host."""
@@ -133,7 +149,7 @@ class SnmpPoller:
         if self.version == "3":
             engine = SnmpEngine()
             auth = self._v3_auth()
-            transport = await UdpTransportTargetV3.create((host, 161), timeout=settings.SNMP_TIMEOUT, retries=1)
+            transport = await UdpTransportTargetV3.create((host, 161), timeout=self.timeout, retries=1)
             error_indication, error_status, _, var_binds = await get_cmd_v3(
                 engine,
                 auth,
@@ -143,7 +159,7 @@ class SnmpPoller:
         else:
             dispatcher = SnmpDispatcher()
             auth = CommunityDataV1(self.community, mpModel=1)
-            transport = await UdpTransportTargetV1.create((host, 161), timeout=settings.SNMP_TIMEOUT, retries=1)
+            transport = await UdpTransportTargetV1.create((host, 161), timeout=self.timeout, retries=1)
             error_indication, error_status, _, var_binds = await get_cmd_v1(
                 dispatcher,
                 auth,
@@ -161,7 +177,7 @@ class SnmpPoller:
         if self.version == "3":
             engine = SnmpEngine()
             auth = self._v3_auth()
-            transport = await UdpTransportTargetV3.create((host, 161), timeout=settings.SNMP_TIMEOUT, retries=1)
+            transport = await UdpTransportTargetV3.create((host, 161), timeout=self.timeout, retries=1)
             walker = walk_cmd_v3(
                 engine,
                 auth,
@@ -171,7 +187,7 @@ class SnmpPoller:
         else:
             dispatcher = SnmpDispatcher()
             auth = CommunityDataV1(self.community, mpModel=1)
-            transport = await UdpTransportTargetV1.create((host, 161), timeout=settings.SNMP_TIMEOUT, retries=1)
+            transport = await UdpTransportTargetV1.create((host, 161), timeout=self.timeout, retries=1)
             walker = walk_cmd_v1(
                 dispatcher,
                 auth,
@@ -188,12 +204,12 @@ class SnmpPoller:
         return rows
 
     def _v3_auth(self) -> UsmUserData:
-        auth_protocol = usmHMACSHAAuthProtocol if settings.SNMP_V3_AUTH_PROTOCOL.lower() == "sha" else usmHMACMD5AuthProtocol
-        priv_protocol = usmAesCfb128Protocol if settings.SNMP_V3_PRIV_PROTOCOL.lower() == "aes" else usmDESPrivProtocol
+        auth_protocol = usmHMACSHAAuthProtocol if self.v3_auth_protocol == "sha" else usmHMACMD5AuthProtocol
+        priv_protocol = usmAesCfb128Protocol if self.v3_priv_protocol == "aes" else usmDESPrivProtocol
         return UsmUserData(
-            userName=settings.SNMP_V3_USERNAME,
-            authKey=settings.SNMP_V3_AUTH_KEY,
-            privKey=settings.SNMP_V3_PRIV_KEY,
+            userName=self.v3_username,
+            authKey=self.v3_auth_key,
+            privKey=self.v3_priv_key,
             authProtocol=auth_protocol,
             privProtocol=priv_protocol,
         )
