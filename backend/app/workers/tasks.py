@@ -272,6 +272,7 @@ async def _passive_arp_loop() -> None:
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.db.upsert import upsert_scan_result
+    from app.fingerprinting.passive import record_passive_observation
     from app.scanner.models import HostScanResult, ScanProfile
     from app.scanner.stages.discovery import PassiveArpListener
 
@@ -285,6 +286,18 @@ async def _passive_arp_loop() -> None:
                 asset, change_type = await upsert_scan_result(
                     db,
                     HostScanResult(host=host, scan_profile=ScanProfile.BALANCED),
+                )
+                await record_passive_observation(
+                    db,
+                    asset=asset,
+                    source="passive_arp",
+                    event_type="seen",
+                    summary=f"Observed ARP traffic from {host.ip_address}",
+                    details={
+                        "ip": host.ip_address,
+                        "mac": host.mac_address,
+                        "discovery_method": host.discovery_method,
+                    },
                 )
                 await db.commit()
 

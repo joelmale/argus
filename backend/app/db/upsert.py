@@ -26,6 +26,7 @@ from app.scanner.models import HostScanResult
 log = logging.getLogger(__name__)
 
 _AI_PERSIST_CONFIDENCE = 0.8
+_PASSIVE_EVIDENCE_SOURCES = {"passive_arp", "dhcp_log", "mdns_passive"}
 
 
 def _has_probe_evidence(result: HostScanResult) -> bool:
@@ -182,6 +183,8 @@ async def _refresh_fingerprint_snapshot(
 ) -> None:
     evidence_stmt = select(AssetEvidence).where(AssetEvidence.asset_id == asset.id)
     for row in (await db.execute(evidence_stmt)).scalars().all():
+        if row.source in _PASSIVE_EVIDENCE_SOURCES or row.source.startswith("passive_"):
+            continue
         await db.delete(row)
 
     probe_stmt = select(ProbeRun).where(ProbeRun.asset_id == asset.id)

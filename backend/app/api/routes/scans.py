@@ -11,6 +11,7 @@ from app.db.models import ScanJob
 from app.db.models import User
 from app.db.session import get_db
 from app.db.upsert import upsert_scan_result
+from app.fingerprinting.passive import record_passive_observation
 from app.ingestion.logs import parse_dns_dhcp_logs
 from app.notifications import notify_new_device
 from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets
@@ -71,6 +72,20 @@ async def ingest_logs(
     changed_assets = 0
     for result in observations:
         asset, change_type = await upsert_scan_result(db, result)
+        await record_passive_observation(
+            db,
+            asset=asset,
+            source="dhcp_log",
+            event_type="lease",
+            summary=f"Observed DHCP/DNS lease for {result.host.ip_address}",
+            details={
+                "ip": result.host.ip_address,
+                "mac": result.host.mac_address,
+                "hostname": result.reverse_hostname,
+                "discovery_method": result.host.discovery_method,
+            },
+            observed_at=result.scanned_at,
+        )
         if change_type == "discovered":
             new_assets += 1
             await notify_new_device(

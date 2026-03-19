@@ -215,6 +215,15 @@ export interface ProbeRun {
   observed_at: string;
 }
 
+export interface PassiveObservation {
+  id: number;
+  source: string;
+  event_type: string;
+  summary: string;
+  details: Record<string, unknown> | null;
+  observed_at: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;
@@ -245,6 +254,7 @@ export interface Asset {
   ai_analysis: AssetAIAnalysis | null;
   evidence: AssetEvidence[];
   probe_runs: ProbeRun[];
+  observations: PassiveObservation[];
 }
 
 export interface ScanJob {

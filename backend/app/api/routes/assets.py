@@ -21,7 +21,7 @@ from app.backups import (
     list_backup_snapshots,
     upsert_backup_target,
 )
-from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, ProbeRun, AssetEvidence, User, WirelessAssociation
+from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 from app.scanner.agent import get_analyst
@@ -111,6 +111,17 @@ def _serialize_asset(asset: Asset) -> dict:
             }
             for row in sorted(asset.probe_runs, key=lambda item: (item.probe_type, item.target_port or 0))
         ],
+        "observations": [
+            {
+                "id": row.id,
+                "source": row.source,
+                "event_type": row.event_type,
+                "summary": row.summary,
+                "details": row.details,
+                "observed_at": row.observed_at.isoformat(),
+            }
+            for row in sorted(asset.observations, key=lambda item: item.observed_at, reverse=True)
+        ],
     }
 
 
@@ -136,6 +147,7 @@ async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
             selectinload(Asset.ai_analysis),
             selectinload(Asset.evidence),
             selectinload(Asset.probe_runs),
+            selectinload(Asset.observations),
         )
         .where(Asset.id == asset_id)
     )
@@ -162,6 +174,7 @@ async def list_assets(
         selectinload(Asset.ai_analysis),
         selectinload(Asset.evidence),
         selectinload(Asset.probe_runs),
+        selectinload(Asset.observations),
     )
     if status:
         q = q.where(Asset.status == status)
@@ -354,12 +367,13 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
             selectinload(Asset.ports),
             selectinload(Asset.tags),
             selectinload(Asset.history),
-            selectinload(Asset.ai_analysis),
-            selectinload(Asset.evidence),
-            selectinload(Asset.probe_runs),
-        )
-        .where(Asset.id == asset_id)
+        selectinload(Asset.ai_analysis),
+        selectinload(Asset.evidence),
+        selectinload(Asset.probe_runs),
+        selectinload(Asset.observations),
     )
+    .where(Asset.id == asset_id)
+)
     asset = (await db.execute(stmt)).scalar_one_or_none()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -464,6 +478,7 @@ async def update_asset(
                 selectinload(Asset.ai_analysis),
                 selectinload(Asset.evidence),
                 selectinload(Asset.probe_runs),
+                selectinload(Asset.observations),
             )
             .where(Asset.id == asset_id)
         )

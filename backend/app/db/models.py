@@ -68,6 +68,7 @@ class Asset(Base):
     ai_analysis: Mapped["AssetAIAnalysis | None"] = relationship(back_populates="asset", cascade="all, delete-orphan")
     evidence: Mapped[list["AssetEvidence"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     probe_runs: Mapped[list["ProbeRun"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    observations: Mapped[list["PassiveObservation"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
 
@@ -182,6 +183,20 @@ class ProbeRun(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     asset: Mapped["Asset"] = relationship(back_populates="probe_runs")
+
+
+class PassiveObservation(Base):
+    __tablename__ = "passive_observations"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)
+    event_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    summary: Mapped[str] = mapped_column(String(512), nullable=False)
+    details: Mapped[dict | None] = mapped_column(JSONB)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="observations")
 
 
 class TopologyLink(Base):

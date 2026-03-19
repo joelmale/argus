@@ -29,9 +29,9 @@ Notes:
 
 ## Phase 3 — Passive Radar
 
-- [ ] Add persistent passive observations model
-- [ ] Merge ARP/DHCP/mDNS passive events into fingerprint evidence
-- [ ] Add transient-device timeline views
+- [x] Add persistent passive observations model
+- [x] Merge ARP/DHCP/mDNS passive events into fingerprint evidence
+- [x] Add transient-device timeline views
 
 ## Phase 4 — LLM Enrichment
 

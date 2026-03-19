@@ -413,6 +413,33 @@ function FingerprintEvidenceCard({ asset }: { asset: Asset }) {
   )
 }
 
+function PassiveTimelineCard({ asset }: { asset: Asset }) {
+  const observations = asset.observations ?? []
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Wifi className="w-4 h-4 inline mr-1.5" />Passive Timeline</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-3">
+        {observations.length === 0 ? (
+          <p className="text-sm text-zinc-500">No passive observations have been recorded for this asset yet.</p>
+        ) : observations.slice(0, 10).map((item) => (
+          <div key={item.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.summary}</p>
+                <p className="text-xs text-zinc-500 mt-1">{item.source} · {item.event_type}</p>
+              </div>
+              <span className="text-xs text-zinc-500 whitespace-nowrap">{timeAgo(item.observed_at)}</span>
+            </div>
+          </div>
+        ))}
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -593,6 +620,7 @@ export default function AssetDetailPage() {
           {/* Right column: AI summary + security findings */}
           <div className="xl:col-span-3 space-y-5">
             <FingerprintEvidenceCard asset={asset} />
+            <PassiveTimelineCard asset={asset} />
             {ai && (
               <Card>
                 <CardHeader>
