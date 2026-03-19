@@ -172,9 +172,13 @@ def classify(
         candidates.append(DeviceHint(DeviceClass.SWITCH, 0.68, f"Hostname hint: {host.nmap_hostname}"))
     if any(token in host_name for token in ("fw", "pfsense", "opnsense")):
         candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.72, f"Hostname hint: {host.nmap_hostname}"))
+    if "firewalla" in host_name:
+        candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.97, f"Hostname hint: {host.nmap_hostname}"))
     if any(token in host_name for token in ("nas", "truenas", "synology")):
         candidates.append(DeviceHint(DeviceClass.NAS, 0.75, f"Hostname hint: {host.nmap_hostname}"))
 
+    if "firewalla" in mac_vendor_lower:
+        candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.99, f"Vendor hint: {mac_vendor}"))
     if "ubiquiti" in mac_vendor_lower or "unifi" in mac_vendor_lower:
         if port_set & {8080, 8443, 10001, 1900}:
             candidates.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.82, f"Vendor and ports: {mac_vendor}"))
@@ -190,6 +194,11 @@ def classify(
             candidates.append(DeviceHint(DeviceClass.PRINTER, 0.78, f"Vendor and ports: {mac_vendor}"))
     if any(vendor in mac_vendor_lower for vendor in ("hikvision", "dahua", "reolink", "axis")):
         candidates.append(DeviceHint(DeviceClass.IP_CAMERA, 0.82, f"Vendor hint: {mac_vendor}"))
+    if 53 in port_set:
+        dns_port = open_ports.get(53)
+        dns_service = f"{dns_port.service or ''} {dns_port.product or ''} {dns_port.version or ''}".lower() if dns_port else ""
+        if "dnsmasq" in dns_service and (22 in port_set or 80 in port_set or 443 in port_set):
+            candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.86, "dnsmasq gateway pattern"))
 
     if not candidates:
         return DeviceHint(DeviceClass.UNKNOWN, 0.0, "No matching signatures")

@@ -9,9 +9,9 @@ Key design: scan a batch of hosts at once using nmap's multi-target
 mode — far faster than one-host-at-a-time because nmap can parallelize
 its own probes internally across the entire batch.
 
-Return type for scan_hosts: list[tuple[list[PortResult], OSFingerprint, str, str|None]]
-The 4th element is the nmap-resolved hostname (if any), supplementing
-reverse-DNS lookups in the pipeline.
+Return type for scan_hosts: list[tuple[list[PortResult], OSFingerprint, str, str|None, str|None]]
+The extra elements are the nmap-resolved hostname and vendor hint, supplementing
+reverse-DNS and OUI lookups in the pipeline.
 """
 from __future__ import annotations
 
@@ -49,8 +49,8 @@ SERVICE_SCRIPTS: dict[str, str] = {
 }
 
 # Type alias for clarity
-HostScanTuple = tuple[list[PortResult], OSFingerprint, str, str | None]
-# (ports, os_fingerprint, ip_address, nmap_hostname)
+HostScanTuple = tuple[list[PortResult], OSFingerprint, str, str | None, str | None]
+# (ports, os_fingerprint, ip_address, nmap_hostname, nmap_vendor)
 
 
 def _first_cpe(value) -> str | None:
@@ -86,7 +86,7 @@ async def scan_host(
     """
     results = await scan_hosts([host], profile, custom_args)
     if results:
-        ports, os_fp, _, nmap_hostname = results[0]
+        ports, os_fp, _, nmap_hostname, _ = results[0]
         # Attach nmap hostname back onto the host object for callers that need it
         if nmap_hostname and not host.nmap_hostname:
             host.nmap_hostname = nmap_hostname
@@ -101,7 +101,7 @@ async def scan_hosts(
 ) -> list[HostScanTuple]:
     """
     Scan a list of hosts.
-    Returns list of (ports, os_fingerprint, ip_address, nmap_hostname).
+    Returns list of (ports, os_fingerprint, ip_address, nmap_hostname, nmap_vendor).
     The nmap_hostname is whatever nmap resolved via forward/reverse DNS
     during its scan — a useful supplement to our own reverse-DNS lookup.
     """
@@ -121,6 +121,8 @@ def _scan_sync(
     custom_args: Optional[str],
 ) -> list[HostScanTuple]:
     """Synchronous nmap scan — runs in thread executor."""
+    from app.scanner.enrichment.instant_win import fingerprint_from_nmap_host_data, merge_into_os_fingerprint
+
     target_str = " ".join(h.ip_address for h in hosts)
     base_args = custom_args or NMAP_PROFILE_ARGS.get(profile, NMAP_PROFILE_ARGS[ScanProfile.BALANCED])
     args = base_args if "-Pn" in base_args.split() else f"-Pn {base_args}"
@@ -138,11 +140,24 @@ def _scan_sync(
     log.info("Port scan complete in %.1fs", time.monotonic() - t0)
 
     results: list[HostScanTuple] = []
+    host_map = {host.ip_address: host for host in hosts}
     for ip in nm.all_hosts():
-        ports      = _extract_ports(nm[ip])
-        os_fp      = _extract_os(nm[ip])
-        nm_hostname = _extract_hostname(nm[ip])
-        results.append((ports, os_fp, ip, nm_hostname))
+        host_data = nm[ip]
+        ports = _extract_ports(host_data)
+        os_fp = _extract_os(host_data)
+        nm_hostname = _extract_hostname(host_data)
+        nmap_mac, nmap_vendor = _extract_mac_and_vendor(host_data)
+        instant = fingerprint_from_nmap_host_data(host_data)
+        os_fp = merge_into_os_fingerprint(os_fp, instant)
+        resolved_vendor = instant.vendor or nmap_vendor
+
+        source_host = host_map.get(ip)
+        if source_host is not None and nmap_mac and not source_host.mac_address:
+            source_host.mac_address = nmap_mac
+        if source_host is not None and nm_hostname and not source_host.nmap_hostname:
+            source_host.nmap_hostname = nm_hostname
+
+        results.append((ports, os_fp, ip, nm_hostname, resolved_vendor))
 
     return results
 
@@ -250,6 +265,23 @@ def _extract_hostname(host_data: dict) -> str | None:
                 return name
 
     return None
+
+
+def _extract_mac_and_vendor(host_data: dict) -> tuple[str | None, str | None]:
+    addresses = host_data.get("addresses", {})
+    mac = addresses.get("mac")
+
+    vendor_data = host_data.get("vendor", {})
+    vendor = None
+    if isinstance(vendor_data, dict):
+        if mac and mac in vendor_data and vendor_data.get(mac):
+            vendor = str(vendor_data[mac])
+        else:
+            for value in vendor_data.values():
+                if value:
+                    vendor = str(value)
+                    break
+    return mac, vendor
 
 
 def build_escalated_args(ports: list[PortResult]) -> str:

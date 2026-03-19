@@ -119,11 +119,10 @@ async def run_scan(
     from app.scanner.stages import portscan
     port_results = await portscan.scan_hosts(hosts, profile)
 
-    # Build a map: ip → (ports, os_fp, nmap_hostname)
-    # scan_hosts now returns 4-tuples: (ports, os_fp, ip, nmap_hostname)
+    # Build a map: ip → (ports, os_fp, nmap_hostname, nmap_vendor)
     port_map: dict[str, tuple] = {
-        ip: (ports, os_fp, nmap_hostname)
-        for ports, os_fp, ip, nmap_hostname in port_results
+        ip: (ports, os_fp, nmap_hostname, nmap_vendor)
+        for ports, os_fp, ip, nmap_hostname, nmap_vendor in port_results
     }
 
     # ── Stages 3–6: Per-host investigation (concurrent) ──────────────────────
@@ -137,9 +136,10 @@ async def run_scan(
         asyncio.create_task(
             _investigate_host(
                 host=host,
-                ports=port_map.get(host.ip_address, ([], OSFingerprint(), None))[0],
-                os_fp=port_map.get(host.ip_address, ([], OSFingerprint(), None))[1],
-                nmap_hostname=port_map.get(host.ip_address, ([], OSFingerprint(), None))[2],
+                ports=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[0],
+                os_fp=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[1],
+                nmap_hostname=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[2],
+                nmap_vendor=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[3],
                 profile=profile,
                 analyst=analyst,
                 semaphore=semaphore,
@@ -224,6 +224,7 @@ async def _investigate_host(
     ports,
     os_fp: OSFingerprint,
     nmap_hostname: str | None,
+    nmap_vendor: str | None,
     profile: ScanProfile,
     analyst,
     semaphore: asyncio.Semaphore,
@@ -241,10 +242,11 @@ async def _investigate_host(
         from app.scanner.enrichment import mac_vendor, dns_lookup
 
         # Enrichment: MAC vendor + reverse DNS (quick, always run)
-        vendor, reverse_hostname = await asyncio.gather(
+        vendor_lookup, reverse_hostname = await asyncio.gather(
             asyncio.get_event_loop().run_in_executor(None, mac_vendor.lookup, host.mac_address),
             dns_lookup.reverse_lookup(ip),
         )
+        vendor = vendor_lookup or nmap_vendor
         hint = classify(host, ports, os_fp, vendor)
         priority_probes = probe_priority(host, ports, hint)
 
