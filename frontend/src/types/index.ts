@@ -192,6 +192,29 @@ export interface AssetAIAnalysis {
   analyzed_at: string;
 }
 
+export interface AssetEvidence {
+  id: number;
+  source: string;
+  category: string;
+  key: string;
+  value: string;
+  confidence: number;
+  details: Record<string, unknown> | null;
+  observed_at: string;
+}
+
+export interface ProbeRun {
+  id: number;
+  probe_type: string;
+  target_port: number | null;
+  success: boolean;
+  duration_ms: number | null;
+  summary: string | null;
+  details: Record<string, unknown> | null;
+  raw_excerpt: string | null;
+  observed_at: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;
@@ -220,6 +243,8 @@ export interface Asset {
   ports: Port[];
   tags: { tag: string }[];
   ai_analysis: AssetAIAnalysis | null;
+  evidence: AssetEvidence[];
+  probe_runs: ProbeRun[];
 }
 
 export interface ScanJob {

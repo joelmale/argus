@@ -66,6 +66,8 @@ class Asset(Base):
     tags: Mapped[list["AssetTag"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     history: Mapped[list["AssetHistory"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     ai_analysis: Mapped["AssetAIAnalysis | None"] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    evidence: Mapped[list["AssetEvidence"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    probe_runs: Mapped[list["ProbeRun"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
 
@@ -147,6 +149,39 @@ class AssetAIAnalysis(Base):
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     asset: Mapped["Asset"] = relationship(back_populates="ai_analysis")
+
+
+class AssetEvidence(Base):
+    __tablename__ = "asset_evidence"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), nullable=False)          # ai | rule | mac_oui | probe_http | ...
+    category: Mapped[str] = mapped_column(String(32), nullable=False)        # device_type | vendor | os | service | identity
+    key: Mapped[str] = mapped_column(String(64), nullable=False)
+    value: Mapped[str] = mapped_column(String(512), nullable=False)
+    confidence: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    details: Mapped[dict | None] = mapped_column(JSONB)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="evidence")
+
+
+class ProbeRun(Base):
+    __tablename__ = "probe_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    probe_type: Mapped[str] = mapped_column(String(32), nullable=False)
+    target_port: Mapped[int | None] = mapped_column(Integer)
+    success: Mapped[bool] = mapped_column(Boolean, default=False)
+    duration_ms: Mapped[float | None] = mapped_column()
+    summary: Mapped[str | None] = mapped_column(String(512))
+    details: Mapped[dict | None] = mapped_column(JSONB)
+    raw_excerpt: Mapped[str | None] = mapped_column(Text)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="probe_runs")
 
 
 class TopologyLink(Base):

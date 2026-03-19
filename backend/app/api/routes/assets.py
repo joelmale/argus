@@ -21,7 +21,7 @@ from app.backups import (
     list_backup_snapshots,
     upsert_backup_target,
 )
-from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, User, WirelessAssociation
+from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, ProbeRun, AssetEvidence, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 from app.scanner.agent import get_analyst
@@ -84,6 +84,33 @@ def _serialize_asset(asset: Asset) -> dict:
         ],
         "tags": [{"tag": tag.tag} for tag in asset.tags],
         "ai_analysis": _serialize_ai_analysis(asset.ai_analysis),
+        "evidence": [
+            {
+                "id": row.id,
+                "source": row.source,
+                "category": row.category,
+                "key": row.key,
+                "value": row.value,
+                "confidence": row.confidence,
+                "details": row.details,
+                "observed_at": row.observed_at.isoformat(),
+            }
+            for row in sorted(asset.evidence, key=lambda item: (item.category, -item.confidence, item.key))
+        ],
+        "probe_runs": [
+            {
+                "id": row.id,
+                "probe_type": row.probe_type,
+                "target_port": row.target_port,
+                "success": row.success,
+                "duration_ms": row.duration_ms,
+                "summary": row.summary,
+                "details": row.details,
+                "raw_excerpt": row.raw_excerpt,
+                "observed_at": row.observed_at.isoformat(),
+            }
+            for row in sorted(asset.probe_runs, key=lambda item: (item.probe_type, item.target_port or 0))
+        ],
     }
 
 
@@ -103,7 +130,13 @@ class ConfigBackupTargetRequest(BaseModel):
 async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
     stmt = (
         select(Asset)
-        .options(selectinload(Asset.ports), selectinload(Asset.tags), selectinload(Asset.ai_analysis))
+        .options(
+            selectinload(Asset.ports),
+            selectinload(Asset.tags),
+            selectinload(Asset.ai_analysis),
+            selectinload(Asset.evidence),
+            selectinload(Asset.probe_runs),
+        )
         .where(Asset.id == asset_id)
     )
     asset = (await db.execute(stmt)).scalar_one_or_none()
@@ -123,7 +156,13 @@ async def list_assets(
     _: User = Depends(get_current_user),
 ):
     """Return all discovered assets with optional filtering."""
-    q = select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis))
+    q = select(Asset).options(
+        selectinload(Asset.tags),
+        selectinload(Asset.ports),
+        selectinload(Asset.ai_analysis),
+        selectinload(Asset.evidence),
+        selectinload(Asset.probe_runs),
+    )
     if status:
         q = q.where(Asset.status == status)
     if search:
@@ -316,6 +355,8 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
             selectinload(Asset.tags),
             selectinload(Asset.history),
             selectinload(Asset.ai_analysis),
+            selectinload(Asset.evidence),
+            selectinload(Asset.probe_runs),
         )
         .where(Asset.id == asset_id)
     )
@@ -417,11 +458,29 @@ async def update_asset(
     refreshed = (
         await db.execute(
             select(Asset)
-            .options(selectinload(Asset.ports), selectinload(Asset.tags), selectinload(Asset.ai_analysis))
+            .options(
+                selectinload(Asset.ports),
+                selectinload(Asset.tags),
+                selectinload(Asset.ai_analysis),
+                selectinload(Asset.evidence),
+                selectinload(Asset.probe_runs),
+            )
             .where(Asset.id == asset_id)
         )
     ).scalar_one()
     return _serialize_asset(refreshed)
+
+
+@router.get("/{asset_id}/evidence")
+async def get_asset_evidence(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    asset = await _load_asset(db, asset_id)
+    return _serialize_asset(asset)["evidence"]
+
+
+@router.get("/{asset_id}/probe-runs")
+async def get_asset_probe_runs(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+    asset = await _load_asset(db, asset_id)
+    return _serialize_asset(asset)["probe_runs"]
 
 
 @router.delete("/{asset_id}", status_code=204)

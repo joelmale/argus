@@ -19,14 +19,13 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, AssetAIAnalysis, AssetHistory, Port
+from app.db.models import Asset, AssetAIAnalysis, AssetEvidence, AssetHistory, Port, ProbeRun
+from app.fingerprinting.evidence import derive_detected_device_type, extract_evidence
 from app.scanner.models import HostScanResult
-from app.scanner.stages.fingerprint import classify
 
 log = logging.getLogger(__name__)
 
 _AI_PERSIST_CONFIDENCE = 0.8
-_RULE_PERSIST_CONFIDENCE = 0.6
 
 
 def _has_probe_evidence(result: HostScanResult) -> bool:
@@ -56,23 +55,6 @@ def _should_persist_ai_fields(result: HostScanResult) -> bool:
     return False
 
 
-def _effective_rule_hint(result: HostScanResult):
-    return classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
-
-
-def _determine_detected_device_type(result: HostScanResult) -> tuple[str | None, str]:
-    if result.ai_analysis and _should_persist_ai_fields(result):
-        ai = result.ai_analysis
-        if ai.device_class and ai.device_class.value != "unknown":
-            return ai.device_class.value, "ai"
-
-    hint = _effective_rule_hint(result)
-    if hint.device_class.value != "unknown" and hint.confidence >= _RULE_PERSIST_CONFIDENCE:
-        return hint.device_class.value, "rule"
-
-    return None, "unknown"
-
-
 async def upsert_scan_result(
     db: AsyncSession,
     result: HostScanResult,
@@ -92,7 +74,8 @@ async def upsert_scan_result(
     new_hostname = result.reverse_hostname
     new_os = None
     new_vendor = result.mac_vendor
-    new_device_type, new_device_type_source = _determine_detected_device_type(result)
+    evidence = extract_evidence(result)
+    new_device_type, new_device_type_source = derive_detected_device_type(evidence)
 
     if _should_persist_os_name(result):
         new_os = result.os_fingerprint.os_name
@@ -123,6 +106,7 @@ async def upsert_scan_result(
         db.add(asset)
         await db.flush()  # Get the generated ID
 
+        await _refresh_fingerprint_snapshot(db, asset, result, evidence)
         await _upsert_ai_analysis(db, asset, result)
 
         await _upsert_ports(db, asset, result)
@@ -166,6 +150,7 @@ async def upsert_scan_result(
 
     existing.last_seen = now
 
+    await _refresh_fingerprint_snapshot(db, existing, result, evidence)
     await _upsert_ai_analysis(db, existing, result)
 
     # ── Upsert ports ──────────────────────────────────────────────────────────
@@ -187,6 +172,56 @@ async def upsert_scan_result(
     await db.flush()
     log.info("UPDATED asset %s: %s", ip, list(changes.keys()))
     return existing, "updated"
+
+
+async def _refresh_fingerprint_snapshot(
+    db: AsyncSession,
+    asset: Asset,
+    result: HostScanResult,
+    evidence_items,
+) -> None:
+    evidence_stmt = select(AssetEvidence).where(AssetEvidence.asset_id == asset.id)
+    for row in (await db.execute(evidence_stmt)).scalars().all():
+        await db.delete(row)
+
+    probe_stmt = select(ProbeRun).where(ProbeRun.asset_id == asset.id)
+    for row in (await db.execute(probe_stmt)).scalars().all():
+        await db.delete(row)
+
+    for item in evidence_items:
+        db.add(
+            AssetEvidence(
+                asset_id=asset.id,
+                source=item.source,
+                category=item.category,
+                key=item.key,
+                value=item.value,
+                confidence=item.confidence,
+                details=item.details,
+                observed_at=result.scanned_at,
+            )
+        )
+
+    for probe in result.probes:
+        details = dict(probe.data or {})
+        summary = None
+        if probe.success:
+            summary = details.get("title") or details.get("sys_descr") or details.get("friendly_name") or details.get("banner")
+            if summary is not None:
+                summary = str(summary)[:512]
+        db.add(
+            ProbeRun(
+                asset_id=asset.id,
+                probe_type=probe.probe_type,
+                target_port=probe.target_port,
+                success=probe.success,
+                duration_ms=probe.duration_ms,
+                summary=summary,
+                details=details,
+                raw_excerpt=probe.raw[:4000] if probe.raw else None,
+                observed_at=result.scanned_at,
+            )
+        )
 
 
 async def _upsert_ports(db: AsyncSession, asset: Asset, result: HostScanResult) -> dict:
