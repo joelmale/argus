@@ -14,6 +14,8 @@ from __future__ import annotations
 import logging
 import re
 
+from app.fingerprinting.datasets import lookup_mac_vendor_from_dataset
+
 log = logging.getLogger(__name__)
 
 _lookup = None
@@ -49,6 +51,10 @@ def lookup(mac: str | None) -> str | None:
     if len(clean) < 6:
         return None
     normalized = ":".join(clean[i:i+2] for i in range(0, 12, 2))
+
+    dataset_hit = lookup_mac_vendor_from_dataset(normalized)
+    if dataset_hit:
+        return dataset_hit
 
     lkp = _get_lookup()
     if lkp is None:

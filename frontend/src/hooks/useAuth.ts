@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, HomeAssistantExport, IntegrationEvent, PluginInfo, ScannerConfig, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, FingerprintDataset, HomeAssistantExport, IntegrationEvent, PluginInfo, ScannerConfig, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -234,6 +234,17 @@ export function useIntegrationEvents(enabled = true) {
   })
 }
 
+export function useFingerprintDatasets(enabled = true) {
+  return useQuery<FingerprintDataset[]>({
+    queryKey: ['system', 'fingerprint-datasets'],
+    queryFn: async () => {
+      const { data } = await authApi.listFingerprintDatasets()
+      return data
+    },
+    enabled,
+  })
+}
+
 export function useHomeAssistantEntities(enabled = true) {
   return useQuery<HomeAssistantExport>({
     queryKey: ['system', 'home-assistant-entities'],
@@ -291,6 +302,21 @@ export function useUpdateScannerConfig() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['system', 'scanner-config'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useRefreshFingerprintDataset() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (key: string) => {
+      const { data } = await authApi.refreshFingerprintDataset(key)
+      return data as FingerprintDataset
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'fingerprint-datasets'] })
       await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
     },
   })

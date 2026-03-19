@@ -55,3 +55,6 @@ coverage/
 # Build artifacts
 *.pyc
 dist/
+
+# Local fingerprint dataset cache
+backend/data/fingerprint_datasets/

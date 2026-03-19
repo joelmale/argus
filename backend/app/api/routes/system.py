@@ -12,6 +12,7 @@ from app.backups import get_backup_policy, list_backup_drivers, update_backup_po
 from app.db.models import Asset, User
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot
+from app.fingerprinting.datasets import list_datasets, refresh_dataset
 from app.integrations import build_home_assistant_entities, list_integration_events
 from app.plugins import list_plugins
 from app.scanner.config import clear_inventory, read_effective_scanner_config, update_scanner_config
@@ -46,6 +47,31 @@ class ScannerConfigUpdateRequest(BaseModel):
 class ResetInventoryRequest(BaseModel):
     include_scan_history: bool = False
     confirm: str
+
+
+def _serialize_dataset(row) -> dict:
+    return {
+        "id": row.id,
+        "key": row.key,
+        "name": row.name,
+        "category": row.category,
+        "description": row.description,
+        "upstream_url": row.upstream_url,
+        "local_path": row.local_path,
+        "update_mode": row.update_mode,
+        "enabled": row.enabled,
+        "status": row.status,
+        "last_checked_at": row.last_checked_at.isoformat() if row.last_checked_at else None,
+        "last_updated_at": row.last_updated_at.isoformat() if row.last_updated_at else None,
+        "upstream_last_modified": row.upstream_last_modified,
+        "etag": row.etag,
+        "sha256": row.sha256,
+        "record_count": row.record_count,
+        "error": row.error,
+        "notes": row.notes,
+        "created_at": row.created_at.isoformat(),
+        "updated_at": row.updated_at.isoformat(),
+    }
 
 
 def _serialize_scanner_config(config, effective) -> dict:
@@ -86,6 +112,38 @@ async def get_plugins(_: User = Depends(get_current_admin)):
 @router.get("/integration-events")
 async def get_integration_events(_: User = Depends(get_current_admin)):
     return list_integration_events()
+
+
+@router.get("/fingerprint-datasets")
+async def get_fingerprint_datasets(
+    _: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    rows = await list_datasets(db)
+    await db.commit()
+    return [_serialize_dataset(row) for row in rows]
+
+
+@router.post("/fingerprint-datasets/{dataset_key}/refresh")
+async def refresh_fingerprint_dataset(
+    dataset_key: str,
+    user: User = Depends(get_current_admin),
+    db: AsyncSession = Depends(get_db),
+):
+    try:
+        row = await refresh_dataset(db, dataset_key)
+    except ValueError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="fingerprint.dataset.refreshed",
+        user=user,
+        target_type="fingerprint_dataset",
+        target_id=dataset_key,
+        details={"status": row.status, "record_count": row.record_count, "error": row.error},
+    )
+    await db.commit()
+    return _serialize_dataset(row)
 
 
 @router.get("/integrations/home-assistant/entities")

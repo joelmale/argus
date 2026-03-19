@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Any
 
+from app.fingerprinting.datasets import lookup_pen_vendor
 from app.scanner.models import HostScanResult
 from app.scanner.stages.fingerprint import classify
 
@@ -216,6 +217,19 @@ def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
                 evidence.append(EvidenceItem("probe_snmp", "identity", "sys_name", str(data["sys_name"]), 0.86, data))
             if data.get("sys_object_id"):
                 evidence.append(EvidenceItem("probe_snmp", "identity", "sys_object_id", str(data["sys_object_id"]), 0.90, data))
+                pen_vendor = lookup_pen_vendor(str(data["sys_object_id"]))
+                if pen_vendor:
+                    evidence.append(
+                        EvidenceItem(
+                            "iana_pen",
+                            "vendor",
+                            "snmp_enterprise",
+                            pen_vendor,
+                            0.83,
+                            {"sys_object_id": data["sys_object_id"]},
+                        )
+                    )
+                    evidence.extend(_signature_evidence(str(pen_vendor), "iana_pen", {"sys_object_id": data["sys_object_id"]}))
         elif probe.probe_type == "mdns":
             for service in data.get("services", [])[:8]:
                 if service.get("type"):

@@ -3,9 +3,10 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi } from 'lucide-react'
+import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useResetInventory, useScannerConfig, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import type { FingerprintDataset } from '@/types'
 
 const SECTIONS = [
   {
@@ -293,6 +294,65 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
   )
 }
 
+function FingerprintDatasetsCard({
+  datasets,
+  onRefresh,
+  refreshingKey,
+}: {
+  datasets: FingerprintDataset[]
+  onRefresh: (key: string) => void
+  refreshingKey: string | null
+}) {
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><LibraryBig className="w-4 h-4 inline mr-1.5" />Fingerprint Datasets</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-3">
+        <p className="text-sm text-zinc-500">
+          These datasets feed vendor and fingerprint enrichment. MAC vendor and SNMP enterprise lookups use the local cached copies directly.
+        </p>
+        <div className="space-y-3">
+          {datasets.map((dataset) => (
+            <div key={dataset.key} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div className="min-w-0">
+                  <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{dataset.name}</p>
+                  <p className="mt-1 text-xs text-zinc-500">{dataset.description}</p>
+                  <div className="mt-2 flex flex-wrap gap-2 text-[11px] text-zinc-500">
+                    <span className="rounded-full border border-gray-200 px-2 py-0.5 dark:border-zinc-700">{dataset.category}</span>
+                    <span className="rounded-full border border-gray-200 px-2 py-0.5 dark:border-zinc-700">{dataset.status}</span>
+                    <span>records: {dataset.record_count ?? '—'}</span>
+                    <span>updated: {dataset.last_updated_at ? new Date(dataset.last_updated_at).toLocaleString() : 'never'}</span>
+                  </div>
+                  {dataset.upstream_last_modified && (
+                    <p className="mt-1 text-[11px] text-zinc-500">Upstream last modified: {dataset.upstream_last_modified}</p>
+                  )}
+                  {dataset.error && (
+                    <p className="mt-1 text-[11px] text-rose-500">{dataset.error}</p>
+                  )}
+                  <a href={dataset.upstream_url} target="_blank" rel="noreferrer" className="mt-2 inline-block text-xs text-sky-500 hover:text-sky-400">
+                    Source
+                  </a>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => onRefresh(dataset.key)}
+                  disabled={refreshingKey === dataset.key}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+                >
+                  <RefreshCw className={`w-3.5 h-3.5 ${refreshingKey === dataset.key ? 'animate-spin' : ''}`} />
+                  {refreshingKey === dataset.key ? 'Refreshing…' : 'Pull update'}
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()
   const { data: users = [] } = useUsers(currentUser?.role === 'admin')
@@ -302,6 +362,7 @@ export default function SettingsPage() {
   const { data: backupDrivers = [] } = useBackupDrivers(currentUser?.role === 'admin')
   const { data: backupPolicy } = useBackupPolicy(currentUser?.role === 'admin')
   const { data: scannerConfig } = useScannerConfig(currentUser?.role === 'admin')
+  const { data: fingerprintDatasets = [] } = useFingerprintDatasets(currentUser?.role === 'admin')
   const { data: plugins = [] } = usePlugins(currentUser?.role === 'admin')
   const { data: integrationEvents = [] } = useIntegrationEvents(currentUser?.role === 'admin')
   const { data: homeAssistantExport } = useHomeAssistantEntities(currentUser?.role === 'admin')
@@ -312,6 +373,8 @@ export default function SettingsPage() {
   const { mutate: updateAlertRule, isPending: isUpdatingAlertRule } = useUpdateAlertRule()
   const { mutate: updateBackupPolicy, isPending: isUpdatingBackupPolicy } = useUpdateBackupPolicy()
   const { mutate: updateScannerConfig, isPending: isUpdatingScannerConfig } = useUpdateScannerConfig()
+  const { mutate: refreshFingerprintDataset, isPending: isRefreshingFingerprintDataset } = useRefreshFingerprintDataset()
+  const [refreshingDatasetKey, setRefreshingDatasetKey] = useState<string | null>(null)
   const { mutate: resetInventory, isPending: isResettingInventory } = useResetInventory()
   const [newUsername, setNewUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
@@ -632,6 +695,16 @@ export default function SettingsPage() {
               scannerConfig={scannerConfig}
               isUpdatingScannerConfig={isUpdatingScannerConfig}
               onSave={(payload) => updateScannerConfig(payload)}
+            />
+            <FingerprintDatasetsCard
+              datasets={fingerprintDatasets}
+              onRefresh={(key) => {
+                setRefreshingDatasetKey(key)
+                refreshFingerprintDataset(key, {
+                  onSettled: () => setRefreshingDatasetKey(null),
+                })
+              }}
+              refreshingKey={isRefreshingFingerprintDataset ? refreshingDatasetKey : null}
             />
 
             <Card>

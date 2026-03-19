@@ -170,6 +170,29 @@ export interface IntegrationEvent {
   example: Record<string, unknown>;
 }
 
+export interface FingerprintDataset {
+  id: number;
+  key: string;
+  name: string;
+  category: string;
+  description: string;
+  upstream_url: string;
+  local_path: string | null;
+  update_mode: string;
+  enabled: boolean;
+  status: string;
+  last_checked_at: string | null;
+  last_updated_at: string | null;
+  upstream_last_modified: string | null;
+  etag: string | null;
+  sha256: string | null;
+  record_count: number | null;
+  error: string | null;
+  notes: Record<string, unknown> | null;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface HomeAssistantEntity {
   unique_id: string;
   name: string;

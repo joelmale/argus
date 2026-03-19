@@ -447,3 +447,28 @@ class ScannerConfig(Base):
     last_scheduled_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class FingerprintDataset(Base):
+    __tablename__ = "fingerprint_datasets"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    key: Mapped[str] = mapped_column(String(64), unique=True, nullable=False)
+    name: Mapped[str] = mapped_column(String(128), nullable=False)
+    category: Mapped[str] = mapped_column(String(64), nullable=False)
+    description: Mapped[str] = mapped_column(Text, nullable=False)
+    upstream_url: Mapped[str] = mapped_column(Text, nullable=False)
+    local_path: Mapped[str | None] = mapped_column(Text)
+    update_mode: Mapped[str] = mapped_column(String(32), default="remote")
+    enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_updated_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    upstream_last_modified: Mapped[str | None] = mapped_column(String(128))
+    etag: Mapped[str | None] = mapped_column(String(128))
+    sha256: Mapped[str | None] = mapped_column(String(64))
+    record_count: Mapped[int | None] = mapped_column(Integer)
+    error: Mapped[str | None] = mapped_column(Text)
+    notes: Mapped[dict | None] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
