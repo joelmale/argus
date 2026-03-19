@@ -18,10 +18,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 import time
 from collections.abc import AsyncIterator
-
-import nmap
+from xml.etree import ElementTree as ET
 
 from app.scanner.models import DiscoveredHost
 
@@ -121,31 +121,65 @@ async def _ping_sweep(targets: str, timeout: int) -> list[DiscoveredHost]:
 def _ping_sweep_sync(targets: str, timeout: int) -> list[DiscoveredHost]:
     results: list[DiscoveredHost] = []
     try:
-        nm = nmap.PortScanner()
-        nm.scan(hosts=targets, arguments=f"-sn -T4 --host-timeout {timeout}s")
-        for host in nm.all_hosts():
-            if nm[host].state() == "up":
-                # Try to extract MAC from nmap output (available when on same LAN)
-                mac = None
-                try:
-                    mac = nm[host]["addresses"].get("mac")
-                except (KeyError, AttributeError):
-                    pass
-                ttl = None
-                try:
-                    ttl = int(nm[host].get("status", {}).get("reason_ttl", 0)) or None
-                except (ValueError, TypeError):
-                    pass
-                results.append(DiscoveredHost(
-                    ip_address=host,
-                    mac_address=mac,
-                    is_up=True,
-                    discovery_method="ping",
-                    ttl=ttl,
-                ))
+        completed = subprocess.run(
+            [
+                "nmap",
+                "-sn",
+                "-T4",
+                "--host-timeout",
+                f"{timeout}s",
+                "-oX",
+                "-",
+                *targets.replace(",", " ").split(),
+            ],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        results = _parse_ping_sweep_xml(completed.stdout)
     except Exception as exc:
         log.warning("Ping sweep error: %s", exc)
     return results
+
+
+def _parse_ping_sweep_xml(xml_output: str) -> list[DiscoveredHost]:
+    hosts: list[DiscoveredHost] = []
+    root = ET.fromstring(xml_output)
+    for host_node in root.findall("host"):
+        status = host_node.find("status")
+        if status is None or status.attrib.get("state") != "up":
+            continue
+
+        ip_address = None
+        mac_address = None
+        for address in host_node.findall("address"):
+            addr_type = address.attrib.get("addrtype")
+            if addr_type == "ipv4":
+                ip_address = address.attrib.get("addr")
+            elif addr_type == "mac":
+                mac_address = address.attrib.get("addr")
+
+        if not ip_address:
+            continue
+
+        ttl = None
+        reason_ttl = status.attrib.get("reason_ttl")
+        if reason_ttl:
+            try:
+                ttl = int(reason_ttl)
+            except ValueError:
+                ttl = None
+
+        hosts.append(
+            DiscoveredHost(
+                ip_address=ip_address,
+                mac_address=mac_address,
+                is_up=True,
+                discovery_method="ping",
+                ttl=ttl,
+            )
+        )
+    return hosts
 
 
 # ─── Passive ARP listener ────────────────────────────────────────────────────
