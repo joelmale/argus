@@ -598,8 +598,8 @@ export default function AssetDetailPage() {
         </div>
 
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-          {/* Left column: overview + ports */}
-          <div className="xl:col-span-5 space-y-5">
+          {/* Left column: inventory + evidence */}
+          <div className="xl:col-span-4 space-y-5">
 
             {/* Overview */}
             <Card>
@@ -679,6 +679,8 @@ export default function AssetDetailPage() {
               </div>
             </Card>
 
+            <FingerprintEvidenceCard asset={asset} />
+
             {/* AI Investigation Notes */}
             {ai?.investigation_notes && (
               <Card>
@@ -707,26 +709,38 @@ export default function AssetDetailPage() {
             )}
           </div>
 
-          {/* Center column: editable metadata + operations */}
+          {/* Center column: operations + passive history */}
           <div className="xl:col-span-4 space-y-5">
             {currentUser?.role === 'admin' ? (
               <div className="space-y-5">
                 <AssetFindingsCard asset={asset} />
+                <PassiveTimelineCard asset={asset} />
                 <WirelessAssociationsCard asset={asset} />
                 <ConfigBackupCard asset={asset} />
+                <LifecycleCard asset={asset} />
+                <AssetMetadataEditor key={asset.id} asset={asset} />
               </div>
             ) : (
-              <AssetFindingsCard asset={asset} />
+              <div className="space-y-5">
+                <AssetFindingsCard asset={asset} />
+                <PassiveTimelineCard asset={asset} />
+                <LifecycleCard asset={asset} />
+                <Card>
+                  <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
+                  <CardBody>
+                    <p className="text-sm text-zinc-500">
+                      Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
+                    </p>
+                  </CardBody>
+                </Card>
+              </div>
             )}
           </div>
 
-          {/* Right column: AI summary + security findings */}
-          <div className="xl:col-span-3 space-y-5">
-            <FingerprintEvidenceCard asset={asset} />
-            <PassiveTimelineCard asset={asset} />
+          {/* Right column: AI and lookup enrichment */}
+          <div className="xl:col-span-4 space-y-5">
             <FingerprintHypothesesCard asset={asset} />
             <LookupProvenanceCard asset={asset} />
-            <LifecycleCard asset={asset} />
             {ai && (
               <Card>
                 <CardHeader>
@@ -824,19 +838,6 @@ export default function AssetDetailPage() {
                 <CardBody>
                   <p className="text-sm text-zinc-500">
                     No persisted AI analysis is attached to this asset record yet.
-                  </p>
-                </CardBody>
-              </Card>
-            )}
-
-            {currentUser?.role === 'admin' ? (
-              <AssetMetadataEditor key={asset.id} asset={asset} />
-            ) : (
-              <Card>
-                <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
-                <CardBody>
-                  <p className="text-sm text-zinc-500">
-                    Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
                   </p>
                 </CardBody>
               </Card>
