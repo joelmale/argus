@@ -432,6 +432,7 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
             selectinload(Asset.fingerprint_hypotheses),
             selectinload(Asset.internet_lookup_results),
             selectinload(Asset.lifecycle_records),
+            selectinload(Asset.autopsy),
         )
         .where(Asset.id == asset_id)
     )
