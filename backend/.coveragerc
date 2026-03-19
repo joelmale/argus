@@ -1,0 +1,13 @@
+[run]
+# Limit backend coverage measurement to application code.
+source = app
+branch = True
+
+[report]
+skip_covered = False
+show_missing = True
+omit =
+    app/__init__.py
+
+[html]
+directory = htmlcov

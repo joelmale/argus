@@ -39,8 +39,13 @@ jobs:
         run: python backend/scripts/migrate.py
       - name: Lint
         run: npm run lint:backend:local
-      - name: Test
-        run: npm run test:backend:local
+      - name: Test with coverage
+        run: cd backend && PYTHONPATH=. pytest tests --cov=app --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml -q
+      - name: Upload backend coverage artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: backend-coverage-xml
+          path: backend/coverage.xml
 
   frontend-lint-typecheck:
     name: Frontend — lint & type-check
