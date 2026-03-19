@@ -7,34 +7,7 @@ import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, 
 import { assetsApi } from '@/lib/api'
 import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateUser, useUsers } from '@/hooks/useAuth'
 import type { FingerprintDataset } from '@/types'
-
-const SECTIONS = [
-  {
-    icon: ScanLine,
-    title: 'Scan Configuration',
-    desc: 'Default targets, scan intervals, concurrent host limits, port ranges.',
-  },
-  {
-    icon: Brain,
-    title: 'AI Agent',
-    desc: 'AI backend selection (Ollama / Anthropic), model, confidence thresholds.',
-  },
-  {
-    icon: Wifi,
-    title: 'Network & SNMP',
-    desc: 'SNMP community strings, mDNS interfaces, passive ARP listener settings.',
-  },
-  {
-    icon: Bell,
-    title: 'Notifications',
-    desc: 'Webhook endpoints, alert rules for new devices, offline hosts, findings.',
-  },
-  {
-    icon: Database,
-    title: 'Data Retention',
-    desc: 'Asset history TTL, scan job cleanup, topology snapshot frequency.',
-  },
-]
+import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 
 type BackupPolicyFormProps = {
   backupPolicy?: {
@@ -353,6 +326,28 @@ function FingerprintDatasetsCard({
   )
 }
 
+function SettingsSection({
+  id,
+  title,
+  description,
+  children,
+}: {
+  id: string
+  title: string
+  description?: string
+  children: React.ReactNode
+}) {
+  return (
+    <section id={id} className="space-y-4 scroll-mt-24">
+      <div>
+        <h3 className="text-lg font-semibold text-zinc-900 dark:text-zinc-100">{title}</h3>
+        {description && <p className="mt-1 text-sm text-zinc-500">{description}</p>}
+      </div>
+      {children}
+    </section>
+  )
+}
+
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()
   const { data: users = [] } = useUsers(currentUser?.role === 'admin')
@@ -423,27 +418,272 @@ export default function SettingsPage() {
 
   return (
     <AppShell>
-      <div className="max-w-3xl mx-auto space-y-6">
+      <div className="max-w-7xl mx-auto space-y-6">
         <div>
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Settings</h2>
-          <p className="text-sm text-zinc-500 mt-0.5">Configuration for Argus scans, AI, and notifications.</p>
+          <p className="text-sm text-zinc-500 mt-0.5">Grouped controls for discovery, automation, access, and retention.</p>
         </div>
 
-        {currentUser?.role === 'viewer' && (
-          <div className="flex items-start gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/20">
-            <Construction className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
-            <div>
-              <p className="text-sm font-medium text-red-700 dark:text-red-400">Admin access required</p>
-              <p className="text-xs text-red-600/80 dark:text-red-400/70 mt-0.5">
-                Viewer accounts can inspect Argus data, but settings are limited to admins.
-              </p>
+        <div className="grid grid-cols-1 xl:grid-cols-[240px_minmax(0,1fr)] gap-6">
+          <aside className="hidden xl:block">
+            <div className="sticky top-6 rounded-2xl border border-gray-200 bg-white/80 p-4 dark:border-zinc-800 dark:bg-zinc-950/70">
+              <p className="text-xs font-medium uppercase tracking-wider text-zinc-400">Settings</p>
+              <div className="mt-4 space-y-4">
+                {SETTINGS_SECTIONS.map((section) => (
+                  <div key={section.heading} className="space-y-1.5">
+                    <p className="text-[11px] font-medium uppercase tracking-wider text-zinc-400">{section.heading}</p>
+                    {section.items.map((item) => (
+                      <a
+                        key={item.id}
+                        href={`#${item.id}`}
+                        className="flex items-center gap-2 rounded-lg px-2 py-1.5 text-sm text-zinc-600 hover:bg-gray-100 hover:text-zinc-900 dark:text-zinc-400 dark:hover:bg-zinc-900 dark:hover:text-zinc-100"
+                      >
+                        <item.icon className="w-4 h-4 flex-shrink-0" />
+                        <span>{item.label}</span>
+                      </a>
+                    ))}
+                  </div>
+                ))}
+              </div>
             </div>
-          </div>
-        )}
+          </aside>
 
-        {currentUser?.role === 'admin' && (
-          <>
-            <Card>
+          <div className="space-y-8">
+            {currentUser?.role === 'viewer' && (
+              <div className="flex items-start gap-3 p-4 rounded-xl bg-red-500/10 border border-red-500/20">
+                <Construction className="w-5 h-5 text-red-500 flex-shrink-0 mt-0.5" />
+                <div>
+                  <p className="text-sm font-medium text-red-700 dark:text-red-400">Admin access required</p>
+                  <p className="text-xs text-red-600/80 dark:text-red-400/70 mt-0.5">
+                    Viewer accounts can inspect Argus data, but settings are limited to admins.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {currentUser?.role === 'admin' && (
+              <>
+                <SettingsSection
+                  id="scan-configuration"
+                  title="Scan Configuration"
+                  description="Default targets, profile, interval, concurrency, and dataset-backed fingerprinting inputs."
+                >
+                  <ScannerConfigCard
+                    key={scannerConfig?.updated_at ?? 'scanner-config'}
+                    scannerConfig={scannerConfig}
+                    isUpdatingScannerConfig={isUpdatingScannerConfig}
+                    onSave={(payload) => updateScannerConfig(payload)}
+                  />
+                </SettingsSection>
+
+                <SettingsSection
+                  id="ai-agent"
+                  title="AI Agent"
+                  description="Current AI controls for fingerprint synthesis and unresolved asset lookup behavior."
+                >
+                  <Card>
+                    <CardBody className="space-y-3">
+                      <p className="text-sm text-zinc-500">
+                        AI settings currently live inside the scanner configuration card. The implemented controls are Ollama fingerprint synthesis, confidence threshold, prompt suffix, and internet lookup policy.
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        Missing from a true AI control plane today: backend/provider selection, Anthropic/OpenAI credential management, and per-workflow model routing.
+                      </p>
+                    </CardBody>
+                  </Card>
+                </SettingsSection>
+
+                <SettingsSection
+                  id="network-snmp"
+                  title="Network & SNMP"
+                  description="Passive discovery and SNMP-specific controls are only partially implemented today."
+                >
+                  <Card>
+                    <CardBody className="space-y-3">
+                      <p className="text-sm text-zinc-500">
+                        Current state: network target auto-detect, passive observations in the backend, and SNMP evidence ingestion all exist, but there is no dedicated settings surface yet for community strings, SNMP v3 profiles, interface selection, or passive listener tuning.
+                      </p>
+                      <p className="text-sm text-zinc-500">
+                        This section still needs a real form rather than documentation text.
+                      </p>
+                    </CardBody>
+                  </Card>
+                </SettingsSection>
+
+                <SettingsSection
+                  id="fingerprint-datasets"
+                  title="Fingerprint Datasets"
+                  description="Local dataset cache and update status for MAC, SNMP, banner, and OS fingerprint sources."
+                >
+                  <FingerprintDatasetsCard
+                    datasets={fingerprintDatasets}
+                    onRefresh={(key) => {
+                      setRefreshingDatasetKey(key)
+                      refreshFingerprintDataset(key, {
+                        onSettled: () => setRefreshingDatasetKey(null),
+                      })
+                    }}
+                    refreshingKey={isRefreshingFingerprintDataset ? refreshingDatasetKey : null}
+                  />
+                </SettingsSection>
+
+                <SettingsSection
+                  id="notifications"
+                  title="Notifications"
+                  description="Current alert rule toggles exist, but delivery destinations still need first-class settings."
+                >
+                  <Card>
+                    <CardHeader>
+                      <CardTitle><Bell className="w-4 h-4 inline mr-1.5" />Alert Rules</CardTitle>
+                    </CardHeader>
+                    <CardBody className="space-y-3">
+                      {alertRules.map((rule) => (
+                        <div key={rule.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-3">
+                          <div>
+                            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{rule.event_type}</p>
+                            <p className="text-xs text-zinc-500">{rule.description}</p>
+                          </div>
+                          <div className="flex flex-wrap gap-4 text-sm text-zinc-600 dark:text-zinc-300">
+                            <label className="inline-flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={rule.enabled}
+                                disabled={isUpdatingAlertRule}
+                                onChange={(event) => updateAlertRule({ id: rule.id, payload: { enabled: event.target.checked } })}
+                              />
+                              Enabled
+                            </label>
+                            <label className="inline-flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={rule.notify_email}
+                                disabled={isUpdatingAlertRule}
+                                onChange={(event) => updateAlertRule({ id: rule.id, payload: { notify_email: event.target.checked } })}
+                              />
+                              Email
+                            </label>
+                            <label className="inline-flex items-center gap-2">
+                              <input
+                                type="checkbox"
+                                checked={rule.notify_webhook}
+                                disabled={isUpdatingAlertRule}
+                                onChange={(event) => updateAlertRule({ id: rule.id, payload: { notify_webhook: event.target.checked } })}
+                              />
+                              Webhook
+                            </label>
+                          </div>
+                        </div>
+                      ))}
+                    </CardBody>
+                  </Card>
+                </SettingsSection>
+
+                <SettingsSection
+                  id="integrations"
+                  title="Integrations"
+                  description="Exports and webhook event catalog for downstream tools."
+                >
+                  <Card>
+                    <CardHeader>
+                      <CardTitle><PlugZap className="w-4 h-4 inline mr-1.5" />Integrations</CardTitle>
+                    </CardHeader>
+                    <CardBody className="space-y-4">
+                      <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
+                        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
+                          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100"><HouseWifi className="w-4 h-4 inline mr-1.5" />Home Assistant export</p>
+                          <p className="text-xs text-zinc-500">
+                            {homeAssistantExport ? `${homeAssistantExport.entities.length} entities available` : 'Loading entity export…'}
+                          </p>
+                          <a
+                            href="http://localhost:8000/api/v1/system/integrations/home-assistant/entities"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 text-xs text-sky-500 hover:text-sky-600"
+                          >
+                            Open entity export
+                          </a>
+                        </div>
+                        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
+                          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100"><ActivitySquare className="w-4 h-4 inline mr-1.5" />Inventory sync export</p>
+                          <p className="text-xs text-zinc-500">
+                            Read-only normalized JSON snapshot for external systems.
+                          </p>
+                          <a
+                            href="http://localhost:8000/api/v1/system/integrations/inventory-sync"
+                            target="_blank"
+                            rel="noreferrer"
+                            className="inline-flex items-center gap-2 text-xs text-sky-500 hover:text-sky-600"
+                          >
+                            Open sync snapshot
+                          </a>
+                        </div>
+                      </div>
+
+                      <div className="space-y-3">
+                        <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Webhook event catalog</p>
+                        {integrationEvents.map((item) => (
+                          <div key={item.event} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                            <div className="flex items-center justify-between gap-3">
+                              <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.event}</p>
+                              <span className="text-xs text-zinc-500">{item.source}</span>
+                            </div>
+                            <p className="text-xs text-zinc-500 mt-1">{item.description}</p>
+                            <pre className="mt-3 rounded-lg bg-zinc-950 text-zinc-200 p-3 text-[11px] overflow-x-auto">{JSON.stringify(item.example, null, 2)}</pre>
+                          </div>
+                        ))}
+                      </div>
+                    </CardBody>
+                  </Card>
+                </SettingsSection>
+
+                <SettingsSection
+                  id="reports-metrics"
+                  title="Reports & Metrics"
+                  description="Operational exports and observability entry points."
+                >
+                  <Card>
+                    <CardHeader>
+                      <CardTitle><FileText className="w-4 h-4 inline mr-1.5" />Reports & Metrics</CardTitle>
+                    </CardHeader>
+                    <CardBody className="flex flex-col md:flex-row gap-3">
+                      <button
+                        type="button"
+                        onClick={handleOpenReport}
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white"
+                      >
+                        <FileText className="w-4 h-4" /> Open HTML inventory report
+                      </button>
+                      <a
+                        href="http://localhost:8000/metrics"
+                        target="_blank"
+                        rel="noreferrer"
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-800"
+                      >
+                        <Database className="w-4 h-4" /> View metrics endpoint
+                      </a>
+                    </CardBody>
+                  </Card>
+                </SettingsSection>
+
+                <SettingsSection
+                  id="data-retention"
+                  title="Data Retention"
+                  description="Only backup retention is configurable today. Broader cleanup policies still need implementation."
+                >
+                  <BackupPolicyCard
+                    key={backupPolicy?.updated_at ?? 'backup-policy'}
+                    backupPolicy={backupPolicy}
+                    isUpdatingBackupPolicy={isUpdatingBackupPolicy}
+                    onSave={(payload) => updateBackupPolicy(payload)}
+                  />
+                </SettingsSection>
+
+                <SettingsSection
+                  id="user-management"
+                  title="User Management"
+                  description="Manage admin and viewer accounts."
+                >
+                  <Card>
               <CardHeader>
                 <CardTitle><Shield className="w-4 h-4 inline mr-1.5" />User Management</CardTitle>
               </CardHeader>
@@ -511,9 +751,15 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </CardBody>
-            </Card>
+                  </Card>
+                </SettingsSection>
 
-            <Card>
+                <SettingsSection
+                  id="api-keys"
+                  title="API Keys"
+                  description="Create and revoke tokens for automation and CLI access."
+                >
+                  <Card>
               <CardHeader>
                 <CardTitle><KeyRound className="w-4 h-4 inline mr-1.5" />API Keys</CardTitle>
               </CardHeader>
@@ -565,9 +811,15 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </CardBody>
-            </Card>
+                  </Card>
+                </SettingsSection>
 
-            <Card>
+                <SettingsSection
+                  id="audit-activity"
+                  title="Audit Activity"
+                  description="Recent administrative changes and system actions."
+                >
+                  <Card>
               <CardHeader>
                 <CardTitle><History className="w-4 h-4 inline mr-1.5" />Recent Audit Activity</CardTitle>
               </CardHeader>
@@ -588,9 +840,15 @@ export default function SettingsPage() {
                   <p className="text-sm text-zinc-500">No audit events recorded yet.</p>
                 )}
               </CardBody>
-            </Card>
+                  </Card>
+                </SettingsSection>
 
-            <Card>
+                <SettingsSection
+                  id="plugins-drivers"
+                  title="Plugins & Drivers"
+                  description="Inventory of loaded plugins and available config-backup drivers."
+                >
+                  <Card>
               <CardHeader>
                 <CardTitle><Wifi className="w-4 h-4 inline mr-1.5" />Backup Drivers & Plugins</CardTitle>
               </CardHeader>
@@ -629,210 +887,50 @@ export default function SettingsPage() {
                   ))}
                 </div>
               </CardBody>
-            </Card>
+                  </Card>
+                </SettingsSection>
 
-            <Card>
-              <CardHeader>
-                <CardTitle><PlugZap className="w-4 h-4 inline mr-1.5" />Integrations</CardTitle>
-              </CardHeader>
-              <CardBody className="space-y-4">
-                <div className="grid grid-cols-1 lg:grid-cols-2 gap-4">
-                  <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
-                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100"><HouseWifi className="w-4 h-4 inline mr-1.5" />Home Assistant export</p>
-                    <p className="text-xs text-zinc-500">
-                      {homeAssistantExport ? `${homeAssistantExport.entities.length} entities available` : 'Loading entity export…'}
-                    </p>
-                    <a
-                      href="http://localhost:8000/api/v1/system/integrations/home-assistant/entities"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-2 text-xs text-sky-500 hover:text-sky-600"
-                    >
-                      Open entity export
-                    </a>
-                  </div>
-                  <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
-                    <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100"><ActivitySquare className="w-4 h-4 inline mr-1.5" />Inventory sync export</p>
-                    <p className="text-xs text-zinc-500">
-                      Read-only normalized JSON snapshot for external systems.
-                    </p>
-                    <a
-                      href="http://localhost:8000/api/v1/system/integrations/inventory-sync"
-                      target="_blank"
-                      rel="noreferrer"
-                      className="inline-flex items-center gap-2 text-xs text-sky-500 hover:text-sky-600"
-                    >
-                      Open sync snapshot
-                    </a>
-                  </div>
-                </div>
-
-                <div className="space-y-3">
-                  <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Webhook event catalog</p>
-                  {integrationEvents.map((item) => (
-                    <div key={item.event} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
-                      <div className="flex items-center justify-between gap-3">
-                        <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.event}</p>
-                        <span className="text-xs text-zinc-500">{item.source}</span>
-                      </div>
-                      <p className="text-xs text-zinc-500 mt-1">{item.description}</p>
-                      <pre className="mt-3 rounded-lg bg-zinc-950 text-zinc-200 p-3 text-[11px] overflow-x-auto">{JSON.stringify(item.example, null, 2)}</pre>
-                    </div>
-                  ))}
-                </div>
-              </CardBody>
-            </Card>
-
-            <BackupPolicyCard
-              key={backupPolicy?.updated_at ?? 'backup-policy'}
-              backupPolicy={backupPolicy}
-              isUpdatingBackupPolicy={isUpdatingBackupPolicy}
-              onSave={(payload) => updateBackupPolicy(payload)}
-            />
-
-            <ScannerConfigCard
-              key={scannerConfig?.updated_at ?? 'scanner-config'}
-              scannerConfig={scannerConfig}
-              isUpdatingScannerConfig={isUpdatingScannerConfig}
-              onSave={(payload) => updateScannerConfig(payload)}
-            />
-            <FingerprintDatasetsCard
-              datasets={fingerprintDatasets}
-              onRefresh={(key) => {
-                setRefreshingDatasetKey(key)
-                refreshFingerprintDataset(key, {
-                  onSettled: () => setRefreshingDatasetKey(null),
-                })
-              }}
-              refreshingKey={isRefreshingFingerprintDataset ? refreshingDatasetKey : null}
-            />
-
-            <Card>
-              <CardHeader>
-                <CardTitle><Bell className="w-4 h-4 inline mr-1.5" />Alert Rules</CardTitle>
-              </CardHeader>
-              <CardBody className="space-y-3">
-                {alertRules.map((rule) => (
-                  <div key={rule.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-3">
-                    <div>
-                      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{rule.event_type}</p>
-                      <p className="text-xs text-zinc-500">{rule.description}</p>
-                    </div>
-                    <div className="flex flex-wrap gap-4 text-sm text-zinc-600 dark:text-zinc-300">
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={rule.enabled}
-                          disabled={isUpdatingAlertRule}
-                          onChange={(event) => updateAlertRule({ id: rule.id, payload: { enabled: event.target.checked } })}
-                        />
-                        Enabled
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={rule.notify_email}
-                          disabled={isUpdatingAlertRule}
-                          onChange={(event) => updateAlertRule({ id: rule.id, payload: { notify_email: event.target.checked } })}
-                        />
-                        Email
-                      </label>
-                      <label className="inline-flex items-center gap-2">
-                        <input
-                          type="checkbox"
-                          checked={rule.notify_webhook}
-                          disabled={isUpdatingAlertRule}
-                          onChange={(event) => updateAlertRule({ id: rule.id, payload: { notify_webhook: event.target.checked } })}
-                        />
-                        Webhook
-                      </label>
-                    </div>
-                  </div>
-                ))}
-              </CardBody>
-            </Card>
-
-            <Card>
-              <CardHeader>
-                <CardTitle><FileText className="w-4 h-4 inline mr-1.5" />Reports & Metrics</CardTitle>
-              </CardHeader>
-              <CardBody className="flex flex-col md:flex-row gap-3">
-                <button
-                  type="button"
-                  onClick={handleOpenReport}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white"
+                <SettingsSection
+                  id="danger-zone"
+                  title="Danger Zone"
+                  description="High-impact destructive actions."
                 >
-                  <FileText className="w-4 h-4" /> Open HTML inventory report
-                </button>
-                <a
-                  href="http://localhost:8000/metrics"
-                  target="_blank"
-                  rel="noreferrer"
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-800"
-                >
-                  <Database className="w-4 h-4" /> View metrics endpoint
-                </a>
-              </CardBody>
-            </Card>
+                  <Card>
+                    <CardHeader>
+                      <CardTitle><Trash2 className="w-4 h-4 inline mr-1.5 text-red-500" />Danger Zone</CardTitle>
+                    </CardHeader>
+                    <CardBody className="space-y-4">
+                      <p className="text-sm text-zinc-500">
+                        Clear the discovered asset inventory if a bad scan polluted the database. This removes assets, ports, history, topology, findings, and config backup records.
+                      </p>
+                      <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+                        <input type="checkbox" checked={includeScanHistory} onChange={(event) => setIncludeScanHistory(event.target.checked)} />
+                        Also delete scan job history
+                      </label>
+                      <input
+                        value={inventoryConfirm}
+                        onChange={(event) => setInventoryConfirm(event.target.value)}
+                        placeholder="Type: reset inventory"
+                        className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-red-200 dark:border-red-900"
+                      />
+                      <button
+                        type="button"
+                        disabled={isResettingInventory || inventoryConfirm.trim().toLowerCase() !== 'reset inventory'}
+                        onClick={() => resetInventory(
+                          { confirm: inventoryConfirm, include_scan_history: includeScanHistory },
+                          { onSuccess: () => { setInventoryConfirm(''); setIncludeScanHistory(false) } },
+                        )}
+                        className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-red-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+                      >
+                        Clear inventory
+                      </button>
+                    </CardBody>
+                  </Card>
+                </SettingsSection>
+              </>
+            )}
 
             <Card>
-              <CardHeader>
-                <CardTitle><Trash2 className="w-4 h-4 inline mr-1.5 text-red-500" />Danger Zone</CardTitle>
-              </CardHeader>
-              <CardBody className="space-y-4">
-                <p className="text-sm text-zinc-500">
-                  Clear the discovered asset inventory if a bad scan polluted the database. This removes assets, ports, history, topology, findings, and config backup records.
-                </p>
-                <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-                  <input type="checkbox" checked={includeScanHistory} onChange={(event) => setIncludeScanHistory(event.target.checked)} />
-                  Also delete scan job history
-                </label>
-                <input
-                  value={inventoryConfirm}
-                  onChange={(event) => setInventoryConfirm(event.target.value)}
-                  placeholder="Type: reset inventory"
-                  className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-red-200 dark:border-red-900"
-                />
-                <button
-                  type="button"
-                  disabled={isResettingInventory || inventoryConfirm.trim().toLowerCase() !== 'reset inventory'}
-                  onClick={() => resetInventory(
-                    { confirm: inventoryConfirm, include_scan_history: includeScanHistory },
-                    { onSuccess: () => { setInventoryConfirm(''); setIncludeScanHistory(false) } },
-                  )}
-                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-red-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
-                >
-                  Clear inventory
-                </button>
-              </CardBody>
-            </Card>
-          </>
-        )}
-
-        {/* Upcoming sections preview */}
-        <div className={currentUser?.role === 'viewer' ? 'space-y-3 opacity-50 pointer-events-none' : 'space-y-3'}>
-          {SECTIONS.map(({ icon: Icon, title, desc }) => (
-            <Card key={title} className="opacity-60 pointer-events-none select-none">
-              <CardBody>
-                <div className="flex items-start gap-3">
-                  <div className="w-9 h-9 rounded-lg bg-zinc-100 dark:bg-zinc-800 flex items-center justify-center flex-shrink-0">
-                    <Icon className="w-4 h-4 text-zinc-500" />
-                  </div>
-                  <div>
-                    <p className="text-sm font-medium text-zinc-800 dark:text-zinc-200">{title}</p>
-                    <p className="text-xs text-zinc-500 mt-0.5">{desc}</p>
-                  </div>
-                  <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-zinc-100 dark:bg-zinc-800 text-zinc-500">
-                    Planned
-                  </span>
-                </div>
-              </CardBody>
-            </Card>
-          ))}
-        </div>
-
-        {/* .env reference */}
-        <Card>
           <CardHeader>
             <CardTitle><Database className="w-4 h-4 inline mr-1.5" />Environment Variables</CardTitle>
           </CardHeader>
@@ -862,7 +960,9 @@ export default function SettingsPage() {
               ))}
             </div>
           </CardBody>
-        </Card>
+            </Card>
+          </div>
+        </div>
       </div>
     </AppShell>
   )

@@ -9,6 +9,7 @@ import {
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
 import { useCurrentUser } from '@/hooks/useAuth'
+import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 
 const NAV_ITEMS = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
@@ -57,26 +58,47 @@ export function Sidebar() {
         {navItems.map(({ href, icon: Icon, label }) => {
           const active = pathname === href || (href !== '/dashboard' && pathname.startsWith(href))
           return (
-            <Link
-              key={href}
-              href={href}
-              title={sidebarCollapsed ? label : undefined}
-              className={cn(
-                'flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition-colors',
-                'group relative',
-                active
-                  ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400'
-                  : 'text-zinc-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-sidebar-hover hover:text-zinc-900 dark:hover:text-white',
-                sidebarCollapsed && 'justify-center px-0',
+            <div key={href} className="space-y-1">
+              <Link
+                href={href}
+                title={sidebarCollapsed ? label : undefined}
+                className={cn(
+                  'flex items-center gap-3 px-2 py-2 rounded-lg text-sm font-medium transition-colors',
+                  'group relative',
+                  active
+                    ? 'bg-sky-50 dark:bg-sky-500/10 text-sky-600 dark:text-sky-400'
+                    : 'text-zinc-600 dark:text-zinc-400 hover:bg-gray-100 dark:hover:bg-sidebar-hover hover:text-zinc-900 dark:hover:text-white',
+                  sidebarCollapsed && 'justify-center px-0',
+                )}
+              >
+                <Icon className={cn('w-5 h-5 flex-shrink-0', active ? 'text-sky-500' : '')} />
+                {!sidebarCollapsed && <span>{label}</span>}
+                {active && (
+                  <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-sky-500 rounded-r" />
+                )}
+              </Link>
+              {href === '/settings' && active && !sidebarCollapsed && (
+                <div className="ml-2 pl-3 border-l border-gray-200 dark:border-zinc-800 space-y-3 py-2">
+                  {SETTINGS_SECTIONS.map((section) => (
+                    <div key={section.heading} className="space-y-1.5">
+                      <p className="px-2 text-[11px] font-medium uppercase tracking-wider text-zinc-400">
+                        {section.heading}
+                      </p>
+                      {section.items.map((item) => (
+                        <a
+                          key={item.id}
+                          href={`/settings#${item.id}`}
+                          className="flex items-center gap-2 px-2 py-1.5 rounded-md text-xs text-zinc-500 hover:text-zinc-900 hover:bg-gray-100 dark:hover:bg-sidebar-hover dark:text-zinc-400 dark:hover:text-white"
+                        >
+                          <item.icon className="w-3.5 h-3.5 flex-shrink-0" />
+                          <span>{item.label}</span>
+                        </a>
+                      ))}
+                    </div>
+                  ))}
+                </div>
               )}
-            >
-              <Icon className={cn('w-5 h-5 flex-shrink-0', active ? 'text-sky-500' : '')} />
-              {!sidebarCollapsed && <span>{label}</span>}
-              {/* Active indicator */}
-              {active && (
-                <span className="absolute left-0 top-1/2 -translate-y-1/2 w-0.5 h-5 bg-sky-500 rounded-r" />
-              )}
-            </Link>
+            </div>
           )
         })}
       </nav>
