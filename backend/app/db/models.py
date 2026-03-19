@@ -69,6 +69,7 @@ class Asset(Base):
     evidence: Mapped[list["AssetEvidence"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     probe_runs: Mapped[list["ProbeRun"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     observations: Mapped[list["PassiveObservation"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    fingerprint_hypotheses: Mapped[list["FingerprintHypothesis"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
 
@@ -197,6 +198,27 @@ class PassiveObservation(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     asset: Mapped["Asset"] = relationship(back_populates="observations")
+
+
+class FingerprintHypothesis(Base):
+    __tablename__ = "fingerprint_hypotheses"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    source: Mapped[str] = mapped_column(String(32), default="ollama")
+    device_type: Mapped[str | None] = mapped_column(String(64))
+    vendor: Mapped[str | None] = mapped_column(String(256))
+    model: Mapped[str | None] = mapped_column(String(256))
+    os_guess: Mapped[str | None] = mapped_column(String(256))
+    confidence: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    summary: Mapped[str] = mapped_column(Text, nullable=False)
+    supporting_evidence: Mapped[list | None] = mapped_column(JSONB)
+    prompt_version: Mapped[str] = mapped_column(String(32), default="v1")
+    model_used: Mapped[str | None] = mapped_column(String(128))
+    raw_response: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="fingerprint_hypotheses")
 
 
 class TopologyLink(Base):
@@ -362,6 +384,10 @@ class ScannerConfig(Base):
     default_profile: Mapped[str] = mapped_column(String(32), default="balanced")
     interval_minutes: Mapped[int] = mapped_column(Integer, default=60)
     concurrent_hosts: Mapped[int] = mapped_column(Integer, default=10)
+    fingerprint_ai_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    fingerprint_ai_model: Mapped[str | None] = mapped_column(String(128))
+    fingerprint_ai_min_confidence: Mapped[float] = mapped_column(default=0.75)
+    fingerprint_ai_prompt_suffix: Mapped[str | None] = mapped_column(Text)
     last_scheduled_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

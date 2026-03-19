@@ -33,6 +33,10 @@ class ScannerConfigUpdateRequest(BaseModel):
     default_profile: str
     interval_minutes: int
     concurrent_hosts: int
+    fingerprint_ai_enabled: bool = False
+    fingerprint_ai_model: str | None = None
+    fingerprint_ai_min_confidence: float = 0.75
+    fingerprint_ai_prompt_suffix: str | None = None
 
 
 class ResetInventoryRequest(BaseModel):
@@ -51,6 +55,10 @@ def _serialize_scanner_config(config, effective) -> dict:
         "default_profile": config.default_profile,
         "interval_minutes": config.interval_minutes,
         "concurrent_hosts": config.concurrent_hosts,
+        "fingerprint_ai_enabled": config.fingerprint_ai_enabled,
+        "fingerprint_ai_model": effective.fingerprint_ai_model,
+        "fingerprint_ai_min_confidence": config.fingerprint_ai_min_confidence,
+        "fingerprint_ai_prompt_suffix": config.fingerprint_ai_prompt_suffix,
         "last_scheduled_scan_at": config.last_scheduled_scan_at.isoformat() if config.last_scheduled_scan_at else None,
         "created_at": config.created_at.isoformat(),
         "updated_at": config.updated_at.isoformat(),
@@ -147,6 +155,10 @@ async def write_scanner_config(
             default_profile=payload.default_profile,
             interval_minutes=payload.interval_minutes,
             concurrent_hosts=payload.concurrent_hosts,
+            fingerprint_ai_enabled=payload.fingerprint_ai_enabled,
+            fingerprint_ai_model=payload.fingerprint_ai_model,
+            fingerprint_ai_min_confidence=payload.fingerprint_ai_min_confidence,
+            fingerprint_ai_prompt_suffix=payload.fingerprint_ai_prompt_suffix,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

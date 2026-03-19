@@ -122,6 +122,24 @@ def _serialize_asset(asset: Asset) -> dict:
             }
             for row in sorted(asset.observations, key=lambda item: item.observed_at, reverse=True)
         ],
+        "fingerprint_hypotheses": [
+            {
+                "id": row.id,
+                "source": row.source,
+                "device_type": row.device_type,
+                "vendor": row.vendor,
+                "model": row.model,
+                "os_guess": row.os_guess,
+                "confidence": row.confidence,
+                "summary": row.summary,
+                "supporting_evidence": row.supporting_evidence or [],
+                "prompt_version": row.prompt_version,
+                "model_used": row.model_used,
+                "raw_response": row.raw_response,
+                "created_at": row.created_at.isoformat(),
+            }
+            for row in sorted(asset.fingerprint_hypotheses, key=lambda item: item.created_at, reverse=True)
+        ],
     }
 
 
@@ -148,6 +166,7 @@ async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
             selectinload(Asset.evidence),
             selectinload(Asset.probe_runs),
             selectinload(Asset.observations),
+            selectinload(Asset.fingerprint_hypotheses),
         )
         .where(Asset.id == asset_id)
     )
@@ -175,6 +194,7 @@ async def list_assets(
         selectinload(Asset.evidence),
         selectinload(Asset.probe_runs),
         selectinload(Asset.observations),
+        selectinload(Asset.fingerprint_hypotheses),
     )
     if status:
         q = q.where(Asset.status == status)
@@ -367,13 +387,14 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
             selectinload(Asset.ports),
             selectinload(Asset.tags),
             selectinload(Asset.history),
-        selectinload(Asset.ai_analysis),
-        selectinload(Asset.evidence),
-        selectinload(Asset.probe_runs),
-        selectinload(Asset.observations),
+            selectinload(Asset.ai_analysis),
+            selectinload(Asset.evidence),
+            selectinload(Asset.probe_runs),
+            selectinload(Asset.observations),
+            selectinload(Asset.fingerprint_hypotheses),
+        )
+        .where(Asset.id == asset_id)
     )
-    .where(Asset.id == asset_id)
-)
     asset = (await db.execute(stmt)).scalar_one_or_none()
     if not asset:
         raise HTTPException(status_code=404, detail="Asset not found")
@@ -479,6 +500,7 @@ async def update_asset(
                 selectinload(Asset.evidence),
                 selectinload(Asset.probe_runs),
                 selectinload(Asset.observations),
+                selectinload(Asset.fingerprint_hypotheses),
             )
             .where(Asset.id == asset_id)
         )

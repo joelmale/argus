@@ -19,8 +19,10 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, AssetAIAnalysis, AssetEvidence, AssetHistory, Port, ProbeRun
+from app.db.models import Asset, AssetAIAnalysis, AssetEvidence, AssetHistory, FingerprintHypothesis, Port, ProbeRun
 from app.fingerprinting.evidence import derive_detected_device_type, extract_evidence
+from app.fingerprinting.llm import synthesize_fingerprint
+from app.scanner.config import get_or_create_scanner_config
 from app.scanner.models import HostScanResult
 
 log = logging.getLogger(__name__)
@@ -109,6 +111,7 @@ async def upsert_scan_result(
 
         await _refresh_fingerprint_snapshot(db, asset, result, evidence)
         await _upsert_ai_analysis(db, asset, result)
+        await _upsert_fingerprint_hypothesis(db, asset, evidence)
 
         await _upsert_ports(db, asset, result)
 
@@ -153,6 +156,7 @@ async def upsert_scan_result(
 
     await _refresh_fingerprint_snapshot(db, existing, result, evidence)
     await _upsert_ai_analysis(db, existing, result)
+    await _upsert_fingerprint_hypothesis(db, existing, evidence)
 
     # ── Upsert ports ──────────────────────────────────────────────────────────
     port_changes = await _upsert_ports(db, existing, result)
@@ -225,6 +229,69 @@ async def _refresh_fingerprint_snapshot(
                 observed_at=result.scanned_at,
             )
         )
+
+
+def _best_device_type_confidence(evidence_items) -> float:
+    return max((item.confidence for item in evidence_items if item.category == "device_type"), default=0.0)
+
+
+async def _upsert_fingerprint_hypothesis(db: AsyncSession, asset: Asset, evidence_items) -> None:
+    config = await get_or_create_scanner_config(db)
+    if not config.fingerprint_ai_enabled:
+        return
+
+    if len(evidence_items) < 3:
+        return
+
+    if _best_device_type_confidence(evidence_items) >= config.fingerprint_ai_min_confidence:
+        return
+
+    asset_payload = {
+        "ip_address": asset.ip_address,
+        "hostname": asset.hostname,
+        "vendor": asset.vendor,
+        "device_type": asset.effective_device_type,
+    }
+    evidence_payload = [
+        {
+            "source": item.source,
+            "category": item.category,
+            "key": item.key,
+            "value": item.value,
+            "confidence": item.confidence,
+        }
+        for item in evidence_items
+    ]
+    try:
+        synthesized = await synthesize_fingerprint(
+            asset=asset_payload,
+            evidence=evidence_payload,
+            model=config.fingerprint_ai_model or "qwen2.5:7b",
+            prompt_suffix=config.fingerprint_ai_prompt_suffix,
+        )
+    except Exception as exc:
+        log.debug("Fingerprint synthesis skipped for %s: %s", asset.ip_address, exc)
+        return
+
+    if not synthesized.get("summary"):
+        return
+
+    db.add(
+        FingerprintHypothesis(
+            asset_id=asset.id,
+            source="ollama",
+            device_type=synthesized.get("device_type"),
+            vendor=synthesized.get("vendor"),
+            model=synthesized.get("model"),
+            os_guess=synthesized.get("os_guess"),
+            confidence=float(synthesized.get("confidence", 0.0)),
+            summary=synthesized["summary"],
+            supporting_evidence=synthesized.get("supporting_evidence") or [],
+            prompt_version=synthesized.get("prompt_version", "v1"),
+            model_used=synthesized.get("model_used"),
+            raw_response=synthesized.get("raw_response"),
+        )
+    )
 
 
 async def _upsert_ports(db: AsyncSession, asset: Asset, result: HostScanResult) -> dict:

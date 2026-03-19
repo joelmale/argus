@@ -440,6 +440,45 @@ function PassiveTimelineCard({ asset }: { asset: Asset }) {
   )
 }
 
+function FingerprintHypothesesCard({ asset }: { asset: Asset }) {
+  const hypotheses = asset.fingerprint_hypotheses ?? []
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />Fingerprint Hypotheses</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-3">
+        {hypotheses.length === 0 ? (
+          <p className="text-sm text-zinc-500">No Ollama-generated fingerprint hypotheses are stored for this asset yet.</p>
+        ) : hypotheses.slice(0, 3).map((item) => (
+          <div key={item.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                  {item.device_type || 'unknown'}{item.vendor ? ` · ${item.vendor}` : ''}{item.model ? ` ${item.model}` : ''}
+                </p>
+                <p className="text-xs text-zinc-500">{item.model_used || item.source} · {timeAgo(item.created_at)}</p>
+              </div>
+              <ConfidenceBadge confidence={item.confidence} />
+            </div>
+            <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2 whitespace-pre-wrap">{item.summary}</p>
+            {item.supporting_evidence.length > 0 && (
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                {item.supporting_evidence.map((value) => (
+                  <span key={value} className="px-2 py-0.5 rounded-full text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-400">
+                    {value}
+                  </span>
+                ))}
+              </div>
+            )}
+          </div>
+        ))}
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -621,6 +660,7 @@ export default function AssetDetailPage() {
           <div className="xl:col-span-3 space-y-5">
             <FingerprintEvidenceCard asset={asset} />
             <PassiveTimelineCard asset={asset} />
+            <FingerprintHypothesesCard asset={asset} />
             {ai && (
               <Card>
                 <CardHeader>

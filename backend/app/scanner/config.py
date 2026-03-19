@@ -43,6 +43,10 @@ class EffectiveScannerConfig:
     default_profile: str
     interval_minutes: int
     concurrent_hosts: int
+    fingerprint_ai_enabled: bool
+    fingerprint_ai_model: str
+    fingerprint_ai_min_confidence: float
+    fingerprint_ai_prompt_suffix: str | None
     last_scheduled_scan_at: datetime | None
 
 
@@ -135,6 +139,9 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
         default_profile=settings.SCANNER_DEFAULT_PROFILE,
         interval_minutes=settings.SCANNER_INTERVAL_MINUTES,
         concurrent_hosts=settings.SCANNER_CONCURRENT_HOSTS,
+        fingerprint_ai_enabled=False,
+        fingerprint_ai_model=settings.OLLAMA_MODEL,
+        fingerprint_ai_min_confidence=0.75,
     )
     db.add(config)
     await db.flush()
@@ -153,6 +160,10 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         default_profile=config.default_profile,
         interval_minutes=config.interval_minutes,
         concurrent_hosts=config.concurrent_hosts,
+        fingerprint_ai_enabled=config.fingerprint_ai_enabled,
+        fingerprint_ai_model=config.fingerprint_ai_model or settings.OLLAMA_MODEL,
+        fingerprint_ai_min_confidence=config.fingerprint_ai_min_confidence,
+        fingerprint_ai_prompt_suffix=config.fingerprint_ai_prompt_suffix,
         last_scheduled_scan_at=config.last_scheduled_scan_at,
     )
 
@@ -171,6 +182,10 @@ async def update_scanner_config(
     default_profile: str,
     interval_minutes: int,
     concurrent_hosts: int,
+    fingerprint_ai_enabled: bool,
+    fingerprint_ai_model: str | None,
+    fingerprint_ai_min_confidence: float,
+    fingerprint_ai_prompt_suffix: str | None,
 ) -> tuple[ScannerConfig, EffectiveScannerConfig]:
     normalized_targets = default_targets.strip() if default_targets and default_targets.strip() else None
     if not auto_detect_targets and not normalized_targets:
@@ -183,6 +198,10 @@ async def update_scanner_config(
     config.default_profile = default_profile
     config.interval_minutes = interval_minutes
     config.concurrent_hosts = concurrent_hosts
+    config.fingerprint_ai_enabled = fingerprint_ai_enabled
+    config.fingerprint_ai_model = (fingerprint_ai_model or "").strip() or settings.OLLAMA_MODEL
+    config.fingerprint_ai_min_confidence = max(0.0, min(1.0, fingerprint_ai_min_confidence))
+    config.fingerprint_ai_prompt_suffix = fingerprint_ai_prompt_suffix.strip() if fingerprint_ai_prompt_suffix and fingerprint_ai_prompt_suffix.strip() else None
     await db.flush()
     return config, build_effective_scanner_config(config)
 

@@ -62,6 +62,10 @@ type ScannerConfigCardProps = {
     default_profile: string
     interval_minutes: number
     concurrent_hosts: number
+    fingerprint_ai_enabled: boolean
+    fingerprint_ai_model: string
+    fingerprint_ai_min_confidence: number
+    fingerprint_ai_prompt_suffix: string | null
     last_scheduled_scan_at: string | null
     updated_at: string
   }
@@ -73,6 +77,10 @@ type ScannerConfigCardProps = {
     default_profile: string
     interval_minutes: number
     concurrent_hosts: number
+    fingerprint_ai_enabled: boolean
+    fingerprint_ai_model: string
+    fingerprint_ai_min_confidence: number
+    fingerprint_ai_prompt_suffix: string | null
   }) => void
 }
 
@@ -125,6 +133,10 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
   const [defaultProfile, setDefaultProfile] = useState(scannerConfig?.default_profile ?? 'balanced')
   const [scanInterval, setScanInterval] = useState(scannerConfig?.interval_minutes ?? 60)
   const [concurrentHosts, setConcurrentHosts] = useState(scannerConfig?.concurrent_hosts ?? 10)
+  const [fingerprintAiEnabled, setFingerprintAiEnabled] = useState(scannerConfig?.fingerprint_ai_enabled ?? false)
+  const [fingerprintAiModel, setFingerprintAiModel] = useState(scannerConfig?.fingerprint_ai_model ?? 'qwen2.5:7b')
+  const [fingerprintAiMinConfidence, setFingerprintAiMinConfidence] = useState(scannerConfig?.fingerprint_ai_min_confidence ?? 0.75)
+  const [fingerprintAiPromptSuffix, setFingerprintAiPromptSuffix] = useState(scannerConfig?.fingerprint_ai_prompt_suffix ?? '')
 
   return (
     <Card>
@@ -173,7 +185,34 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             placeholder="Concurrent hosts"
             className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
           />
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
+            Enable Ollama fingerprint synthesis
+          </label>
+          <input
+            value={fingerprintAiModel}
+            onChange={(event) => setFingerprintAiModel(event.target.value)}
+            placeholder="Ollama model"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <input
+            value={fingerprintAiMinConfidence}
+            type="number"
+            min={0}
+            max={1}
+            step={0.05}
+            onChange={(event) => setFingerprintAiMinConfidence(Number(event.target.value) || 0.75)}
+            placeholder="Fingerprint AI minimum confidence"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
         </div>
+        <textarea
+          value={fingerprintAiPromptSuffix}
+          onChange={(event) => setFingerprintAiPromptSuffix(event.target.value)}
+          rows={3}
+          placeholder="Optional extra instructions for fingerprint synthesis"
+          className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+        />
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Effective target</p>
           <p className="text-xs text-zinc-500">
@@ -196,6 +235,10 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             default_profile: defaultProfile,
             interval_minutes: scanInterval,
             concurrent_hosts: concurrentHosts,
+            fingerprint_ai_enabled: fingerprintAiEnabled,
+            fingerprint_ai_model: fingerprintAiModel,
+            fingerprint_ai_min_confidence: fingerprintAiMinConfidence,
+            fingerprint_ai_prompt_suffix: fingerprintAiPromptSuffix.trim() || null,
           })}
           className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
         >

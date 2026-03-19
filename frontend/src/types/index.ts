@@ -103,6 +103,10 @@ export interface ScannerConfig {
   default_profile: string;
   interval_minutes: number;
   concurrent_hosts: number;
+  fingerprint_ai_enabled: boolean;
+  fingerprint_ai_model: string;
+  fingerprint_ai_min_confidence: number;
+  fingerprint_ai_prompt_suffix: string | null;
   last_scheduled_scan_at: string | null;
   created_at: string;
   updated_at: string;
@@ -224,6 +228,22 @@ export interface PassiveObservation {
   observed_at: string;
 }
 
+export interface FingerprintHypothesis {
+  id: number;
+  source: string;
+  device_type: string | null;
+  vendor: string | null;
+  model: string | null;
+  os_guess: string | null;
+  confidence: number;
+  summary: string;
+  supporting_evidence: string[];
+  prompt_version: string;
+  model_used: string | null;
+  raw_response: string | null;
+  created_at: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;
@@ -255,6 +275,7 @@ export interface Asset {
   evidence: AssetEvidence[];
   probe_runs: ProbeRun[];
   observations: PassiveObservation[];
+  fingerprint_hypotheses: FingerprintHypothesis[];
 }
 
 export interface ScanJob {

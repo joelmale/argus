@@ -35,9 +35,9 @@ Notes:
 
 ## Phase 4 — LLM Enrichment
 
-- [ ] Add Ollama-backed evidence synthesis layer
-- [ ] Store LLM outputs as hypotheses with provenance
-- [ ] Add prompt and confidence controls in settings
+- [x] Add Ollama-backed evidence synthesis layer
+- [x] Store LLM outputs as hypotheses with provenance
+- [x] Add prompt and confidence controls in settings
 
 ## Phase 5 — Internet Lookup
 
