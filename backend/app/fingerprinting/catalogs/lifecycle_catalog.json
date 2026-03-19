@@ -1,0 +1,23 @@
+[
+  {
+    "product": "proxmox virtual environment",
+    "version_prefix": "7.",
+    "support_status": "legacy",
+    "eol_date": null,
+    "reference": "operator_curated"
+  },
+  {
+    "product": "debian",
+    "version_prefix": "10",
+    "support_status": "eol",
+    "eol_date": null,
+    "reference": "operator_curated"
+  },
+  {
+    "product": "openwrt",
+    "version_prefix": "21.",
+    "support_status": "legacy",
+    "eol_date": null,
+    "reference": "operator_curated"
+  }
+]

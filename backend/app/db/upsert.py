@@ -23,6 +23,7 @@ from app.db.models import Asset, AssetAIAnalysis, AssetEvidence, AssetHistory, F
 from app.fingerprinting.evidence import derive_detected_device_type, extract_evidence
 from app.fingerprinting.internet_lookup import build_lookup_query, normalize_allowed_domains, search_lookup
 from app.fingerprinting.llm import synthesize_fingerprint
+from app.fingerprinting.risk import refresh_risk_and_lifecycle
 from app.scanner.config import get_or_create_scanner_config
 from app.scanner.models import HostScanResult
 
@@ -114,6 +115,7 @@ async def upsert_scan_result(
         await _upsert_ai_analysis(db, asset, result)
         await _upsert_fingerprint_hypothesis(db, asset, evidence)
         await _upsert_internet_lookup(db, asset, evidence)
+        await refresh_risk_and_lifecycle(db, asset, evidence)
 
         await _upsert_ports(db, asset, result)
 
@@ -160,6 +162,7 @@ async def upsert_scan_result(
     await _upsert_ai_analysis(db, existing, result)
     await _upsert_fingerprint_hypothesis(db, existing, evidence)
     await _upsert_internet_lookup(db, existing, evidence)
+    await refresh_risk_and_lifecycle(db, existing, evidence)
 
     # ── Upsert ports ──────────────────────────────────────────────────────────
     port_changes = await _upsert_ports(db, existing, result)

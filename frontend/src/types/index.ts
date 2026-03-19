@@ -259,6 +259,17 @@ export interface InternetLookupResult {
   looked_up_at: string;
 }
 
+export interface LifecycleRecord {
+  id: number;
+  product: string;
+  version: string | null;
+  support_status: string;
+  eol_date: string | null;
+  reference: string | null;
+  details: Record<string, unknown> | null;
+  observed_at: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;
@@ -292,6 +303,7 @@ export interface Asset {
   observations: PassiveObservation[];
   fingerprint_hypotheses: FingerprintHypothesis[];
   internet_lookup_results: InternetLookupResult[];
+  lifecycle_records: LifecycleRecord[];
 }
 
 export interface ScanJob {

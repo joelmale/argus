@@ -71,6 +71,7 @@ class Asset(Base):
     observations: Mapped[list["PassiveObservation"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     fingerprint_hypotheses: Mapped[list["FingerprintHypothesis"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     internet_lookup_results: Mapped[list["InternetLookupResult"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    lifecycle_records: Mapped[list["LifecycleRecord"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
 
@@ -236,6 +237,22 @@ class InternetLookupResult(Base):
     looked_up_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     asset: Mapped["Asset"] = relationship(back_populates="internet_lookup_results")
+
+
+class LifecycleRecord(Base):
+    __tablename__ = "lifecycle_records"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    product: Mapped[str] = mapped_column(String(255), nullable=False)
+    version: Mapped[str | None] = mapped_column(String(128))
+    support_status: Mapped[str] = mapped_column(String(32), nullable=False)
+    eol_date: Mapped[str | None] = mapped_column(String(32))
+    reference: Mapped[str | None] = mapped_column(Text)
+    details: Mapped[dict | None] = mapped_column(JSONB)
+    observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="lifecycle_records")
 
 
 class TopologyLink(Base):

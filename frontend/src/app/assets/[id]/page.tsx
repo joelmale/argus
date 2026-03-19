@@ -513,6 +513,36 @@ function LookupProvenanceCard({ asset }: { asset: Asset }) {
   )
 }
 
+function LifecycleCard({ asset }: { asset: Asset }) {
+  const records = asset.lifecycle_records ?? []
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Shield className="w-4 h-4 inline mr-1.5 text-yellow-500" />Lifecycle Status</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-3">
+        {records.length === 0 ? (
+          <p className="text-sm text-zinc-500">No lifecycle catalog matches are recorded for this asset.</p>
+        ) : records.map((item) => (
+          <div key={item.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                  {item.product}{item.version ? ` ${item.version}` : ''}
+                </p>
+                <p className="text-xs text-zinc-500 mt-1">
+                  {item.support_status}{item.eol_date ? ` · EOL ${item.eol_date}` : ''}{item.reference ? ` · ${item.reference}` : ''}
+                </p>
+              </div>
+            </div>
+          </div>
+        ))}
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -696,6 +726,7 @@ export default function AssetDetailPage() {
             <PassiveTimelineCard asset={asset} />
             <FingerprintHypothesesCard asset={asset} />
             <LookupProvenanceCard asset={asset} />
+            <LifecycleCard asset={asset} />
             {ai && (
               <Card>
                 <CardHeader>

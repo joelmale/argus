@@ -47,6 +47,6 @@ Notes:
 
 ## Phase 6 — Risk and Lifecycle
 
-- [ ] Normalize product/version/CPE extraction
-- [ ] Add CVE/KEV correlation
-- [ ] Add local lifecycle/EOL catalog support
+- [x] Normalize product/version/CPE extraction
+- [x] Add CVE/KEV correlation
+- [x] Add local lifecycle/EOL catalog support

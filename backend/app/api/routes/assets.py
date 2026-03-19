@@ -153,6 +153,19 @@ def _serialize_asset(asset: Asset) -> dict:
             }
             for row in sorted(asset.internet_lookup_results, key=lambda item: item.looked_up_at, reverse=True)
         ],
+        "lifecycle_records": [
+            {
+                "id": row.id,
+                "product": row.product,
+                "version": row.version,
+                "support_status": row.support_status,
+                "eol_date": row.eol_date,
+                "reference": row.reference,
+                "details": row.details,
+                "observed_at": row.observed_at.isoformat(),
+            }
+            for row in sorted(asset.lifecycle_records, key=lambda item: (item.support_status, item.product))
+        ],
     }
 
 
@@ -181,6 +194,7 @@ async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
             selectinload(Asset.observations),
             selectinload(Asset.fingerprint_hypotheses),
             selectinload(Asset.internet_lookup_results),
+            selectinload(Asset.lifecycle_records),
         )
         .where(Asset.id == asset_id)
     )
@@ -210,6 +224,7 @@ async def list_assets(
         selectinload(Asset.observations),
         selectinload(Asset.fingerprint_hypotheses),
         selectinload(Asset.internet_lookup_results),
+        selectinload(Asset.lifecycle_records),
     )
     if status:
         q = q.where(Asset.status == status)
@@ -408,6 +423,7 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
             selectinload(Asset.observations),
             selectinload(Asset.fingerprint_hypotheses),
             selectinload(Asset.internet_lookup_results),
+            selectinload(Asset.lifecycle_records),
         )
         .where(Asset.id == asset_id)
     )
@@ -518,6 +534,7 @@ async def update_asset(
                 selectinload(Asset.observations),
                 selectinload(Asset.fingerprint_hypotheses),
                 selectinload(Asset.internet_lookup_results),
+                selectinload(Asset.lifecycle_records),
             )
             .where(Asset.id == asset_id)
         )
