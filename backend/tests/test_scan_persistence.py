@@ -5,7 +5,7 @@ import uuid
 import pytest
 from sqlalchemy import delete, select
 
-from app.db.models import Asset, AssetEvidence, ProbeRun
+from app.db.models import Asset, AssetAutopsy, AssetEvidence, ProbeRun
 from app.db.session import AsyncSessionLocal
 from app.db.upsert import upsert_scan_result
 from app.scanner.models import AIAnalysis, DeviceClass, DiscoveredHost, HostScanResult, OSFingerprint, PortResult
@@ -181,6 +181,9 @@ async def test_upsert_persists_fingerprinting_evidence_and_probe_snapshot():
             probe_rows = (
                 await db.execute(select(ProbeRun).where(ProbeRun.asset_id == asset.id))
             ).scalars().all()
+            autopsy = (
+                await db.execute(select(AssetAutopsy).where(AssetAutopsy.asset_id == asset.id))
+            ).scalar_one()
 
             assert asset.device_type == "access_point"
             assert asset.device_type_source == "ai"
@@ -188,6 +191,9 @@ async def test_upsert_persists_fingerprinting_evidence_and_probe_snapshot():
             assert any(row.category == "vendor" and "Ubiquiti" in row.value for row in evidence_rows)
             assert any(row.probe_type == "http" and row.success for row in probe_rows)
             assert any(row.probe_type == "snmp" and row.summary == "UAP-AC-LR" for row in probe_rows)
+            assert autopsy.trace["pipeline"][0]["stage"] == "discovery"
+            assert autopsy.trace["pipeline"][4]["stage"] == "classification"
+            assert isinstance(autopsy.trace["weak_points"], list)
         finally:
             await db.execute(delete(Asset).where(Asset.ip_address == ip))
             await db.commit()

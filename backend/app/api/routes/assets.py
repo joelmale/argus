@@ -166,6 +166,12 @@ def _serialize_asset(asset: Asset) -> dict:
             }
             for row in sorted(asset.lifecycle_records, key=lambda item: (item.support_status, item.product))
         ],
+        "autopsy": {
+            "id": asset.autopsy.id,
+            "trace": asset.autopsy.trace,
+            "created_at": asset.autopsy.created_at.isoformat(),
+            "updated_at": asset.autopsy.updated_at.isoformat(),
+        } if asset.autopsy else None,
     }
 
 
@@ -195,6 +201,7 @@ async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
             selectinload(Asset.fingerprint_hypotheses),
             selectinload(Asset.internet_lookup_results),
             selectinload(Asset.lifecycle_records),
+            selectinload(Asset.autopsy),
         )
         .where(Asset.id == asset_id)
     )
@@ -225,6 +232,7 @@ async def list_assets(
         selectinload(Asset.fingerprint_hypotheses),
         selectinload(Asset.internet_lookup_results),
         selectinload(Asset.lifecycle_records),
+        selectinload(Asset.autopsy),
     )
     if status:
         q = q.where(Asset.status == status)

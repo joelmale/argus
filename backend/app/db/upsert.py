@@ -19,7 +19,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, AssetAIAnalysis, AssetEvidence, AssetHistory, FingerprintHypothesis, InternetLookupResult, Port, ProbeRun
+from app.db.models import Asset, AssetAIAnalysis, AssetAutopsy, AssetEvidence, AssetHistory, FingerprintHypothesis, InternetLookupResult, Port, ProbeRun
 from app.fingerprinting.evidence import derive_detected_device_type, extract_evidence
 from app.fingerprinting.internet_lookup import build_lookup_query, normalize_allowed_domains, search_lookup
 from app.fingerprinting.llm import synthesize_fingerprint
@@ -116,6 +116,20 @@ async def upsert_scan_result(
         await _upsert_fingerprint_hypothesis(db, asset, evidence)
         await _upsert_internet_lookup(db, asset, evidence)
         await refresh_risk_and_lifecycle(db, asset, evidence)
+        await _upsert_autopsy(
+            db,
+            asset,
+            _build_autopsy_trace(
+                asset,
+                result,
+                evidence,
+                new_hostname,
+                new_vendor,
+                new_os,
+                new_device_type,
+                new_device_type_source,
+            ),
+        )
 
         await _upsert_ports(db, asset, result)
 
@@ -163,6 +177,20 @@ async def upsert_scan_result(
     await _upsert_fingerprint_hypothesis(db, existing, evidence)
     await _upsert_internet_lookup(db, existing, evidence)
     await refresh_risk_and_lifecycle(db, existing, evidence)
+    await _upsert_autopsy(
+        db,
+        existing,
+        _build_autopsy_trace(
+            existing,
+            result,
+            evidence,
+            new_hostname,
+            new_vendor,
+            new_os,
+            existing.effective_device_type if existing.device_type_override else new_device_type,
+            existing.effective_device_type_source if existing.device_type_override else new_device_type_source,
+        ),
+    )
 
     # ── Upsert ports ──────────────────────────────────────────────────────────
     port_changes = await _upsert_ports(db, existing, result)
@@ -239,6 +267,225 @@ async def _refresh_fingerprint_snapshot(
 
 def _best_device_type_confidence(evidence_items) -> float:
     return max((item.confidence for item in evidence_items if item.category == "device_type"), default=0.0)
+
+
+def _build_device_type_candidate_trace(evidence_items) -> list[dict]:
+    candidates: dict[str, dict] = {}
+    for item in evidence_items:
+        if item.category != "device_type":
+            continue
+        candidate = candidates.setdefault(
+            item.value,
+            {
+                "value": item.value,
+                "total_score": 0.0,
+                "max_confidence": 0.0,
+                "sources": set(),
+                "supporting_evidence": [],
+            },
+        )
+        candidate["total_score"] += float(item.confidence)
+        candidate["max_confidence"] = max(candidate["max_confidence"], float(item.confidence))
+        candidate["sources"].add(item.source)
+        candidate["supporting_evidence"].append(
+            {
+                "source": item.source,
+                "key": item.key,
+                "value": item.value,
+                "confidence": item.confidence,
+                "details": item.details,
+            }
+        )
+
+    ranked: list[dict] = []
+    for candidate in candidates.values():
+        sources = sorted(candidate["sources"])
+        accepted = candidate["max_confidence"] >= 0.8 or (
+            candidate["max_confidence"] >= 0.65
+            and candidate["total_score"] >= 1.3
+            and len(sources) >= 2
+        )
+        ranked.append(
+            {
+                "value": candidate["value"],
+                "total_score": round(candidate["total_score"], 3),
+                "max_confidence": round(candidate["max_confidence"], 3),
+                "distinct_sources": len(sources),
+                "sources": sources,
+                "accepted": accepted,
+                "supporting_evidence": candidate["supporting_evidence"][:8],
+            }
+        )
+    ranked.sort(key=lambda item: (item["accepted"], item["total_score"], item["max_confidence"]), reverse=True)
+    return ranked
+
+
+def _build_autopsy_trace(
+    asset: Asset,
+    result: HostScanResult,
+    evidence_items,
+    new_hostname: str | None,
+    new_vendor: str | None,
+    new_os: str | None,
+    selected_device_type: str | None,
+    selected_device_type_source: str,
+) -> dict:
+    weak_points: list[str] = []
+    if not result.open_ports:
+        weak_points.append("No open ports were confirmed during this scan.")
+    if not result.host.mac_address:
+        weak_points.append("No MAC address was captured, so vendor recognition had less evidence.")
+    if not any(probe.success for probe in result.probes):
+        weak_points.append("No deep probes succeeded, so banner and protocol-specific evidence was limited.")
+    if selected_device_type is None:
+        weak_points.append("No device type candidate crossed the acceptance threshold.")
+    if result.ai_analysis is None:
+        weak_points.append("No AI investigation was attached to this host result.")
+    elif result.ai_analysis.device_class.value == "unknown":
+        weak_points.append("AI investigation ran but did not produce a confident device class.")
+
+    top_evidence = [
+        {
+            "source": item.source,
+            "category": item.category,
+            "key": item.key,
+            "value": item.value,
+            "confidence": item.confidence,
+            "details": item.details,
+        }
+        for item in sorted(evidence_items, key=lambda row: row.confidence, reverse=True)[:12]
+    ]
+
+    return {
+        "asset_identity": {
+            "ip_address": asset.ip_address,
+            "hostname": new_hostname or asset.hostname,
+            "mac_address": result.host.mac_address or asset.mac_address,
+        },
+        "scan_context": {
+            "scanned_at": result.scanned_at.isoformat(),
+            "scan_profile": result.scan_profile.value,
+            "scan_duration_ms": result.scan_duration_ms,
+        },
+        "pipeline": [
+            {
+                "stage": "discovery",
+                "status": "ok",
+                "summary": f"Host discovered via {result.host.discovery_method}.",
+                "outputs": {
+                    "discovery_method": result.host.discovery_method,
+                    "response_time_ms": result.host.response_time_ms,
+                    "ttl": result.host.ttl,
+                    "nmap_hostname": result.host.nmap_hostname,
+                },
+            },
+            {
+                "stage": "port_scan",
+                "status": "ok" if result.ports else "limited",
+                "summary": f"{len(result.open_ports)} open ports identified.",
+                "outputs": {
+                    "open_port_count": len(result.open_ports),
+                    "ports": [
+                        {
+                            "port": port.port,
+                            "protocol": port.protocol,
+                            "service": port.service,
+                            "product": port.product,
+                            "version": port.version,
+                            "cpe": port.cpe,
+                        }
+                        for port in result.open_ports[:20]
+                    ],
+                    "os_fingerprint": result.os_fingerprint.model_dump(),
+                },
+            },
+            {
+                "stage": "deep_probes",
+                "status": "ok" if any(probe.success for probe in result.probes) else "limited",
+                "summary": f"{sum(1 for probe in result.probes if probe.success)} of {len(result.probes)} probes succeeded.",
+                "outputs": {
+                    "successful_probes": [
+                        {
+                            "probe_type": probe.probe_type,
+                            "target_port": probe.target_port,
+                            "details": probe.data or {},
+                        }
+                        for probe in result.probes
+                        if probe.success
+                    ][:10],
+                    "failed_probes": [
+                        {
+                            "probe_type": probe.probe_type,
+                            "target_port": probe.target_port,
+                            "error": probe.error,
+                        }
+                        for probe in result.probes
+                        if not probe.success
+                    ][:10],
+                },
+            },
+            {
+                "stage": "evidence_normalization",
+                "status": "ok",
+                "summary": f"{len(evidence_items)} evidence items normalized.",
+                "outputs": {
+                    "evidence_count": len(evidence_items),
+                    "top_evidence": top_evidence,
+                },
+            },
+            {
+                "stage": "classification",
+                "status": "ok" if selected_device_type else "limited",
+                "summary": f"Resolved device type to {selected_device_type or 'unknown'} via {selected_device_type_source}.",
+                "outputs": {
+                    "device_type_candidates": _build_device_type_candidate_trace(evidence_items),
+                    "selected_device_type": selected_device_type,
+                    "selected_device_type_source": selected_device_type_source,
+                },
+            },
+            {
+                "stage": "ai_investigation",
+                "status": "ok" if result.ai_analysis else "skipped",
+                "summary": (
+                    f"AI classified the asset as {result.ai_analysis.device_class.value} at {result.ai_analysis.confidence:.0%} confidence."
+                    if result.ai_analysis
+                    else "No AI investigation data was present."
+                ),
+                "outputs": result.ai_analysis.model_dump() if result.ai_analysis else {},
+            },
+            {
+                "stage": "persistence",
+                "status": "ok",
+                "summary": "Applied precedence rules and persisted final fields.",
+                "outputs": {
+                    "precedence": [
+                        "manual override",
+                        "high-confidence AI/probe classification",
+                        "rule-based classification",
+                        "unknown",
+                    ],
+                    "manual_override_present": bool(asset.device_type_override),
+                    "final_fields": {
+                        "hostname": new_hostname,
+                        "vendor": new_vendor,
+                        "os_name": new_os,
+                        "device_type": asset.effective_device_type,
+                        "device_type_source": asset.effective_device_type_source,
+                    },
+                },
+            },
+        ],
+        "weak_points": weak_points,
+    }
+
+
+async def _upsert_autopsy(db: AsyncSession, asset: Asset, trace: dict) -> None:
+    stmt = select(AssetAutopsy).where(AssetAutopsy.asset_id == asset.id)
+    existing = (await db.execute(stmt)).scalar_one_or_none()
+    if existing is None:
+        db.add(AssetAutopsy(asset_id=asset.id, trace=trace))
+        return
+    existing.trace = trace
 
 
 async def _upsert_fingerprint_hypothesis(db: AsyncSession, asset: Asset, evidence_items) -> None:

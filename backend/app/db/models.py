@@ -72,6 +72,7 @@ class Asset(Base):
     fingerprint_hypotheses: Mapped[list["FingerprintHypothesis"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     internet_lookup_results: Mapped[list["InternetLookupResult"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     lifecycle_records: Mapped[list["LifecycleRecord"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    autopsy: Mapped["AssetAutopsy | None"] = relationship(back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
 
@@ -253,6 +254,23 @@ class LifecycleRecord(Base):
     observed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     asset: Mapped["Asset"] = relationship(back_populates="lifecycle_records")
+
+
+class AssetAutopsy(Base):
+    __tablename__ = "asset_autopsies"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("assets.id", ondelete="CASCADE"),
+        nullable=False,
+        unique=True,
+    )
+    trace: Mapped[dict] = mapped_column(JSONB, nullable=False, default=dict)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="autopsy")
 
 
 class TopologyLink(Base):

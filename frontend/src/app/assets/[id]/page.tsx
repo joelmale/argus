@@ -7,10 +7,10 @@ import { useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useC
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
-import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert } from 'lucide-react'
+import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert, Microscope, ChevronDown, ChevronUp, Workflow } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
-import type { Asset, ConfigBackupTarget } from '@/types'
+import type { Asset, AssetAutopsyStage, ConfigBackupTarget } from '@/types'
 
 const DEVICE_TYPE_OPTIONS = [
   'router',
@@ -543,6 +543,87 @@ function LifecycleCard({ asset }: { asset: Asset }) {
   )
 }
 
+function AutopsyCard({ asset }: { asset: Asset }) {
+  const autopsy = asset.autopsy
+  if (!autopsy) {
+    return (
+      <Card>
+        <CardHeader>
+          <CardTitle><Microscope className="w-4 h-4 inline mr-1.5 text-rose-500" />Discovery Autopsy</CardTitle>
+        </CardHeader>
+        <CardBody>
+          <p className="text-sm text-zinc-500">
+            No discovery autopsy has been captured for this asset yet. Run a fresh scan or targeted port scan to generate one.
+          </p>
+        </CardBody>
+      </Card>
+    )
+  }
+
+  const stages = autopsy.trace.pipeline ?? []
+  const weakPoints = autopsy.trace.weak_points ?? []
+
+  return (
+    <Card>
+      <CardHeader>
+        <div className="flex items-center justify-between gap-3">
+          <CardTitle><Microscope className="w-4 h-4 inline mr-1.5 text-rose-500" />Discovery Autopsy</CardTitle>
+          <span className="text-xs text-zinc-400">Updated {timeAgo(autopsy.updated_at)}</span>
+        </div>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        {weakPoints.length > 0 && (
+          <div className="rounded-xl border border-amber-200/70 bg-amber-50/60 p-3 dark:border-amber-900/60 dark:bg-amber-950/20">
+            <p className="text-xs font-medium uppercase tracking-wider text-amber-700 dark:text-amber-300">Weak Points</p>
+            <ul className="mt-2 space-y-1 text-sm text-amber-900 dark:text-amber-100">
+              {weakPoints.map((item) => (
+                <li key={item}>• {item}</li>
+              ))}
+            </ul>
+          </div>
+        )}
+        <div className="space-y-3">
+          {stages.map((stage, index) => (
+            <div key={`${stage.stage}-${index}`} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <p className="text-sm font-medium capitalize text-zinc-900 dark:text-zinc-100">
+                    <Workflow className="w-4 h-4 inline mr-1.5 text-rose-500" />
+                    {stage.stage.replaceAll('_', ' ')}
+                  </p>
+                  <p className="mt-1 text-xs text-zinc-500">{stage.summary}</p>
+                </div>
+                <span className="rounded-full border border-gray-200 px-2 py-0.5 text-[11px] uppercase tracking-wider text-zinc-500 dark:border-zinc-700">
+                  {stage.status}
+                </span>
+              </div>
+              <AutopsyOutputs stage={stage} />
+            </div>
+          ))}
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+function AutopsyOutputs({ stage }: { stage: AssetAutopsyStage }) {
+  const outputs = Object.entries(stage.outputs ?? {})
+  if (outputs.length === 0) return null
+
+  return (
+    <div className="mt-3 grid grid-cols-1 lg:grid-cols-2 gap-3">
+      {outputs.map(([key, value]) => (
+        <div key={key} className="rounded-lg bg-gray-50 px-3 py-2 dark:bg-zinc-900/60">
+          <p className="text-[11px] uppercase tracking-wider text-zinc-500">{key.replaceAll('_', ' ')}</p>
+          <pre className="mt-1 whitespace-pre-wrap break-words text-xs text-zinc-700 dark:text-zinc-300">
+            {typeof value === 'string' ? value : JSON.stringify(value, null, 2)}
+          </pre>
+        </div>
+      ))}
+    </div>
+  )
+}
+
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -550,6 +631,7 @@ export default function AssetDetailPage() {
   const { data: currentUser } = useCurrentUser()
   const { mutate: runPortScan, isPending: isPortScanPending } = useRunAssetPortScan()
   const { mutate: refreshAiAnalysis, isPending: isAiLookupPending } = useRefreshAssetAiAnalysis()
+  const [showAutopsy, setShowAutopsy] = useState(false)
 
   if (isLoading) return (
     <AppShell>
@@ -591,11 +673,22 @@ export default function AssetDetailPage() {
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              <button
+                type="button"
+                onClick={() => setShowAutopsy((current) => !current)}
+                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+              >
+                <Microscope className="w-3.5 h-3.5" />
+                Autopsy
+                {showAutopsy ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
+              </button>
               <DeviceClassBadge deviceClass={ai?.device_class ?? asset.device_type} />
               <StatusBadge status={asset.status} />
             </div>
           </div>
         </div>
+
+        {showAutopsy && <AutopsyCard asset={asset} />}
 
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
           {/* Left column: inventory + evidence */}

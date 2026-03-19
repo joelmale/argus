@@ -270,6 +270,25 @@ export interface LifecycleRecord {
   observed_at: string;
 }
 
+export interface AssetAutopsyStage {
+  stage: string;
+  status: string;
+  summary: string;
+  outputs: Record<string, unknown>;
+}
+
+export interface AssetAutopsy {
+  id: number;
+  trace: {
+    asset_identity?: Record<string, unknown>;
+    scan_context?: Record<string, unknown>;
+    pipeline?: AssetAutopsyStage[];
+    weak_points?: string[];
+  };
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;
@@ -304,6 +323,7 @@ export interface Asset {
   fingerprint_hypotheses: FingerprintHypothesis[];
   internet_lookup_results: InternetLookupResult[];
   lifecycle_records: LifecycleRecord[];
+  autopsy: AssetAutopsy | null;
 }
 
 export interface ScanJob {
