@@ -107,6 +107,10 @@ export interface ScannerConfig {
   fingerprint_ai_model: string;
   fingerprint_ai_min_confidence: number;
   fingerprint_ai_prompt_suffix: string | null;
+  internet_lookup_enabled: boolean;
+  internet_lookup_allowed_domains: string | null;
+  internet_lookup_budget: number;
+  internet_lookup_timeout_seconds: number;
   last_scheduled_scan_at: string | null;
   created_at: string;
   updated_at: string;
@@ -244,6 +248,17 @@ export interface FingerprintHypothesis {
   created_at: string;
 }
 
+export interface InternetLookupResult {
+  id: number;
+  query: string;
+  domain: string;
+  url: string;
+  title: string;
+  snippet: string | null;
+  confidence: number;
+  looked_up_at: string;
+}
+
 export interface Port {
   id: number;
   port_number: number;
@@ -276,6 +291,7 @@ export interface Asset {
   probe_runs: ProbeRun[];
   observations: PassiveObservation[];
   fingerprint_hypotheses: FingerprintHypothesis[];
+  internet_lookup_results: InternetLookupResult[];
 }
 
 export interface ScanJob {

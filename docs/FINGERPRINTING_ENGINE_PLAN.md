@@ -41,9 +41,9 @@ Notes:
 
 ## Phase 5 — Internet Lookup
 
-- [ ] Add opt-in external lookup settings
-- [ ] Add allowlist, budgets, caching, and provenance
-- [ ] Use lookups only for unresolved/low-confidence fingerprints
+- [x] Add opt-in external lookup settings
+- [x] Add allowlist, budgets, caching, and provenance
+- [x] Use lookups only for unresolved/low-confidence fingerprints
 
 ## Phase 6 — Risk and Lifecycle
 

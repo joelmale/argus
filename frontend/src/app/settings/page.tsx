@@ -66,6 +66,10 @@ type ScannerConfigCardProps = {
     fingerprint_ai_model: string
     fingerprint_ai_min_confidence: number
     fingerprint_ai_prompt_suffix: string | null
+    internet_lookup_enabled: boolean
+    internet_lookup_allowed_domains: string | null
+    internet_lookup_budget: number
+    internet_lookup_timeout_seconds: number
     last_scheduled_scan_at: string | null
     updated_at: string
   }
@@ -81,6 +85,10 @@ type ScannerConfigCardProps = {
     fingerprint_ai_model: string
     fingerprint_ai_min_confidence: number
     fingerprint_ai_prompt_suffix: string | null
+    internet_lookup_enabled: boolean
+    internet_lookup_allowed_domains: string | null
+    internet_lookup_budget: number
+    internet_lookup_timeout_seconds: number
   }) => void
 }
 
@@ -137,6 +145,10 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
   const [fingerprintAiModel, setFingerprintAiModel] = useState(scannerConfig?.fingerprint_ai_model ?? 'qwen2.5:7b')
   const [fingerprintAiMinConfidence, setFingerprintAiMinConfidence] = useState(scannerConfig?.fingerprint_ai_min_confidence ?? 0.75)
   const [fingerprintAiPromptSuffix, setFingerprintAiPromptSuffix] = useState(scannerConfig?.fingerprint_ai_prompt_suffix ?? '')
+  const [internetLookupEnabled, setInternetLookupEnabled] = useState(scannerConfig?.internet_lookup_enabled ?? false)
+  const [internetLookupAllowedDomains, setInternetLookupAllowedDomains] = useState(scannerConfig?.internet_lookup_allowed_domains ?? 'docs.tp-link.com,ui.com,synology.com,qnap.com,netgate.com,proxmox.com')
+  const [internetLookupBudget, setInternetLookupBudget] = useState(scannerConfig?.internet_lookup_budget ?? 3)
+  const [internetLookupTimeoutSeconds, setInternetLookupTimeoutSeconds] = useState(scannerConfig?.internet_lookup_timeout_seconds ?? 5)
 
   return (
     <Card>
@@ -205,12 +217,40 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             placeholder="Fingerprint AI minimum confidence"
             className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
           />
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={internetLookupEnabled} onChange={(event) => setInternetLookupEnabled(event.target.checked)} />
+            Enable internet lookup for unresolved assets
+          </label>
+          <input
+            value={internetLookupBudget}
+            type="number"
+            min={1}
+            max={10}
+            onChange={(event) => setInternetLookupBudget(Number(event.target.value) || 3)}
+            placeholder="Lookup budget"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <input
+            value={internetLookupTimeoutSeconds}
+            type="number"
+            min={1}
+            max={30}
+            onChange={(event) => setInternetLookupTimeoutSeconds(Number(event.target.value) || 5)}
+            placeholder="Lookup timeout seconds"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
         </div>
         <textarea
           value={fingerprintAiPromptSuffix}
           onChange={(event) => setFingerprintAiPromptSuffix(event.target.value)}
           rows={3}
           placeholder="Optional extra instructions for fingerprint synthesis"
+          className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+        />
+        <input
+          value={internetLookupAllowedDomains}
+          onChange={(event) => setInternetLookupAllowedDomains(event.target.value)}
+          placeholder="Allowed domains, comma separated"
           className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
         />
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
@@ -239,6 +279,10 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             fingerprint_ai_model: fingerprintAiModel,
             fingerprint_ai_min_confidence: fingerprintAiMinConfidence,
             fingerprint_ai_prompt_suffix: fingerprintAiPromptSuffix.trim() || null,
+            internet_lookup_enabled: internetLookupEnabled,
+            internet_lookup_allowed_domains: internetLookupAllowedDomains.trim() || null,
+            internet_lookup_budget: internetLookupBudget,
+            internet_lookup_timeout_seconds: internetLookupTimeoutSeconds,
           })}
           className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
         >

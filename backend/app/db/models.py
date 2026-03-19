@@ -70,6 +70,7 @@ class Asset(Base):
     probe_runs: Mapped[list["ProbeRun"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     observations: Mapped[list["PassiveObservation"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
     fingerprint_hypotheses: Mapped[list["FingerprintHypothesis"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    internet_lookup_results: Mapped[list["InternetLookupResult"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
 
@@ -219,6 +220,22 @@ class FingerprintHypothesis(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     asset: Mapped["Asset"] = relationship(back_populates="fingerprint_hypotheses")
+
+
+class InternetLookupResult(Base):
+    __tablename__ = "internet_lookup_results"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    query: Mapped[str] = mapped_column(String(512), nullable=False)
+    domain: Mapped[str] = mapped_column(String(255), nullable=False)
+    url: Mapped[str] = mapped_column(Text, nullable=False)
+    title: Mapped[str] = mapped_column(String(512), nullable=False)
+    snippet: Mapped[str | None] = mapped_column(Text)
+    confidence: Mapped[float] = mapped_column(nullable=False, default=0.0)
+    looked_up_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="internet_lookup_results")
 
 
 class TopologyLink(Base):
@@ -388,6 +405,10 @@ class ScannerConfig(Base):
     fingerprint_ai_model: Mapped[str | None] = mapped_column(String(128))
     fingerprint_ai_min_confidence: Mapped[float] = mapped_column(default=0.75)
     fingerprint_ai_prompt_suffix: Mapped[str | None] = mapped_column(Text)
+    internet_lookup_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    internet_lookup_allowed_domains: Mapped[str | None] = mapped_column(Text)
+    internet_lookup_budget: Mapped[int] = mapped_column(Integer, default=3)
+    internet_lookup_timeout_seconds: Mapped[int] = mapped_column(Integer, default=5)
     last_scheduled_scan_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)

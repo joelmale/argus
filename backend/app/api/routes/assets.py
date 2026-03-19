@@ -140,6 +140,19 @@ def _serialize_asset(asset: Asset) -> dict:
             }
             for row in sorted(asset.fingerprint_hypotheses, key=lambda item: item.created_at, reverse=True)
         ],
+        "internet_lookup_results": [
+            {
+                "id": row.id,
+                "query": row.query,
+                "domain": row.domain,
+                "url": row.url,
+                "title": row.title,
+                "snippet": row.snippet,
+                "confidence": row.confidence,
+                "looked_up_at": row.looked_up_at.isoformat(),
+            }
+            for row in sorted(asset.internet_lookup_results, key=lambda item: item.looked_up_at, reverse=True)
+        ],
     }
 
 
@@ -167,6 +180,7 @@ async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
             selectinload(Asset.probe_runs),
             selectinload(Asset.observations),
             selectinload(Asset.fingerprint_hypotheses),
+            selectinload(Asset.internet_lookup_results),
         )
         .where(Asset.id == asset_id)
     )
@@ -195,6 +209,7 @@ async def list_assets(
         selectinload(Asset.probe_runs),
         selectinload(Asset.observations),
         selectinload(Asset.fingerprint_hypotheses),
+        selectinload(Asset.internet_lookup_results),
     )
     if status:
         q = q.where(Asset.status == status)
@@ -392,6 +407,7 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
             selectinload(Asset.probe_runs),
             selectinload(Asset.observations),
             selectinload(Asset.fingerprint_hypotheses),
+            selectinload(Asset.internet_lookup_results),
         )
         .where(Asset.id == asset_id)
     )
@@ -501,6 +517,7 @@ async def update_asset(
                 selectinload(Asset.probe_runs),
                 selectinload(Asset.observations),
                 selectinload(Asset.fingerprint_hypotheses),
+                selectinload(Asset.internet_lookup_results),
             )
             .where(Asset.id == asset_id)
         )

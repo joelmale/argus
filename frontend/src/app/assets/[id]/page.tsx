@@ -479,6 +479,40 @@ function FingerprintHypothesesCard({ asset }: { asset: Asset }) {
   )
 }
 
+function LookupProvenanceCard({ asset }: { asset: Asset }) {
+  const results = asset.internet_lookup_results ?? []
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Info className="w-4 h-4 inline mr-1.5" />Lookup Provenance</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-3">
+        {results.length === 0 ? (
+          <p className="text-sm text-zinc-500">No external lookup results are cached for this asset.</p>
+        ) : results.slice(0, 5).map((item) => (
+          <a
+            key={item.id}
+            href={item.url}
+            target="_blank"
+            rel="noreferrer"
+            className="block rounded-xl border border-gray-200 dark:border-zinc-800 p-3 hover:bg-zinc-50 dark:hover:bg-zinc-900/60"
+          >
+            <div className="flex items-start justify-between gap-3">
+              <div>
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{item.title}</p>
+                <p className="text-xs text-zinc-500 mt-1">{item.domain} · {timeAgo(item.looked_up_at)}</p>
+              </div>
+              <ConfidenceBadge confidence={item.confidence} />
+            </div>
+            {item.snippet && <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2">{item.snippet}</p>}
+          </a>
+        ))}
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
@@ -661,6 +695,7 @@ export default function AssetDetailPage() {
             <FingerprintEvidenceCard asset={asset} />
             <PassiveTimelineCard asset={asset} />
             <FingerprintHypothesesCard asset={asset} />
+            <LookupProvenanceCard asset={asset} />
             {ai && (
               <Card>
                 <CardHeader>

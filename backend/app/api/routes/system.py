@@ -37,6 +37,10 @@ class ScannerConfigUpdateRequest(BaseModel):
     fingerprint_ai_model: str | None = None
     fingerprint_ai_min_confidence: float = 0.75
     fingerprint_ai_prompt_suffix: str | None = None
+    internet_lookup_enabled: bool = False
+    internet_lookup_allowed_domains: str | None = None
+    internet_lookup_budget: int = 3
+    internet_lookup_timeout_seconds: int = 5
 
 
 class ResetInventoryRequest(BaseModel):
@@ -59,6 +63,10 @@ def _serialize_scanner_config(config, effective) -> dict:
         "fingerprint_ai_model": effective.fingerprint_ai_model,
         "fingerprint_ai_min_confidence": config.fingerprint_ai_min_confidence,
         "fingerprint_ai_prompt_suffix": config.fingerprint_ai_prompt_suffix,
+        "internet_lookup_enabled": config.internet_lookup_enabled,
+        "internet_lookup_allowed_domains": config.internet_lookup_allowed_domains,
+        "internet_lookup_budget": config.internet_lookup_budget,
+        "internet_lookup_timeout_seconds": config.internet_lookup_timeout_seconds,
         "last_scheduled_scan_at": config.last_scheduled_scan_at.isoformat() if config.last_scheduled_scan_at else None,
         "created_at": config.created_at.isoformat(),
         "updated_at": config.updated_at.isoformat(),
@@ -159,6 +167,10 @@ async def write_scanner_config(
             fingerprint_ai_model=payload.fingerprint_ai_model,
             fingerprint_ai_min_confidence=payload.fingerprint_ai_min_confidence,
             fingerprint_ai_prompt_suffix=payload.fingerprint_ai_prompt_suffix,
+            internet_lookup_enabled=payload.internet_lookup_enabled,
+            internet_lookup_allowed_domains=payload.internet_lookup_allowed_domains,
+            internet_lookup_budget=payload.internet_lookup_budget,
+            internet_lookup_timeout_seconds=payload.internet_lookup_timeout_seconds,
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

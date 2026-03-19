@@ -19,8 +19,9 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.db.models import Asset, AssetAIAnalysis, AssetEvidence, AssetHistory, FingerprintHypothesis, Port, ProbeRun
+from app.db.models import Asset, AssetAIAnalysis, AssetEvidence, AssetHistory, FingerprintHypothesis, InternetLookupResult, Port, ProbeRun
 from app.fingerprinting.evidence import derive_detected_device_type, extract_evidence
+from app.fingerprinting.internet_lookup import build_lookup_query, normalize_allowed_domains, search_lookup
 from app.fingerprinting.llm import synthesize_fingerprint
 from app.scanner.config import get_or_create_scanner_config
 from app.scanner.models import HostScanResult
@@ -112,6 +113,7 @@ async def upsert_scan_result(
         await _refresh_fingerprint_snapshot(db, asset, result, evidence)
         await _upsert_ai_analysis(db, asset, result)
         await _upsert_fingerprint_hypothesis(db, asset, evidence)
+        await _upsert_internet_lookup(db, asset, evidence)
 
         await _upsert_ports(db, asset, result)
 
@@ -157,6 +159,7 @@ async def upsert_scan_result(
     await _refresh_fingerprint_snapshot(db, existing, result, evidence)
     await _upsert_ai_analysis(db, existing, result)
     await _upsert_fingerprint_hypothesis(db, existing, evidence)
+    await _upsert_internet_lookup(db, existing, evidence)
 
     # ── Upsert ports ──────────────────────────────────────────────────────────
     port_changes = await _upsert_ports(db, existing, result)
@@ -292,6 +295,72 @@ async def _upsert_fingerprint_hypothesis(db: AsyncSession, asset: Asset, evidenc
             raw_response=synthesized.get("raw_response"),
         )
     )
+
+
+async def _upsert_internet_lookup(db: AsyncSession, asset: Asset, evidence_items) -> None:
+    config = await get_or_create_scanner_config(db)
+    if not config.internet_lookup_enabled:
+        return
+    if _best_device_type_confidence(evidence_items) >= config.fingerprint_ai_min_confidence:
+        return
+
+    query = build_lookup_query(
+        {
+            "ip_address": asset.ip_address,
+            "hostname": asset.hostname,
+            "vendor": asset.vendor,
+            "device_type": asset.effective_device_type,
+        },
+        [
+            {
+                "source": item.source,
+                "category": item.category,
+                "key": item.key,
+                "value": item.value,
+                "confidence": item.confidence,
+            }
+            for item in evidence_items
+        ],
+    )
+    allowed_domains = normalize_allowed_domains(config.internet_lookup_allowed_domains)
+    if not query or not allowed_domains:
+        return
+
+    try:
+        results = await search_lookup(
+            query,
+            allowed_domains=allowed_domains,
+            timeout_seconds=config.internet_lookup_timeout_seconds,
+            budget=config.internet_lookup_budget,
+        )
+    except Exception as exc:
+        log.debug("Internet lookup skipped for %s: %s", asset.ip_address, exc)
+        return
+
+    for result in results:
+        db.add(
+            InternetLookupResult(
+                asset_id=asset.id,
+                query=query,
+                domain=result["domain"],
+                url=result["url"],
+                title=result["title"],
+                snippet=result.get("snippet"),
+                confidence=0.58,
+            )
+        )
+        db.add(
+            FingerprintHypothesis(
+                asset_id=asset.id,
+                source="internet_lookup",
+                confidence=0.58,
+                summary=f"Matched external reference '{result['title']}' on {result['domain']}. {result.get('snippet') or ''}".strip(),
+                supporting_evidence=[query, result["title"]],
+                prompt_version="web-v1",
+                model_used=result["domain"],
+                raw_response=result["url"],
+            )
+        )
 
 
 async def _upsert_ports(db: AsyncSession, asset: Asset, result: HostScanResult) -> dict:

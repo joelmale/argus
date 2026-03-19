@@ -47,6 +47,10 @@ class EffectiveScannerConfig:
     fingerprint_ai_model: str
     fingerprint_ai_min_confidence: float
     fingerprint_ai_prompt_suffix: str | None
+    internet_lookup_enabled: bool
+    internet_lookup_allowed_domains: str | None
+    internet_lookup_budget: int
+    internet_lookup_timeout_seconds: int
     last_scheduled_scan_at: datetime | None
 
 
@@ -142,6 +146,10 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
         fingerprint_ai_enabled=False,
         fingerprint_ai_model=settings.OLLAMA_MODEL,
         fingerprint_ai_min_confidence=0.75,
+        internet_lookup_enabled=False,
+        internet_lookup_allowed_domains=None,
+        internet_lookup_budget=3,
+        internet_lookup_timeout_seconds=5,
     )
     db.add(config)
     await db.flush()
@@ -164,6 +172,10 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         fingerprint_ai_model=config.fingerprint_ai_model or settings.OLLAMA_MODEL,
         fingerprint_ai_min_confidence=config.fingerprint_ai_min_confidence,
         fingerprint_ai_prompt_suffix=config.fingerprint_ai_prompt_suffix,
+        internet_lookup_enabled=config.internet_lookup_enabled,
+        internet_lookup_allowed_domains=config.internet_lookup_allowed_domains,
+        internet_lookup_budget=config.internet_lookup_budget,
+        internet_lookup_timeout_seconds=config.internet_lookup_timeout_seconds,
         last_scheduled_scan_at=config.last_scheduled_scan_at,
     )
 
@@ -186,6 +198,10 @@ async def update_scanner_config(
     fingerprint_ai_model: str | None,
     fingerprint_ai_min_confidence: float,
     fingerprint_ai_prompt_suffix: str | None,
+    internet_lookup_enabled: bool,
+    internet_lookup_allowed_domains: str | None,
+    internet_lookup_budget: int,
+    internet_lookup_timeout_seconds: int,
 ) -> tuple[ScannerConfig, EffectiveScannerConfig]:
     normalized_targets = default_targets.strip() if default_targets and default_targets.strip() else None
     if not auto_detect_targets and not normalized_targets:
@@ -202,6 +218,10 @@ async def update_scanner_config(
     config.fingerprint_ai_model = (fingerprint_ai_model or "").strip() or settings.OLLAMA_MODEL
     config.fingerprint_ai_min_confidence = max(0.0, min(1.0, fingerprint_ai_min_confidence))
     config.fingerprint_ai_prompt_suffix = fingerprint_ai_prompt_suffix.strip() if fingerprint_ai_prompt_suffix and fingerprint_ai_prompt_suffix.strip() else None
+    config.internet_lookup_enabled = internet_lookup_enabled
+    config.internet_lookup_allowed_domains = internet_lookup_allowed_domains.strip() if internet_lookup_allowed_domains and internet_lookup_allowed_domains.strip() else None
+    config.internet_lookup_budget = max(1, internet_lookup_budget)
+    config.internet_lookup_timeout_seconds = max(1, internet_lookup_timeout_seconds)
     await db.flush()
     return config, build_effective_scanner_config(config)
 
