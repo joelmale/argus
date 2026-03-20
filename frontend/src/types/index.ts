@@ -405,10 +405,14 @@ export interface ScanJob {
   id: string;
   targets: string;
   scan_type: string;
-  status: "pending" | "running" | "done" | "failed";
+  status: "pending" | "running" | "paused" | "cancelled" | "done" | "failed";
   triggered_by: string;
+  queue_position?: number | null;
   started_at: string | null;
   finished_at: string | null;
+  control_action?: string | null;
+  control_mode?: string | null;
+  resume_after?: string | null;
   result_summary: Record<string, unknown> | null;
   created_at: string;
 }

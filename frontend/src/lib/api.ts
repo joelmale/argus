@@ -95,6 +95,10 @@ export const scansApi = {
   trigger: (targets?: string, scan_type = "balanced") =>
     api.post("/api/v1/scans/trigger", { targets: targets?.trim() || undefined, scan_type }),
   get: (id: string) => api.get(`/api/v1/scans/${id}`),
+  control: (id: string, payload: { action: "cancel" | "pause" | "resume"; mode?: "discard" | "preserve_discovery"; resume_in_minutes?: number }) =>
+    api.post(`/api/v1/scans/${id}/control`, payload),
+  queue: (id: string, payload: { action: "move_up" | "move_down" | "move_to_front" | "start_now" }) =>
+    api.post(`/api/v1/scans/${id}/queue`, payload),
 };
 
 export const findingsApi = {

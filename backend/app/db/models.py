@@ -293,10 +293,14 @@ class ScanJob(Base):
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     targets: Mapped[str] = mapped_column(Text, nullable=False)  # CIDR or IP list
     scan_type: Mapped[str] = mapped_column(String(32), default="full")  # full | quick | ports | snmp
-    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | running | done | failed
+    status: Mapped[str] = mapped_column(String(16), default="pending")  # pending | running | paused | cancelled | done | failed
     triggered_by: Mapped[str] = mapped_column(String(32), default="schedule")  # schedule | manual | api
+    queue_position: Mapped[int | None] = mapped_column(Integer)
     started_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    control_action: Mapped[str | None] = mapped_column(String(16))
+    control_mode: Mapped[str | None] = mapped_column(String(32))
+    resume_after: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     result_summary: Mapped[dict | None] = mapped_column(JSONB)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 

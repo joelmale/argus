@@ -28,6 +28,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import time
+from dataclasses import dataclass
 
 from app.scanner.models import (
     DiscoveredHost,
@@ -43,6 +44,34 @@ log = logging.getLogger(__name__)
 CONCURRENT_HOSTS = 10
 
 
+@dataclass(slots=True)
+class ScanControlDecision:
+    action: str
+    mode: str = "discard"
+    resume_after: str | None = None
+    message: str | None = None
+
+
+class ScanControlInterrupt(Exception):
+    def __init__(
+        self,
+        *,
+        status: str,
+        message: str,
+        partial_results: list[HostScanResult] | None = None,
+        scanned_ips: set[str] | None = None,
+        resume_after: str | None = None,
+        mark_missing_offline: bool = False,
+    ) -> None:
+        super().__init__(message)
+        self.status = status
+        self.message = message
+        self.partial_results = partial_results or []
+        self.scanned_ips = scanned_ips or set()
+        self.resume_after = resume_after
+        self.mark_missing_offline = mark_missing_offline
+
+
 async def run_scan(
     job_id: str,
     targets: str,
@@ -51,6 +80,7 @@ async def run_scan(
     concurrent_hosts: int = CONCURRENT_HOSTS,
     db_session=None,
     broadcast_fn=None,   # Optional: async callable(dict) for WebSocket events
+    control_fn=None,
 ) -> ScanSummary:
     """
     Run a complete scan pipeline against `targets`.
@@ -103,6 +133,15 @@ async def run_scan(
             "message": f"Discovered {len(hosts)} live hosts",
         },
     })
+
+    await _check_control(
+        control_fn,
+        stage="post_discovery",
+        summary=summary,
+        hosts=hosts,
+        completed_results=[],
+        total_hosts=len(hosts),
+    )
 
     # ── Stage 2: Port scan all hosts together (nmap batch) ───────────────────
     await _broadcast(broadcast_fn, {
@@ -184,6 +223,16 @@ async def run_scan(
             },
         })
 
+        await _check_control(
+            control_fn,
+            stage="investigation",
+            summary=summary,
+            hosts=hosts,
+            completed_results=[r for r in results if r],
+            total_hosts=total_hosts,
+            tasks=tasks,
+        )
+
     # ── Stage 6: Persist all results ─────────────────────────────────────────
     if db_session is not None:
         await _broadcast(broadcast_fn, {
@@ -217,6 +266,68 @@ async def run_scan(
     })
 
     return summary
+
+
+async def _check_control(
+    control_fn,
+    *,
+    stage: str,
+    summary: ScanSummary,
+    hosts: list[DiscoveredHost],
+    completed_results: list[HostScanResult],
+    total_hosts: int,
+    tasks: list[asyncio.Task] | None = None,
+) -> None:
+    if control_fn is None:
+        return
+
+    decision = await control_fn()
+    if decision is None:
+        return
+
+    if decision.action not in {"cancel", "pause"}:
+        return
+
+    if tasks:
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+
+    partial_results = _build_partial_results(hosts, completed_results, summary.profile)
+    scanned_ips = {result.host.ip_address for result in partial_results}
+    action_label = "paused" if decision.action == "pause" else "cancelled"
+    message = decision.message or f"Scan {action_label} during {stage}"
+
+    raise ScanControlInterrupt(
+        status="paused" if decision.action == "pause" else "cancelled",
+        message=message,
+        partial_results=partial_results if decision.mode == "preserve_discovery" else completed_results,
+        scanned_ips=scanned_ips if decision.mode == "preserve_discovery" else {result.host.ip_address for result in completed_results},
+        resume_after=decision.resume_after,
+        mark_missing_offline=False,
+    )
+
+
+def _build_partial_results(
+    hosts: list[DiscoveredHost],
+    completed_results: list[HostScanResult],
+    profile: ScanProfile,
+) -> list[HostScanResult]:
+    completed_by_ip = {result.host.ip_address: result for result in completed_results}
+    partial_results: list[HostScanResult] = []
+    for host in hosts:
+        existing = completed_by_ip.get(host.ip_address)
+        if existing is not None:
+            partial_results.append(existing)
+            continue
+        partial_results.append(
+            HostScanResult(
+                host=host,
+                scan_profile=profile,
+            )
+        )
+    return partial_results
 
 
 async def _investigate_host(
@@ -322,6 +433,8 @@ async def _persist_results(
     summary: ScanSummary,
     broadcast_fn,
     job_id: str,
+    mark_missing_offline: bool = True,
+    allow_discovery_only: bool = False,
 ) -> None:
     """Persist all scan results to the database."""
     from app.db.upsert import mark_offline, upsert_scan_result
@@ -332,14 +445,16 @@ async def _persist_results(
     # Find assets that were online before but not in this scan
     from sqlalchemy import select
     from app.db.models import Asset
-    stmt = select(Asset.ip_address).where(Asset.status == "online")
-    previously_online = {row[0] for row in (await db_session.execute(stmt)).all()}
-    offline_ips = list(previously_online - scanned_ips)
+    offline_ips: list[str] = []
+    if mark_missing_offline:
+        stmt = select(Asset.ip_address).where(Asset.status == "online")
+        previously_online = {row[0] for row in (await db_session.execute(stmt)).all()}
+        offline_ips = list(previously_online - scanned_ips)
 
     for result in results:
         if result is None:
             continue
-        if not has_meaningful_scan_evidence(result):
+        if not has_meaningful_scan_evidence(result) and not allow_discovery_only:
             log.info("Skipping weak scan result for %s: insufficient evidence to persist asset", result.host.ip_address)
             continue
         try:
@@ -370,20 +485,21 @@ async def _persist_results(
             summary.errors.append(f"{result.host.ip_address}: {exc}")
 
     # Mark offline assets
-    offline_count, offline_assets = await mark_offline(db_session, offline_ips)
-    summary.offline_assets = offline_count
-    if offline_assets:
-        await notify_devices_offline_if_enabled(
-            db_session,
-            [
-                {
-                    "ip": asset.ip_address,
-                    "hostname": asset.hostname,
-                    "last_seen": asset.last_seen.isoformat() if asset.last_seen else None,
-                }
-                for asset in offline_assets
-            ]
-        )
+    if mark_missing_offline:
+        offline_count, offline_assets = await mark_offline(db_session, offline_ips)
+        summary.offline_assets = offline_count
+        if offline_assets:
+            await notify_devices_offline_if_enabled(
+                db_session,
+                [
+                    {
+                        "ip": asset.ip_address,
+                        "hostname": asset.hostname,
+                        "last_seen": asset.last_seen.isoformat() if asset.last_seen else None,
+                    }
+                    for asset in offline_assets
+                ]
+            )
 
     await db_session.commit()
 

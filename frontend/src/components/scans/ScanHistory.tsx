@@ -1,9 +1,10 @@
 'use client'
 
 import { useState } from 'react'
-import { StatusBadge } from '@/components/ui/Badge'
 import { timeAgo, formatDate, shortId } from '@/lib/utils'
 import type { ScanJob } from '@/types'
+import { useCurrentUser } from '@/hooks/useAuth'
+import { useControlScan, useQueueScan } from '@/hooks/useScans'
 import { Clock, Server, Cpu, ChevronRight, ChevronDown } from 'lucide-react'
 
 interface ScanHistoryProps {
@@ -13,6 +14,10 @@ interface ScanHistoryProps {
 
 export function ScanHistory({ scans, isLoading }: ScanHistoryProps) {
   const [expanded, setExpanded] = useState<Record<string, boolean>>({})
+  const { data: currentUser } = useCurrentUser()
+  const { mutate: controlScan, isPending: isControlling } = useControlScan()
+  const { mutate: queueScan, isPending: isQueueing } = useQueueScan()
+  const isViewer = currentUser?.role === 'viewer'
 
   if (isLoading) {
     return (
@@ -72,6 +77,10 @@ export function ScanHistory({ scans, isLoading }: ScanHistoryProps) {
               <ScanRow
                 key={scan.id}
                 scan={scan}
+                isViewer={!!isViewer}
+                isControlling={isControlling || isQueueing}
+                onControl={(payload) => controlScan(payload)}
+                onQueueAction={(payload) => queueScan(payload)}
                 isExpanded={!!expanded[scan.id]}
                 onToggle={() => setExpanded((current) => ({ ...current, [scan.id]: !current[scan.id] }))}
               />
@@ -85,21 +94,34 @@ export function ScanHistory({ scans, isLoading }: ScanHistoryProps) {
 
 function ScanRow({
   scan,
+  isViewer,
+  isControlling,
+  onControl,
+  onQueueAction,
   isExpanded,
   onToggle,
 }: {
   scan: ScanJob
+  isViewer: boolean
+  isControlling: boolean
+  onControl: (payload: { id: string; action: 'cancel' | 'pause' | 'resume'; mode?: 'discard' | 'preserve_discovery'; resume_in_minutes?: number }) => void
+  onQueueAction: (payload: { id: string; action: 'move_up' | 'move_down' | 'move_to_front' | 'start_now' }) => void
   isExpanded: boolean
   onToggle: () => void
 }) {
-  const summary = scan.result_summary as any
+  const summary = (scan.result_summary ?? {}) as Record<string, unknown>
   const duration = scan.started_at && scan.finished_at
     ? Math.round((new Date(scan.finished_at).getTime() - new Date(scan.started_at).getTime()) / 1000)
     : null
 
   const targets = Array.isArray(scan.targets) ? scan.targets.join(', ') : scan.targets ?? '—'
-  const canExpand = scan.status === 'running'
+  const canExpand = scan.status === 'pending' || scan.status === 'running' || scan.status === 'paused'
   const details = buildScanDetails(scan)
+  const pauseOptions = [15, 30, 60, 240, 720]
+  const hostsFound = typeof summary.hosts_found === 'number' || typeof summary.hosts_found === 'string' ? summary.hosts_found : '—'
+  const hostsInvestigated = typeof summary.hosts_investigated === 'number' ? summary.hosts_investigated : undefined
+  const newAssets = typeof summary.new_assets === 'number' ? summary.new_assets : 0
+  const changedAssets = typeof summary.changed_assets === 'number' ? summary.changed_assets : 0
 
   return (
     <>
@@ -134,13 +156,19 @@ function ScanRow({
         <td className="px-4 py-3">
           <div className="space-y-1">
             <ScanStatusBadge status={scan.status} />
-            {scan.status === 'running' && summary?.stage && (
+            {(scan.status === 'running' || scan.status === 'paused' || scan.status === 'cancelled' || scan.status === 'pending') && typeof summary.stage === 'string' && (
               <p className="text-[11px] text-zinc-500 capitalize">{summary.stage.replace('_', ' ')}</p>
             )}
-            {scan.status === 'running' && summary?.message && (
+            {(scan.status === 'running' || scan.status === 'paused' || scan.status === 'cancelled' || scan.status === 'pending') && typeof summary.message === 'string' && (
               <p className="text-[11px] text-zinc-400 max-w-[220px] truncate" title={summary.message}>
                 {summary.message}
               </p>
+            )}
+            {scan.status === 'paused' && scan.resume_after && (
+              <p className="text-[11px] text-amber-500">resumes {timeAgo(scan.resume_after)}</p>
+            )}
+            {scan.status === 'pending' && typeof scan.queue_position === 'number' && (
+              <p className="text-[11px] text-zinc-500">queue #{scan.queue_position}</p>
             )}
           </div>
         </td>
@@ -149,16 +177,16 @@ function ScanRow({
           {summary ? (
             <div className="flex items-center gap-2 text-xs">
               <span className="text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
-                <Server className="w-3 h-3" /> {summary.hosts_found ?? '—'}
+                <Server className="w-3 h-3" /> {hostsFound}
               </span>
-              {scan.status === 'running' && summary?.hosts_investigated !== undefined && (
-                <span className="text-sky-600 dark:text-sky-400">{summary.hosts_investigated} done</span>
+              {scan.status === 'running' && hostsInvestigated !== undefined && (
+                <span className="text-sky-600 dark:text-sky-400">{hostsInvestigated} done</span>
               )}
-              {summary?.new_assets > 0 && (
-                <span className="text-emerald-600 dark:text-emerald-400">+{summary.new_assets} new</span>
+              {newAssets > 0 && (
+                <span className="text-emerald-600 dark:text-emerald-400">+{newAssets} new</span>
               )}
-              {summary?.changed_assets > 0 && (
-                <span className="text-yellow-600 dark:text-yellow-400">~{summary.changed_assets} chg</span>
+              {changedAssets > 0 && (
+                <span className="text-yellow-600 dark:text-yellow-400">~{changedAssets} chg</span>
               )}
             </div>
           ) : (
@@ -198,7 +226,92 @@ function ScanRow({
       {canExpand && isExpanded && (
         <tr className="bg-zinc-50/60 dark:bg-zinc-950/40">
           <td colSpan={9} className="px-4 py-3">
-            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3">
+            <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 space-y-3">
+              {!isViewer && (
+                <div className="flex flex-wrap gap-2">
+                  {(scan.status === 'running' || scan.status === 'pending') && (
+                    <>
+                      {scan.status === 'running' && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={isControlling}
+                            onClick={() => onControl({ id: scan.id, action: 'cancel', mode: 'discard' })}
+                            className="px-3 py-1.5 rounded-lg text-xs border border-red-200 text-red-600 dark:border-red-900 dark:text-red-300 disabled:opacity-50"
+                          >
+                            Stop scan
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isControlling}
+                            onClick={() => onControl({ id: scan.id, action: 'cancel', mode: 'preserve_discovery' })}
+                            className="px-3 py-1.5 rounded-lg text-xs border border-amber-200 text-amber-700 dark:border-amber-900 dark:text-amber-300 disabled:opacity-50"
+                          >
+                            Stop and keep discovered hosts
+                          </button>
+                          {pauseOptions.map((minutes) => (
+                            <button
+                              key={`${scan.id}:${minutes}`}
+                              type="button"
+                              disabled={isControlling}
+                              onClick={() => onControl({ id: scan.id, action: 'pause', resume_in_minutes: minutes })}
+                              className="px-3 py-1.5 rounded-lg text-xs border border-sky-200 text-sky-700 dark:border-sky-900 dark:text-sky-300 disabled:opacity-50"
+                            >
+                              Pause {formatPauseLabel(minutes)}
+                            </button>
+                          ))}
+                        </>
+                      )}
+                      {scan.status === 'pending' && (
+                        <>
+                          <button
+                            type="button"
+                            disabled={isControlling}
+                            onClick={() => onQueueAction({ id: scan.id, action: 'move_up' })}
+                            className="px-3 py-1.5 rounded-lg text-xs border border-zinc-200 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300 disabled:opacity-50"
+                          >
+                            Move up
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isControlling}
+                            onClick={() => onQueueAction({ id: scan.id, action: 'move_down' })}
+                            className="px-3 py-1.5 rounded-lg text-xs border border-zinc-200 text-zinc-700 dark:border-zinc-700 dark:text-zinc-300 disabled:opacity-50"
+                          >
+                            Move down
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isControlling}
+                            onClick={() => onQueueAction({ id: scan.id, action: 'move_to_front' })}
+                            className="px-3 py-1.5 rounded-lg text-xs border border-sky-200 text-sky-700 dark:border-sky-900 dark:text-sky-300 disabled:opacity-50"
+                          >
+                            Move to front
+                          </button>
+                          <button
+                            type="button"
+                            disabled={isControlling}
+                            onClick={() => onQueueAction({ id: scan.id, action: 'start_now' })}
+                            className="px-3 py-1.5 rounded-lg text-xs border border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300 disabled:opacity-50"
+                          >
+                            Start now
+                          </button>
+                        </>
+                      )}
+                    </>
+                  )}
+                  {scan.status === 'paused' && (
+                    <button
+                      type="button"
+                      disabled={isControlling}
+                      onClick={() => onControl({ id: scan.id, action: 'resume' })}
+                      className="px-3 py-1.5 rounded-lg text-xs border border-emerald-200 text-emerald-700 dark:border-emerald-900 dark:text-emerald-300 disabled:opacity-50"
+                    >
+                      Resume now
+                    </button>
+                  )}
+                </div>
+              )}
               <p className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">Live Scan Detail</p>
               <div className="rounded-md bg-zinc-950 text-zinc-100 p-3 font-mono text-xs leading-5 overflow-x-auto">
                 {details.map((line, index) => (
@@ -225,9 +338,13 @@ function buildScanDetails(scan: ScanJob): string[] {
   const changedAssets = summary.changed_assets ?? 0
   const offlineAssets = summary.offline_assets ?? 0
   const errors = Array.isArray(summary.errors) ? summary.errors.length : 0
+  const resumeAfter = typeof scan.resume_after === 'string' ? scan.resume_after : '—'
+  const preservedHosts = summary.preserved_hosts ?? 0
+  const queuePosition = typeof scan.queue_position === 'number' ? scan.queue_position : '—'
 
   return [
     `[job] ${shortId(scan.id)} ${scan.status}`,
+    `[queue] ${queuePosition}`,
     `[targets] ${Array.isArray(scan.targets) ? scan.targets.join(', ') : scan.targets ?? '—'}`,
     `[profile] ${scan.scan_type}`,
     `[stage] ${String(stage)}`,
@@ -235,9 +352,16 @@ function buildScanDetails(scan: ScanJob): string[] {
     `[message] ${message}`,
     `[hosts] found=${hostsFound} investigated=${hostsDone}`,
     `[current] ${currentHost}`,
+    `[resume_after] ${resumeAfter}`,
+    `[preserved_hosts] ${preservedHosts}`,
     `[changes] new=${newAssets} changed=${changedAssets} offline=${offlineAssets}`,
     `[errors] ${errors}`,
   ]
+}
+
+function formatPauseLabel(minutes: number): string {
+  if (minutes < 60) return `${minutes}m`
+  return `${minutes / 60}h`
 }
 
 function ProfileBadge({ profile }: { profile: string }) {
@@ -258,6 +382,8 @@ function ScanStatusBadge({ status }: { status: string }) {
   const map: Record<string, { cls: string; dot?: string; label: string }> = {
     pending:  { cls: 'bg-zinc-500/10 text-zinc-500', dot: 'bg-zinc-400', label: 'Pending' },
     running:  { cls: 'bg-sky-500/10 text-sky-600 dark:text-sky-400', dot: 'bg-sky-500 animate-pulse', label: 'Running' },
+    paused:   { cls: 'bg-amber-500/10 text-amber-600 dark:text-amber-400', dot: 'bg-amber-500', label: 'Paused' },
+    cancelled:{ cls: 'bg-rose-500/10 text-rose-600 dark:text-rose-400', dot: 'bg-rose-500', label: 'Cancelled' },
     done:     { cls: 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400', dot: 'bg-emerald-500', label: 'Done' },
     failed:   { cls: 'bg-red-500/10 text-red-600 dark:text-red-400', dot: 'bg-red-500', label: 'Failed' },
   }
