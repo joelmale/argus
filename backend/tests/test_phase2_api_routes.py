@@ -64,6 +64,34 @@ async def test_auth_routes_support_login_identity_and_admin_only_actions(api_cli
 
 
 @pytest.mark.asyncio
+async def test_initial_admin_setup_creates_first_user_and_then_locks(api_client):
+    status_before = await api_client.get("/api/v1/auth/setup/status")
+    assert status_before.status_code == 200
+    assert status_before.json()["needs_setup"] is True
+
+    created = await api_client.post(
+        "/api/v1/auth/setup/initialize",
+        json={"username": "owner", "password": "supersecure123", "email": "owner@example.com"},
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["user"]["username"] == "owner"
+    assert body["user"]["role"] == "admin"
+    assert body["access_token"]
+
+    status_after = await api_client.get("/api/v1/auth/setup/status")
+    assert status_after.status_code == 200
+    assert status_after.json()["needs_setup"] is False
+    assert status_after.json()["user_count"] == 1
+
+    locked = await api_client.post(
+        "/api/v1/auth/setup/initialize",
+        json={"username": "owner2", "password": "supersecure123"},
+    )
+    assert locked.status_code == 409
+
+
+@pytest.mark.asyncio
 async def test_scanner_config_routes_persist_runtime_settings(api_client, admin_user):
     headers = {"Authorization": f"Bearer {admin_user['token']}"}
 
@@ -139,6 +167,84 @@ async def test_scanner_config_routes_persist_runtime_settings(api_client, admin_
     fetched = await api_client.get("/api/v1/system/scanner-config", headers=headers)
     assert fetched.status_code == 200
     assert fetched.json()["passive_arp_interface"] == "en0"
+
+
+@pytest.mark.asyncio
+async def test_running_scan_cancel_discard_hard_revokes_and_releases_queue(api_client, admin_user, monkeypatch):
+    queued_job_id: str | None = None
+    published: list[dict] = []
+    delayed: list[str] = []
+
+    async with AsyncSessionLocal() as db:
+        running = ScanJob(
+            targets="192.168.96.0/20",
+            scan_type="balanced",
+            triggered_by="manual",
+            status="running",
+            started_at=datetime.now(timezone.utc),
+            result_summary={"stage": "discovery", "progress": 0.05},
+        )
+        queued = ScanJob(
+            targets="192.168.100.0/23",
+            scan_type="balanced",
+            triggered_by="manual",
+            status="pending",
+            queue_position=1,
+        )
+        db.add_all([running, queued])
+        await db.commit()
+        await db.refresh(running)
+        await db.refresh(queued)
+        running_id = str(running.id)
+        queued_job_id = str(queued.id)
+
+    monkeypatch.setattr("app.api.routes.scans._get_active_scan_task_ids", lambda job_id: ["task-1"] if job_id == running_id else [])
+    monkeypatch.setattr("app.api.routes.scans.revoke_active_scan_job", lambda job_id: job_id == running_id)
+
+    async def fake_publish_event(payload: dict):
+        published.append(payload)
+
+    class DelaySpy:
+        def delay(self, job_id: str):
+            delayed.append(job_id)
+
+    monkeypatch.setattr("app.api.routes.scans._publish_event", fake_publish_event)
+    monkeypatch.setattr("app.api.routes.scans.run_scan_job", DelaySpy())
+
+    response = await api_client.post(
+        f"/api/v1/scans/{running_id}/control",
+        headers={"Authorization": f"Bearer {admin_user['token']}"},
+        json={"action": "cancel", "mode": "discard"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["status"] == "cancelled"
+
+    async with AsyncSessionLocal() as db:
+        refreshed = await db.get(ScanJob, UUID(running_id))
+
+    assert refreshed is not None
+    assert refreshed.status == "cancelled"
+    assert refreshed.control_action is None
+    assert refreshed.control_mode is None
+    assert refreshed.finished_at is not None
+    assert refreshed.result_summary["message"] == "Operator terminated scan"
+    assert delayed == [queued_job_id]
+    assert published and published[0]["event"] == "scan_complete"
+
+
+@pytest.mark.asyncio
+async def test_trigger_scan_rejects_unroutable_targets(api_client, admin_user, monkeypatch):
+    monkeypatch.setattr("app.api.routes.scans.validate_scan_targets_routable", lambda targets: f"Unroutable: {targets}")
+
+    response = await api_client.post(
+        "/api/v1/scans/trigger",
+        headers={"Authorization": f"Bearer {admin_user['token']}"},
+        json={"targets": "192.168.96.0/20", "scan_type": "balanced"},
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Unroutable: 192.168.96.0/20"
 
 
 @pytest.mark.asyncio

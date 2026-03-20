@@ -15,8 +15,22 @@ from app.db.upsert import upsert_scan_result
 from app.fingerprinting.passive import record_passive_observation
 from app.ingestion.logs import parse_dns_dhcp_logs
 from app.notifications import notify_new_device
-from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets
-from app.workers.tasks import run_scan_job, _get_next_queued_job, _has_active_scan, _next_queue_position, _normalize_pending_queue
+from app.scanner.config import (
+    get_or_create_scanner_config,
+    materialize_scan_targets,
+    resolve_scan_targets,
+    validate_scan_targets_routable,
+)
+from app.workers.tasks import (
+    _get_active_scan_task_ids,
+    _get_next_queued_job,
+    _has_active_scan,
+    _next_queue_position,
+    _normalize_pending_queue,
+    _publish_event,
+    revoke_active_scan_job,
+    run_scan_job,
+)
 
 router = APIRouter()
 
@@ -68,10 +82,14 @@ async def trigger_scan(
     config = await get_or_create_scanner_config(db)
     try:
         targets = resolve_scan_targets(config, payload.targets)
+        materialized_targets = materialize_scan_targets(targets)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    route_error = validate_scan_targets_routable(materialized_targets)
+    if route_error:
+        raise HTTPException(status_code=400, detail=route_error)
     job = ScanJob(
-        targets=targets,
+        targets=materialized_targets,
         scan_type=payload.scan_type,
         triggered_by="manual",
         queue_position=await _next_queue_position(db),
@@ -200,9 +218,33 @@ async def control_scan(
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cancel mode must be discard or preserve_discovery")
     job.control_action = "cancel"
     job.control_mode = mode
+    terminated = False
+    orphaned_cancel = False
+    finished_at = datetime.now(timezone.utc)
+    if job.status == "running" and mode == "discard":
+        active_task_ids = _get_active_scan_task_ids(str(job.id))
+        terminated = bool(active_task_ids)
+        if terminated:
+            revoke_active_scan_job(str(job.id))
+        else:
+            orphaned_cancel = True
+
+        if terminated or orphaned_cancel:
+            job.status = "cancelled"
+            job.finished_at = finished_at
+            job.resume_after = None
+            job.result_summary = {
+                **(job.result_summary or {}),
+                "stage": "cancelled",
+                "message": "Operator terminated scan" if terminated else "Operator cancelled stale running scan",
+                "preserved_hosts": 0,
+            }
+            job.control_action = None
+            job.control_mode = None
+
     if job.status == "pending":
         job.status = "cancelled"
-        job.finished_at = datetime.now(timezone.utc)
+        job.finished_at = finished_at
         job.result_summary = {
             **(job.result_summary or {}),
             "stage": "cancelled",
@@ -212,6 +254,22 @@ async def control_scan(
         job.control_action = None
         job.control_mode = None
     await db.commit()
+
+    if terminated or orphaned_cancel:
+        await _publish_event({
+            "event": "scan_complete",
+            "data": {
+                "job_id": str(job.id),
+                "status": "cancelled",
+                "message": "Operator terminated scan" if terminated else "Operator cancelled stale running scan",
+                "preserved_hosts": 0,
+            },
+        })
+        if not await _has_active_scan(db):
+            next_job = await _get_next_queued_job(db)
+            if next_job is not None:
+                run_scan_job.delay(str(next_job.id))
+
     return {"status": job.status, "message": "Cancel requested", "mode": mode}
 
 

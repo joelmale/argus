@@ -12,6 +12,7 @@ from app.scanner.config import (
     has_meaningful_scan_evidence,
     resolve_scan_targets,
     should_enqueue_scheduled_scan,
+    validate_scan_targets_routable,
 )
 from app.scanner.models import DiscoveredHost, HostScanResult, PortResult
 
@@ -66,3 +67,17 @@ def test_has_meaningful_scan_evidence_rejects_os_fingerprint_only_noise():
     )
 
     assert has_meaningful_scan_evidence(weak) is False
+
+
+def test_validate_scan_targets_routable_flags_unreachable_subnet(monkeypatch):
+    import ipaddress
+
+    monkeypatch.setattr(
+        "app.scanner.config._iter_ipv4_route_networks",
+        lambda: [ipaddress.IPv4Network("192.168.100.0/23")],
+    )
+
+    assert validate_scan_targets_routable("192.168.100.0/23") is None
+    error = validate_scan_targets_routable("192.168.96.0/20")
+    assert error is not None
+    assert "192.168.96.0/20" in error

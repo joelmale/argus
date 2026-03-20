@@ -21,6 +21,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.core.config import settings
+from app.db.models import ScanJob
 
 log = logging.getLogger(__name__)
 _passive_arp_thread: threading.Thread | None = None
@@ -50,6 +51,52 @@ celery_app.conf.update(
         }
     },
 )
+
+
+def _get_active_scan_task_ids(job_id: str) -> list[str]:
+    """Return active Celery task ids currently executing the given scan job."""
+    try:
+        inspector = celery_app.control.inspect()
+        active = inspector.active() or {}
+    except Exception as exc:
+        log.warning("Unable to inspect active Celery tasks for scan %s: %s", job_id, exc)
+        return []
+
+    task_ids: list[str] = []
+    for worker_tasks in active.values():
+        for task in worker_tasks or []:
+            if task.get("name") != "app.workers.tasks.run_scan_job":
+                continue
+            args = task.get("args", [])
+            kwargs = task.get("kwargs", {})
+            task_job_id = None
+            if isinstance(args, (list, tuple)) and args:
+                task_job_id = str(args[0])
+            elif isinstance(kwargs, dict) and "job_id" in kwargs:
+                task_job_id = str(kwargs["job_id"])
+            elif isinstance(args, str) and job_id in args:
+                task_job_id = job_id
+            if task_job_id != job_id:
+                continue
+
+            task_id = task.get("id")
+            if not task_id:
+                continue
+            task_ids.append(task_id)
+
+    return task_ids
+
+
+def revoke_active_scan_job(job_id: str) -> bool:
+    """Terminate active Celery tasks currently executing the given scan job."""
+    task_ids = _get_active_scan_task_ids(job_id)
+    revoked = False
+    for task_id in task_ids:
+        celery_app.control.revoke(task_id, terminate=True, signal="SIGTERM")
+        revoked = True
+        log.info("Revoked active Celery task %s for scan job %s", task_id, job_id)
+
+    return revoked
 
 
 @celery_app.task(name="app.workers.tasks.run_scan_job", bind=True, max_retries=2)
@@ -87,8 +134,8 @@ async def _run_job_async(job_id: str) -> None:
     """Async implementation of the scan job — runs the full pipeline."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.db.models import ScanJob
-    from app.scanner.config import get_or_create_scanner_config, materialize_scan_targets
-    from app.scanner.models import ScanProfile
+    from app.scanner.config import get_or_create_scanner_config, materialize_scan_targets, validate_scan_targets_routable
+    from app.scanner.models import ScanProfile, ScanSummary
     from app.scanner.pipeline import ScanControlDecision, ScanControlInterrupt, _persist_results, run_scan
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
@@ -109,6 +156,29 @@ async def _run_job_async(job_id: str) -> None:
 
         # Mark as running
         job.targets = materialize_scan_targets(job.targets)
+        route_error = validate_scan_targets_routable(job.targets)
+        if route_error:
+            job.status = "failed"
+            job.finished_at = datetime.now(timezone.utc)
+            job.control_action = None
+            job.control_mode = None
+            job.resume_after = None
+            job.result_summary = {
+                "stage": "failed",
+                "message": route_error,
+                "error": route_error,
+            }
+            await db.commit()
+            await _publish_event({
+                "event": "scan_complete",
+                "data": {
+                    "job_id": job_id,
+                    "status": "failed",
+                    "error": route_error,
+                },
+            })
+            await _dispatch_next_scan_if_idle(db)
+            return
         job.status = "running"
         job.queue_position = None
         job.control_action = None
@@ -151,6 +221,7 @@ async def _run_job_async(job_id: str) -> None:
                 profile = ScanProfile(job.scan_type)
             except ValueError:
                 profile = ScanProfile.BALANCED
+            summary = ScanSummary(job_id=job_id, targets=job.targets, profile=profile)
             enable_ai = settings.AI_ENABLE_PER_SCAN
 
             summary = await run_scan(
@@ -172,6 +243,7 @@ async def _run_job_async(job_id: str) -> None:
             log.info("Scan job %s completed: %s", job_id, summary.model_dump(mode="json"))
 
         except ScanControlInterrupt as exc:
+            summary = exc.summary or summary
             if exc.partial_results:
                 await _persist_results(
                     db,
@@ -183,7 +255,7 @@ async def _run_job_async(job_id: str) -> None:
                     mark_missing_offline=exc.mark_missing_offline,
                     allow_discovery_only=True,
                 )
-            summary_payload = summary.model_dump(mode="json") if "summary" in locals() else {}
+            summary_payload = summary.model_dump(mode="json")
             if exc.status == "paused" and job.control_mode == "requeue":
                 job.status = "pending"
                 job.started_at = None

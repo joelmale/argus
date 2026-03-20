@@ -23,7 +23,7 @@
     "test:backend:cov:local:enforced": "cd backend && PYTHONPATH=. pytest tests --cov=app --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml --cov-fail-under=55 -q",
     "type-check": "cd frontend && npm run type-check",
     "dev": "printf 'Argus local services:\\n- Frontend: http://localhost:3000\\n- API: http://localhost:8000\\n- API Docs: http://localhost:8000/docs\\n\\n' && docker compose -f docker-compose.yml -f docker-compose.dev.yml up",
-    "dev:up": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d && printf '\\nArgus local services:\\n- Frontend: http://localhost:3000\\n- API: http://localhost:8000\\n- API Docs: http://localhost:8000/docs\\n'",
+    "dev:up": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate db redis && docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate backend && docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate frontend scanner && printf '\\nArgus local services:\\n- Frontend: http://localhost:3000\\n- API: http://localhost:8000\\n- API Docs: http://localhost:8000/docs\\n'",
     "dev:build": "docker compose -f docker-compose.yml -f docker-compose.dev.yml build",
     "dev:rebuild": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build && printf '\\nArgus local services:\\n- Frontend: http://localhost:3000\\n- API: http://localhost:8000\\n- API Docs: http://localhost:8000/docs\\n'",
     "dev:down": "docker compose -f docker-compose.yml -f docker-compose.dev.yml down",

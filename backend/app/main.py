@@ -10,7 +10,7 @@ from fastapi.responses import PlainTextResponse
 from sqlalchemy import func, select
 
 from app.api.routes import assets, auth, findings, scans, system, topology, websocket
-from app.bootstrap import ensure_admin_user, ensure_system_defaults
+from app.bootstrap import ensure_system_defaults
 from app.core.config import settings
 from app.db.models import Asset, ScanJob
 from app.db.session import AsyncSessionLocal
@@ -19,7 +19,6 @@ from app.db.session import AsyncSessionLocal
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Startup / shutdown lifecycle."""
-    await ensure_admin_user()
     await ensure_system_defaults()
     yield
 

@@ -69,6 +69,34 @@ export function useLogin() {
   })
 }
 
+export function useSetupStatus() {
+  return useQuery<{ needs_setup: boolean; user_count: number }>({
+    queryKey: ['auth', 'setup-status'],
+    queryFn: async () => {
+      const { data } = await authApi.getSetupStatus()
+      return data
+    },
+    retry: false,
+    staleTime: 5_000,
+  })
+}
+
+export function useInitializeFirstAdmin() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: { username: string; password: string; email?: string }) => {
+      const { data } = await authApi.initializeFirstAdmin(payload)
+      return data as { access_token: string; token_type: string; user: CurrentUser }
+    },
+    onSuccess: async (data) => {
+      setAuthToken(data.access_token)
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'setup-status'] })
+    },
+  })
+}
+
 export function useLogout() {
   const queryClient = useQueryClient()
 

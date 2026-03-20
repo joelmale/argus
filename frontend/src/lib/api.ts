@@ -22,6 +22,9 @@ export const authApi = {
       new URLSearchParams({ username, password }),
       { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
     ),
+  getSetupStatus: () => api.get("/api/v1/auth/setup/status"),
+  initializeFirstAdmin: (payload: { username: string; password: string; email?: string }) =>
+    api.post("/api/v1/auth/setup/initialize", payload),
   me: () => api.get("/api/v1/auth/me"),
   listUsers: () => api.get("/api/v1/auth/users"),
   createUser: (payload: { username: string; password: string; email?: string; role: "admin" | "viewer" }) =>

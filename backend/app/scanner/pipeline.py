@@ -58,6 +58,7 @@ class ScanControlInterrupt(Exception):
         *,
         status: str,
         message: str,
+        summary: ScanSummary | None = None,
         partial_results: list[HostScanResult] | None = None,
         scanned_ips: set[str] | None = None,
         resume_after: str | None = None,
@@ -66,6 +67,7 @@ class ScanControlInterrupt(Exception):
         super().__init__(message)
         self.status = status
         self.message = message
+        self.summary = summary
         self.partial_results = partial_results or []
         self.scanned_ips = scanned_ips or set()
         self.resume_after = resume_after
@@ -155,6 +157,15 @@ async def run_scan(
         },
     })
 
+    await _check_control(
+        control_fn,
+        stage="pre_port_scan",
+        summary=summary,
+        hosts=hosts,
+        completed_results=[],
+        total_hosts=len(hosts),
+    )
+
     from app.scanner.stages import portscan
     port_results = await portscan.scan_hosts(hosts, profile)
 
@@ -163,6 +174,15 @@ async def run_scan(
         ip: (ports, os_fp, nmap_hostname, nmap_vendor)
         for ports, os_fp, ip, nmap_hostname, nmap_vendor in port_results
     }
+
+    await _check_control(
+        control_fn,
+        stage="post_port_scan",
+        summary=summary,
+        hosts=hosts,
+        completed_results=[],
+        total_hosts=len(hosts),
+    )
 
     # ── Stages 3–6: Per-host investigation (concurrent) ──────────────────────
     semaphore = asyncio.Semaphore(max(1, concurrent_hosts))
@@ -235,6 +255,14 @@ async def run_scan(
 
     # ── Stage 6: Persist all results ─────────────────────────────────────────
     if db_session is not None:
+        await _check_control(
+            control_fn,
+            stage="pre_persist",
+            summary=summary,
+            hosts=hosts,
+            completed_results=[r for r in results if r],
+            total_hosts=total_hosts,
+        )
         await _broadcast(broadcast_fn, {
             "event": "scan_progress",
             "data": {
@@ -302,6 +330,7 @@ async def _check_control(
     raise ScanControlInterrupt(
         status="paused" if decision.action == "pause" else "cancelled",
         message=message,
+        summary=summary.model_copy(deep=True),
         partial_results=partial_results if decision.mode == "preserve_discovery" else completed_results,
         scanned_ips=scanned_ips if decision.mode == "preserve_discovery" else {result.host.ip_address for result in completed_results},
         resume_after=decision.resume_after,

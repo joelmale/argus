@@ -47,6 +47,17 @@ class AlertRuleUpdateRequest(BaseModel):
     notify_webhook: bool | None = None
 
 
+class SetupStatusResponse(BaseModel):
+    needs_setup: bool
+    user_count: int
+
+
+class InitialAdminSetupRequest(BaseModel):
+    username: str
+    password: str
+    email: str | None = None
+
+
 def _serialize_user(user: User) -> dict:
     return {
         "id": str(user.id),
@@ -107,6 +118,52 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = 
     await db.commit()
     token = create_access_token(subject=str(user.id))
     return {"access_token": token, "token_type": "bearer"}
+
+
+@router.get("/setup/status", response_model=SetupStatusResponse)
+async def setup_status(db: AsyncSession = Depends(get_db)):
+    user_count = await db.scalar(select(func.count()).select_from(User)) or 0
+    return SetupStatusResponse(needs_setup=user_count == 0, user_count=user_count)
+
+
+@router.post("/setup/initialize", status_code=status.HTTP_201_CREATED)
+async def initialize_first_admin(
+    payload: InitialAdminSetupRequest,
+    db: AsyncSession = Depends(get_db),
+):
+    user_count = await db.scalar(select(func.count()).select_from(User)) or 0
+    if user_count > 0:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Initial setup is already complete")
+
+    username = payload.username.strip()
+    password = payload.password
+    email = payload.email.strip() if payload.email else None
+
+    if len(username) < 3:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username must be at least 3 characters")
+    if len(password) < 10:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 10 characters")
+
+    user = User(
+        username=username,
+        email=email or None,
+        hashed_password=hash_password(password),
+        role="admin",
+        is_active=True,
+    )
+    db.add(user)
+    await db.flush()
+    await log_audit_event(
+        db,
+        action="auth.initial_admin_created",
+        target_type="user",
+        target_id=str(user.id),
+        details={"username": user.username, "role": user.role},
+    )
+    await db.commit()
+    await db.refresh(user)
+    token = create_access_token(subject=str(user.id))
+    return {"user": _serialize_user(user), "access_token": token, "token_type": "bearer"}
 
 
 @router.get("/me")

@@ -115,7 +115,7 @@ function ScanRow({
     : null
 
   const targets = Array.isArray(scan.targets) ? scan.targets.join(', ') : scan.targets ?? '—'
-  const canExpand = scan.status === 'pending' || scan.status === 'running' || scan.status === 'paused'
+  const canExpand = scan.status === 'pending' || scan.status === 'running' || scan.status === 'paused' || scan.status === 'failed' || scan.status === 'cancelled' || scan.status === 'done'
   const details = buildScanDetails(scan)
   const pauseOptions = [15, 30, 60, 240, 720]
   const hostsFound = typeof summary.hosts_found === 'number' || typeof summary.hosts_found === 'string' ? summary.hosts_found : '—'
@@ -156,10 +156,10 @@ function ScanRow({
         <td className="px-4 py-3">
           <div className="space-y-1">
             <ScanStatusBadge status={scan.status} />
-            {(scan.status === 'running' || scan.status === 'paused' || scan.status === 'cancelled' || scan.status === 'pending') && typeof summary.stage === 'string' && (
+            {(scan.status === 'running' || scan.status === 'paused' || scan.status === 'cancelled' || scan.status === 'pending' || scan.status === 'failed' || scan.status === 'done') && typeof summary.stage === 'string' && (
               <p className="text-[11px] text-zinc-500 capitalize">{summary.stage.replace('_', ' ')}</p>
             )}
-            {(scan.status === 'running' || scan.status === 'paused' || scan.status === 'cancelled' || scan.status === 'pending') && typeof summary.message === 'string' && (
+            {(scan.status === 'running' || scan.status === 'paused' || scan.status === 'cancelled' || scan.status === 'pending' || scan.status === 'failed' || scan.status === 'done') && typeof summary.message === 'string' && (
               <p className="text-[11px] text-zinc-400 max-w-[220px] truncate" title={summary.message}>
                 {summary.message}
               </p>

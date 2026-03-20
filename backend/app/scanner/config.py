@@ -134,6 +134,82 @@ def detect_local_ipv4_cidr() -> str | None:
     return None
 
 
+def _iter_ipv4_route_networks() -> list[ipaddress.IPv4Network]:
+    routes: list[ipaddress.IPv4Network] = []
+    try:
+        with open("/proc/net/route", "r", encoding="utf-8") as handle:
+            next(handle, None)
+            for line in handle:
+                fields = line.strip().split()
+                if len(fields) < 8:
+                    continue
+                iface, destination_hex, _, flags_hex, _, _, _, mask_hex = fields[:8]
+                if iface.startswith(_IGNORED_INTERFACE_PREFIXES):
+                    continue
+                try:
+                    flags = int(flags_hex, 16)
+                except ValueError:
+                    continue
+                # RTF_UP
+                if not flags & 0x1:
+                    continue
+                try:
+                    destination = socket.inet_ntoa(struct.pack("<L", int(destination_hex, 16)))
+                    mask = socket.inet_ntoa(struct.pack("<L", int(mask_hex, 16)))
+                    network = ipaddress.IPv4Network(f"{destination}/{mask}", strict=False)
+                except (OSError, ValueError):
+                    continue
+                routes.append(network)
+    except OSError:
+        pass
+
+    return routes
+
+
+def validate_scan_targets_routable(targets: str) -> str | None:
+    """Return an actionable error when scan targets are not routable from this host."""
+    route_networks = _iter_ipv4_route_networks()
+    if not route_networks:
+        return None
+
+    unresolved: list[str] = []
+    for token in targets.replace(",", " ").split():
+        candidate = token.strip()
+        if not candidate:
+            continue
+        try:
+            target_network = ipaddress.ip_network(candidate, strict=False)
+        except ValueError:
+            unresolved.append(candidate)
+            continue
+
+        if any(
+            route.prefixlen == 0
+            or target_network.subnet_of(route)
+            for route in route_networks
+        ):
+            continue
+        unresolved.append(candidate)
+
+    if not unresolved:
+        return None
+
+    known_routes = ", ".join(str(route) for route in route_networks[:6])
+    suffix = " ..." if len(route_networks) > 6 else ""
+    invalid_targets = ", ".join(unresolved)
+    environment_hint = ""
+    if any(str(route) == "192.168.65.0/24" for route in route_networks):
+        environment_hint = (
+            " The scanner appears to be running inside Docker Desktop and only sees the Docker VM subnet. "
+            "Use a range reachable from the scanner host, or move the scanner onto a host/network with LAN access."
+        )
+    return (
+        f"Scan targets are not routable from the scanner host: {invalid_targets}. "
+        f"Known IPv4 routes: {known_routes}{suffix}. "
+        f"Update the scanner target range in Settings or fix scanner host networking.{environment_hint}"
+    )
+
+
 def _bootstrap_targets_from_env() -> tuple[str | None, bool]:
     configured = (settings.SCANNER_DEFAULT_TARGETS or "").strip()
     if configured and configured != DEFAULT_TARGET_PLACEHOLDER:

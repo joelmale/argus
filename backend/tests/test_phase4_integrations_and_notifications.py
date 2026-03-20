@@ -8,6 +8,7 @@ from app.db.models import AlertRule, Asset, AssetTag, PassiveObservation, Tplink
 from app.db.session import AsyncSessionLocal
 from app.modules.tplink_deco import (
     DecoClientRecord,
+    DecoDeviceRecord,
     sync_tplink_deco_module,
     test_tplink_deco_connection as run_tplink_deco_connection_test,
     update_tplink_deco_config,
@@ -89,6 +90,21 @@ async def test_tplink_connection_and_sync_update_inventory(monkeypatch):
 
         async def login(self):
             return {"result": {"stok": "stok"}}
+
+        async def fetch_deco_devices(self):
+            return [
+                DecoDeviceRecord(
+                    mac="AA:BB:CC:DD:EE:FF",
+                    ip="192.168.100.1",
+                    hostname="deco-office",
+                    nickname="Deco Office",
+                    model="Deco X55",
+                    role="ap",
+                    software_version="1.0.0",
+                    hardware_version="1.0",
+                    raw={"name": "Deco Office", "device_model": "Deco X55"},
+                )
+            ]
 
         async def fetch_connected_clients(self):
             return [

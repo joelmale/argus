@@ -4,11 +4,14 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.db.models import ScanJob
+from app.db.session import AsyncSessionLocal
 from app.scanner.models import AIAnalysis, DeviceClass, DiscoveredHost, OSFingerprint, PortResult, ProbeResult, ScanProfile
-from app.scanner.pipeline import _persist_results, run_scan
+from app.scanner.pipeline import ScanControlInterrupt, _persist_results, run_scan
 from app.scanner.stages.discovery import sweep
 from app.scanner.stages.fingerprint import classify, probe_priority
 from app.scanner.stages.portscan import build_escalated_args
+from app.workers.tasks import _run_job_async
 
 
 @pytest.mark.asyncio
@@ -222,3 +225,63 @@ async def test_persist_results_skips_weak_hosts_and_marks_offline(monkeypatch):
     assert topology_inference == ["192.168.96.21"]
     assert notifications[0][0]["ip"] == "192.168.96.21"
     assert notifications[1][0]["ip"] == "192.168.96.30"
+
+
+@pytest.mark.asyncio
+async def test_run_job_async_marks_cancelled_when_scan_interrupts(monkeypatch):
+    async with AsyncSessionLocal() as db:
+        job = ScanJob(
+            targets="192.168.96.0/24",
+            scan_type="balanced",
+            triggered_by="manual",
+            status="pending",
+            queue_position=1,
+        )
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
+        job_id = str(job.id)
+
+    async def fake_get_or_create_scanner_config(_db):
+        return SimpleNamespace(concurrent_hosts=2)
+
+    def fake_materialize_scan_targets(targets: str) -> str:
+        return targets
+
+    async def fake_persist(*args, **kwargs):
+        return None
+
+    async def fake_publish_event(_payload: dict):
+        return None
+
+    async def fake_dispatch_next_scan_if_idle(_db):
+        return None
+
+    monkeypatch.setattr("app.workers.tasks.get_or_create_scanner_config", fake_get_or_create_scanner_config, raising=False)
+    monkeypatch.setattr("app.scanner.config.get_or_create_scanner_config", fake_get_or_create_scanner_config)
+    monkeypatch.setattr("app.scanner.config.materialize_scan_targets", fake_materialize_scan_targets)
+
+    from app.scanner.models import ScanSummary
+
+    async def fake_run_scan_with_summary(**kwargs):
+        raise ScanControlInterrupt(
+            status="cancelled",
+            message="Operator cancelled scan",
+            summary=ScanSummary(job_id=kwargs["job_id"], targets=kwargs["targets"], profile=kwargs["profile"]),
+            partial_results=[],
+            scanned_ips=set(),
+        )
+
+    monkeypatch.setattr("app.scanner.pipeline.run_scan", fake_run_scan_with_summary)
+    monkeypatch.setattr("app.scanner.pipeline._persist_results", fake_persist)
+    monkeypatch.setattr("app.workers.tasks._publish_event", fake_publish_event)
+    monkeypatch.setattr("app.workers.tasks._dispatch_next_scan_if_idle", fake_dispatch_next_scan_if_idle)
+
+    await _run_job_async(job_id)
+
+    async with AsyncSessionLocal() as db:
+        refreshed = await db.get(ScanJob, job.id)
+
+    assert refreshed is not None
+    assert refreshed.status == "cancelled"
+    assert refreshed.result_summary["message"] == "Operator cancelled scan"
