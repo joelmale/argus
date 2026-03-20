@@ -1,0 +1,26 @@
+{
+  "name": "argus-docs",
+  "private": true,
+  "version": "0.1.0",
+  "scripts": {
+    "start": "docusaurus start --host 0.0.0.0 --port 3001",
+    "build": "docusaurus build",
+    "serve": "docusaurus serve --host 0.0.0.0 --port 3001",
+    "clear": "docusaurus clear",
+    "swizzle": "docusaurus swizzle",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@docusaurus/core": "^3.7.0",
+    "@docusaurus/preset-classic": "^3.7.0",
+    "clsx": "^2.1.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.8.2"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

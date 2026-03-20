@@ -4,6 +4,10 @@
   "scripts": {
     "build": "npm run build:frontend",
     "build:frontend": "cd frontend && npm run build",
+    "docs:install": "cd website && npm install",
+    "docs:start": "cd website && npm run start",
+    "docs:build": "cd website && npm run build",
+    "docs:serve": "cd website && npm run serve",
     "lint": "npm run lint:backend && npm run lint:frontend",
     "lint:backend": "docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --no-recreate backend >/dev/null && docker compose -f docker-compose.yml -f docker-compose.dev.yml exec -T backend sh -lc 'cd /app && ruff check .'",
     "lint:backend:local": "PYTHONPATH=backend ruff check backend/",

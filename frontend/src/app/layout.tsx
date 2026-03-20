@@ -5,7 +5,14 @@ import './globals.css'
 export const metadata: Metadata = {
   title: 'Argus — Network Asset Intelligence',
   description: 'Network asset discovery, inventory, and topology mapping for home labs',
-  icons: { icon: '/favicon.ico' },
+  icons: {
+    icon: [
+      { url: '/icon.png', type: 'image/png' },
+    ],
+    apple: [
+      { url: '/icon.png', type: 'image/png' },
+    ],
+  },
 }
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
