@@ -1,36 +1,56 @@
-# 🦅 Argus
+# Argus
 
-> **Network asset discovery, inventory, and topology mapping for home labs.**
-> Enterprise-grade visibility. Zero license cost. Runs on Docker.
+Network discovery, inventory, fingerprinting, topology mapping, and homelab operations visibility.
 
 [![CI](https://github.com/joelmale/argus/actions/workflows/ci.yml/badge.svg)](https://github.com/joelmale/argus/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
----
+Argus is a self-hosted network inventory platform for home labs and small environments. It actively scans your network, enriches devices with fingerprinting evidence, keeps an audit trail of changes, exposes a REST API and WebSocket stream, and provides a modern dashboard for assets, scans, findings, topology, backups, and settings.
 
-## Features
+## What Argus Does Today
 
-- **Automatic discovery** — nmap active scanning + passive ARP listening
-- **Asset inventory** — IP, MAC, hostname, OS, vendor, open ports, custom fields
-- **Live topology map** — interactive force-directed graph (Cytoscape.js)
-- **Change detection** — full audit trail of every asset change
-- **Real-time updates** — WebSocket push for new devices and scan progress
-- **REST API** — documented OpenAPI, every feature scriptable
-- **SNMP support** — poll managed switches and routers *(Phase 2)*
-- **Scheduled scans** — configurable interval via Celery Beat
-- **Single Docker Compose** — one command to run everything
+- Active discovery with `nmap`
+- Passive observations from ARP and imported DHCP/DNS logs
+- Asset inventory with ports, tags, notes, custom fields, history, findings, AI analysis, evidence, and autopsy traces
+- Evidence-driven fingerprinting with:
+  - MAC OUI/vendor data
+  - HTTP/TLS/SSH/SNMP hints
+  - passive observations
+  - instant-win Nmap fingerprints
+  - optional Ollama synthesis
+  - optional allowlisted internet lookup
+- Topology graph with Cytoscape.js
+- Scan scheduling and live scan progress over WebSocket
+- JWT auth with `admin` / `viewer` roles
+- Admin-managed API keys
+- Audit log and asset history
+- Findings ingestion and summary views
+- Config backup workflows for supported SSH-based devices
+- Inventory exports:
+  - CSV
+  - JSON
+  - Ansible inventory
+  - Terraform data
+  - HTML/JSON reports
+- Fingerprint dataset registry and refresh controls
+- TP-Link Deco local-portal module with:
+  - node and client sync
+  - log collection from the system-log feed
+  - parsed health/recommendation analysis
 
-## Prerequisites
+## Stack
 
-- Docker Desktop or Docker Engine with Compose
-- A machine where Docker can use host networking for the backend and scanner services
-- Permission to run containers with `NET_RAW` and `NET_ADMIN`
-- Node 20 for local frontend work (`.nvmrc`)
-- Python 3.12 for local backend work (`.python-version`)
+| Layer | Technology |
+|---|---|
+| Frontend | Next.js 16, React 19, TypeScript, Tailwind CSS |
+| Backend | FastAPI, SQLAlchemy async, Pydantic |
+| Database | PostgreSQL 16 |
+| Queue / Events | Redis, Celery, Redis pub/sub |
+| Discovery | nmap, scapy, pysnmp |
+| Topology UI | Cytoscape.js |
+| Runtime | Docker Compose |
 
 ## Quick Start
-
-For local development, use the setup script:
 
 ```bash
 git clone https://github.com/joelmale/argus.git
@@ -38,143 +58,366 @@ cd argus
 npm run setup
 ```
 
-This script now:
-- copies `.env.example` to `.env` if needed
-- builds the images with both `docker-compose.yml` and `docker-compose.dev.yml`
-- starts Postgres and Redis first
-- waits for both to become healthy
-- runs Alembic migrations automatically when the backend starts
-- starts the backend, scanner, and frontend in development mode
-
-Equivalent manual command:
-
-```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml build
-docker compose -f docker-compose.yml -f docker-compose.dev.yml up
-```
-
-Notes:
-- The first frontend startup may take a minute because the dev container installs dependencies into a named Docker volume.
-- Later restarts reuse that volume and are faster unless `frontend/package-lock.json` changes.
-- The backend development container includes test and lint tooling from `backend/requirements-dev.txt`; the production backend image does not.
-- Common local workflows are also available as root npm scripts.
-
 Then open:
-- **Frontend**: http://localhost:3000
-- **API**: http://localhost:8000
-- **API Docs**: http://localhost:8000/docs
 
-## Common Commands
+- Frontend: `http://localhost:3000`
+- API: `http://localhost:8000`
+- API docs: `http://localhost:8000/docs`
 
-Start the full dev stack:
+Default first-run credentials:
+
+- username: `admin`
+- password: `changeme`
+
+Change them after first login.
+
+## Local Development
+
+### Recommended
+
+Use the Docker-first workflow:
 
 ```bash
 npm run dev
 ```
 
-Start in the background:
+Background start:
 
 ```bash
 npm run dev:up
 ```
 
-Rebuild all dev images explicitly:
-
-```bash
-npm run dev:build
-```
-
-Rebuild and restart the dev stack:
-
-```bash
-npm run dev:rebuild
-```
-
-Stop the stack:
+Stop:
 
 ```bash
 npm run dev:down
 ```
 
-Rebuild only the frontend:
-
-```bash
-npm run rebuild:frontend
-```
-
-View logs:
+Logs:
 
 ```bash
 npm run dev:logs
 ```
 
-Run backend migrations manually:
+### Build / Rebuild
+
+Normal `dev` commands do not force a rebuild.
 
 ```bash
-npm run db:migrate
+npm run dev:build
+npm run dev:rebuild
 ```
 
-## Current Dev Notes
-
-- `docker-compose.yml` is the production-oriented baseline. `docker-compose.dev.yml` adds source mounts, frontend dev mode, and host-network access for the backend and scanner.
-- In development, the backend and scanner use host networking so the scanner can access the local network more directly.
-- The frontend runs in containerized dev mode with a persistent `node_modules` volume and reinstalls dependencies only when `frontend/package-lock.json` changes.
-- Docker is currently the canonical way to run the app locally.
-- `npm run dev` and `npm run dev:up` do not force image rebuilds anymore; use `npm run dev:build` or `npm run dev:rebuild` when you actually want fresh images.
-
-## Local Quality Checks
-
-If you want to run backend lint/tests outside Docker, create a Python 3.12 virtualenv and install:
-
-```bash
-pip install -r backend/requirements-dev.txt
-```
-
-Then the root npm scripts are:
+### Common Commands
 
 ```bash
 npm run lint
-npm run type-check
-npm run test
-npm run build
-```
-
-For Docker-first development, the backend npm scripts now use the dev backend container automatically:
-
-```bash
 npm run lint:backend
+npm run lint:frontend
+
+npm run test
 npm run test:backend
+npm run test:backend:cov
+npm run test:backend:cov:enforced
+
+npm run type-check
+npm run build
+npm run verify
+
 npm run db:migrate
+npm run dev:ps
 ```
 
-If you explicitly want host-local Python checks, use:
+### Host-Local Backend Checks
+
+If you want to run backend checks outside Docker:
 
 ```bash
+pip install -r backend/requirements-dev.txt
 npm run lint:backend:local
 npm run test:backend:local
+npm run test:backend:cov:local
 ```
 
-Inside the Docker dev backend container, test tooling is available directly:
+## Docker Architecture
+
+Base compose file:
+
+- `docker-compose.yml`
+  - production-oriented baseline
+  - Postgres, Redis, backend, scanner, frontend
+
+Dev override:
+
+- `docker-compose.dev.yml`
+  - source mounts
+  - frontend dev mode
+  - backend dev image with test/lint tooling
+  - scanner on host networking for local-network visibility
+
+Important behavior:
+
+- the dev backend includes `pytest`, `ruff`, and coverage tooling
+- the production backend image does not include test-only tooling
+- the scanner runs with `NET_RAW` / `NET_ADMIN`
+- in dev, the scanner uses host networking so active and passive discovery can see the real LAN
+
+## Configuration
+
+Bootstrap config comes from `.env`. Day-to-day scanner behavior is now managed primarily through the Settings UI.
+
+Start from:
 
 ```bash
-docker compose -f docker-compose.yml -f docker-compose.dev.yml exec backend pytest tests -q
-docker compose -f docker-compose.yml -f docker-compose.dev.yml exec backend ruff check .
+cp .env.example .env
 ```
 
-## Stack
+Important `.env` values:
 
-| Layer | Technology |
-|---|---|
-| Frontend | Next.js 16, React 19, TypeScript, Tailwind, Cytoscape.js |
-| Backend | Python, FastAPI, SQLAlchemy async |
-| Database | PostgreSQL 16 |
-| Queue | Celery + Redis |
-| Discovery | nmap, scapy, pysnmp |
-| Runtime | Docker + Compose |
+- app and auth
+  - `APP_SECRET_KEY`
+  - `ADMIN_USERNAME`
+  - `ADMIN_PASSWORD`
+- database and redis
+  - `DATABASE_URL`
+  - `REDIS_URL`
+- initial scanner defaults
+  - `SCANNER_DEFAULT_TARGETS`
+  - `SCANNER_DEFAULT_PROFILE`
+  - `SCANNER_INTERVAL_MINUTES`
+- AI
+  - `AI_BACKEND`
+  - `OLLAMA_BASE_URL`
+  - `OLLAMA_MODEL`
+  - `ANTHROPIC_API_KEY`
+- notifications
+  - `NOTIFY_WEBHOOK_URL`
+  - SMTP values
+
+### Settings UI
+
+The Settings screen is now grouped by function and includes live configuration for:
+
+- scanner configuration
+- passive ARP and SNMP settings
+- AI fingerprint synthesis and internet lookup controls
+- fingerprint dataset registry and updates
+- backup policy
+- users and API keys
+- audit log
+- TP-Link Deco module
+
+Notable scanner settings available in the UI:
+
+- default targets
+- auto-detect local subnet
+- default profile
+- interval
+- concurrent hosts
+- passive ARP enablement and interface
+- SNMP v2c / v3 settings
+- AI fingerprinting controls
+- internet lookup budget and allowlist
+
+## Core Product Areas
+
+### Assets
+
+The asset detail view includes:
+
+- overview
+- ports
+- findings
+- evidence
+- probe runs
+- passive timeline
+- AI analysis
+- fingerprint hypotheses
+- lookup provenance
+- lifecycle status
+- wireless associations
+- config backups
+- tags and metadata
+- discovery autopsy trace
+
+Manual actions on an asset include:
+
+- AI lookup
+- targeted port scan
+- metadata edits
+- backup actions
+
+### Scans
+
+Argus supports:
+
+- manual scan trigger
+- scheduled scans via Celery Beat
+- live progress updates
+- expanded active-scan detail view in the UI
+- overlap protection for scheduled scans
+
+### Fingerprinting Engine
+
+Argus now uses a dedicated fingerprinting/evidence model rather than a single guess path.
+
+Evidence sources include:
+
+- MAC vendor datasets
+- Nmap OS/service output
+- SSH/HTTP/TLS/SNMP probe data
+- passive observations
+- instant-win fingerprints for common homelab devices
+- optional Ollama synthesis
+- optional internet lookup
+
+Argus also tracks:
+
+- fingerprint hypotheses
+- internet lookup provenance
+- lifecycle records
+- asset autopsies
+
+### Findings and Risk
+
+Argus supports:
+
+- findings ingestion from external tools
+- finding summary dashboard
+- finding status updates
+- lifecycle/EOL records
+- local risk enrichment tied to fingerprinting and version data
+
+### Backups and Exports
+
+Supported capabilities include:
+
+- SSH-based config backup flows for supported platforms
+- backup target management
+- backup diffs
+- restore-assist guidance
+- scheduled backup policy
+- inventory exports and reports
+
+### TP-Link Deco Module
+
+The Deco module is optional and managed from Settings.
+
+Current capabilities:
+
+- local-portal login using the owner password
+- discovery of Deco nodes and connected clients
+- ingestion of Deco observations into assets and passive timeline
+- system-log retrieval from the live paged log feed
+- parsed recommendation engine for recurring mesh / roaming / steering issues
+- downloadable local log copy from the Argus UI
+
+## API Overview
+
+Base path: `/api/v1`
+
+Main route groups:
+
+- `/auth`
+  - login
+  - current user
+  - users
+  - API keys
+- `/assets`
+  - list/detail/update
+  - exports
+  - reports
+  - AI lookup
+  - port scan
+  - backups
+- `/scans`
+  - list
+  - trigger
+  - log ingestion
+- `/topology`
+  - graph
+  - manual links
+- `/findings`
+  - list
+  - summary
+  - ingest
+- `/system`
+  - scanner settings
+  - backup policy
+  - plugins
+  - integration events
+  - dataset registry
+  - TP-Link Deco module
+
+Real-time events:
+
+- WebSocket: `/ws/events`
+
+API auth options:
+
+- JWT bearer token
+- `X-API-Key`
+
+## Frontend Pages
+
+Current primary views:
+
+- `/dashboard`
+- `/assets`
+- `/assets/[id]`
+- `/topology`
+- `/scans`
+- `/findings`
+- `/settings`
+- `/login`
+
+## Test and Coverage Status
+
+Backend coverage is measured and enforced in CI.
+
+Current enforced floor:
+
+- backend coverage threshold: `55%`
+
+Useful commands:
+
+```bash
+npm run test:backend:cov
+npm run test:backend:cov:enforced
+```
+
+Current test strategy emphasizes:
+
+- API route regression tests
+- scan pipeline and fingerprinting paths
+- integrations and module adapters
+- persistence / serialization bugs found during real use
+
+## Project Structure
+
+High-signal directories:
+
+- `backend/app/api/`
+- `backend/app/scanner/`
+- `backend/app/fingerprinting/`
+- `backend/app/modules/`
+- `backend/app/db/`
+- `backend/alembic/`
+- `frontend/src/app/`
+- `frontend/src/components/`
+- `docs/`
 
 ## Documentation
 
-See [`docs/PLANNING.md`](docs/PLANNING.md) for the full architecture and roadmap.
+- Roadmap and architecture: [docs/PLANNING.md](/Users/JoelN/Coding/argus/docs/PLANNING.md)
+- Fingerprinting engine plan: [docs/FINGERPRINTING_ENGINE_PLAN.md](/Users/JoelN/Coding/argus/docs/FINGERPRINTING_ENGINE_PLAN.md)
+- Plugin packaging: [docs/plugins/README.md](/Users/JoelN/Coding/argus/docs/plugins/README.md)
+
+## Notes
+
+- The scanner can auto-detect the local subnet, but you should still confirm the effective targets in Settings before your first real scan.
+- Consumer mesh/AP gear varies a lot in what it exposes. SNMP-capable infrastructure gives better topology and wireless visibility than app-only consumer devices.
+- The Deco module currently treats the live paged system-log API as the authoritative source and builds its own exportable copy from that feed.
 
 ## License
 
