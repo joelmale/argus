@@ -49,7 +49,7 @@ export const authApi = {
   updateScannerConfig: (payload: Omit<ScannerConfig, "id" | "detected_targets" | "effective_targets" | "last_scheduled_scan_at" | "created_at" | "updated_at">) =>
     api.put("/api/v1/system/scanner-config", payload),
   getTplinkDecoModule: () => api.get("/api/v1/system/modules/tplink-deco"),
-  updateTplinkDecoModule: (payload: Omit<TplinkDecoConfig, "id" | "last_tested_at" | "last_sync_at" | "last_status" | "last_error" | "last_client_count" | "created_at" | "updated_at">) =>
+  updateTplinkDecoModule: (payload: Omit<TplinkDecoConfig, "id" | "effective_owner_username" | "last_tested_at" | "last_sync_at" | "last_status" | "last_error" | "last_client_count" | "created_at" | "updated_at">) =>
     api.put("/api/v1/system/modules/tplink-deco", payload),
   testTplinkDecoModule: () => api.post("/api/v1/system/modules/tplink-deco/test"),
   syncTplinkDecoModule: () => api.post("/api/v1/system/modules/tplink-deco/sync"),

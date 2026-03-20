@@ -1,6 +1,7 @@
 'use client'
 
 import { useState } from 'react'
+import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig } from 'lucide-react'
@@ -341,18 +342,84 @@ function TplinkDecoModuleCard({
   isSaving: boolean
   isTesting: boolean
   isSyncing: boolean
-  onSave: (payload: Omit<TplinkDecoConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>) => void
-  onTest: () => void
-  onSync: () => void
+  onSave: (payload: Omit<TplinkDecoConfig, 'id' | 'effective_owner_username' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>) => Promise<unknown>
+  onTest: () => Promise<unknown>
+  onSync: () => Promise<unknown>
 }) {
   const [enabled, setEnabled] = useState(moduleConfig?.enabled ?? false)
   const [baseUrl, setBaseUrl] = useState(moduleConfig?.base_url ?? 'http://tplinkdeco.net')
-  const [ownerUsername, setOwnerUsername] = useState(moduleConfig?.owner_username ?? '')
   const [ownerPassword, setOwnerPassword] = useState(moduleConfig?.owner_password ?? '')
   const [fetchConnectedClients, setFetchConnectedClients] = useState(moduleConfig?.fetch_connected_clients ?? true)
   const [fetchPortalLogs, setFetchPortalLogs] = useState(moduleConfig?.fetch_portal_logs ?? true)
   const [requestTimeoutSeconds, setRequestTimeoutSeconds] = useState(moduleConfig?.request_timeout_seconds ?? 10)
   const [verifyTls, setVerifyTls] = useState(moduleConfig?.verify_tls ?? false)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+
+  function buildPayload() {
+    return {
+      enabled,
+      base_url: baseUrl.trim() || 'http://tplinkdeco.net',
+      owner_username: null,
+      owner_password: ownerPassword.trim() || null,
+      fetch_connected_clients: fetchConnectedClients,
+      fetch_portal_logs: fetchPortalLogs,
+      request_timeout_seconds: requestTimeoutSeconds,
+      verify_tls: verifyTls,
+    }
+  }
+
+  function describeActionError(error: unknown) {
+    if (!axios.isAxiosError(error)) {
+      return 'The Deco action failed before Argus returned a usable response.'
+    }
+    if (!error.response) {
+      return 'Argus could not reach the backend while running the Deco action.'
+    }
+    const detail = error.response.data && typeof error.response.data === 'object'
+      ? (error.response.data as { detail?: unknown }).detail
+      : undefined
+    if (typeof detail === 'string' && detail.trim()) {
+      return detail
+    }
+    return `The Deco action failed with HTTP ${error.response.status}.`
+  }
+
+  async function handleSave() {
+    setActionMessage(null)
+    setActionError(null)
+    await onSave(buildPayload())
+    setActionMessage('Deco module settings saved.')
+  }
+
+  async function handleTest() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      // Save the current form first so test runs against what the user can see,
+      // not an older persisted password or portal URL.
+      const saved = await onSave(buildPayload()) as { last_client_count?: number } | undefined
+      const result = await onTest() as { client_count?: number; device_count?: number; status?: string; auth_username?: string } | undefined
+      const clientCount = result?.client_count ?? saved?.last_client_count
+      const deviceCount = result?.device_count
+      const authUsername = result?.auth_username
+      setActionMessage(`Connection test ${result?.status ?? 'completed'}${typeof deviceCount === 'number' ? `, ${deviceCount} Deco nodes detected` : ''}${typeof clientCount === 'number' ? `${typeof deviceCount === 'number' ? ' and' : ','} ${clientCount} clients detected` : ''}${authUsername ? ` using hidden username ${authUsername}` : ''}.`)
+    } catch (error) {
+      setActionError(describeActionError(error))
+    }
+  }
+
+  async function handleSync() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      const result = await onSync() as { ingested_assets?: number; client_count?: number; device_count?: number } | undefined
+      setActionMessage(`Sync completed${typeof result?.ingested_assets === 'number' ? `, ${result.ingested_assets} assets updated` : ''}${typeof result?.device_count === 'number' ? ` from ${result.device_count} Deco nodes` : ''}${typeof result?.client_count === 'number' ? `${typeof result?.device_count === 'number' ? ' and' : ' from'} ${result.client_count} Deco clients` : ''}.`)
+    } catch (error) {
+      setActionError(describeActionError(error))
+    }
+  }
 
   return (
     <Card>
@@ -361,7 +428,7 @@ function TplinkDecoModuleCard({
       </CardHeader>
       <CardBody className="space-y-4">
         <p className="text-sm text-zinc-500">
-          Pull connected-client data and portal log exports directly from the local Deco portal using the owner password. Disable this module to unload it operationally.
+          Pull connected-client data and portal details directly from the local Deco portal using the owner password shown on the password-only local login screen. Deco still signs requests with a hidden <span className="font-mono">admin</span> username even though the UI does not display it.
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -388,16 +455,10 @@ function TplinkDecoModuleCard({
             className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
           />
           <input
-            value={ownerUsername}
-            onChange={(event) => setOwnerUsername(event.target.value)}
-            placeholder="Owner username (optional)"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
             type="password"
             value={ownerPassword}
             onChange={(event) => setOwnerPassword(event.target.value)}
-            placeholder="Owner password"
+            placeholder="Owner password from tplinkdeco.net"
             className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
           />
           <input
@@ -416,6 +477,7 @@ function TplinkDecoModuleCard({
           <p className="text-xs text-zinc-500">Status: {moduleConfig?.last_status ?? 'idle'}</p>
           <p className="text-xs text-zinc-500">Last tested: {moduleConfig?.last_tested_at ? new Date(moduleConfig.last_tested_at).toLocaleString() : 'never'}</p>
           <p className="text-xs text-zinc-500">Last sync: {moduleConfig?.last_sync_at ? new Date(moduleConfig.last_sync_at).toLocaleString() : 'never'}</p>
+          <p className="text-xs text-zinc-500">Auth username: {moduleConfig?.effective_owner_username ?? 'admin'}</p>
           <p className="text-xs text-zinc-500">Last client count: {moduleConfig?.last_client_count ?? '—'}</p>
           {moduleConfig?.last_error && <p className="text-xs text-rose-500">{moduleConfig.last_error}</p>}
         </div>
@@ -423,38 +485,40 @@ function TplinkDecoModuleCard({
         <div className="flex flex-wrap gap-3">
           <button
             type="button"
-            disabled={isSaving}
-            onClick={() => onSave({
-              enabled,
-              base_url: baseUrl.trim() || 'http://tplinkdeco.net',
-              owner_username: ownerUsername.trim() || null,
-              owner_password: ownerPassword.trim() || null,
-              fetch_connected_clients: fetchConnectedClients,
-              fetch_portal_logs: fetchPortalLogs,
-              request_timeout_seconds: requestTimeoutSeconds,
-              verify_tls: verifyTls,
-            })}
+            disabled={isSaving || isTesting || isSyncing}
+            onClick={handleSave}
             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
           >
             Save module settings
           </button>
           <button
             type="button"
-            disabled={isTesting}
-            onClick={onTest}
+            disabled={isSaving || isTesting || isSyncing}
+            onClick={handleTest}
             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700"
           >
             {isTesting ? 'Testing…' : 'Test connection'}
           </button>
           <button
             type="button"
-            disabled={isSyncing || !enabled}
-            onClick={onSync}
+            disabled={isSaving || isTesting || isSyncing || !enabled}
+            onClick={handleSync}
             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700 disabled:opacity-50"
           >
             {isSyncing ? 'Syncing…' : 'Sync now'}
           </button>
         </div>
+
+        {actionMessage && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+            {actionMessage}
+          </div>
+        )}
+        {actionError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/40 dark:text-red-300">
+            {actionError}
+          </div>
+        )}
 
         <div className="space-y-3">
           <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Recent sync runs</p>
@@ -528,9 +592,9 @@ export default function SettingsPage() {
   const { mutate: updateAlertRule, isPending: isUpdatingAlertRule } = useUpdateAlertRule()
   const { mutate: updateBackupPolicy, isPending: isUpdatingBackupPolicy } = useUpdateBackupPolicy()
   const { mutate: updateScannerConfig, isPending: isUpdatingScannerConfig } = useUpdateScannerConfig()
-  const { mutate: updateTplinkDecoModule, isPending: isUpdatingTplinkDecoModule } = useUpdateTplinkDecoModule()
-  const { mutate: testTplinkDecoModule, isPending: isTestingTplinkDecoModule } = useTestTplinkDecoModule()
-  const { mutate: syncTplinkDecoModule, isPending: isSyncingTplinkDecoModule } = useSyncTplinkDecoModule()
+  const { mutateAsync: updateTplinkDecoModule, isPending: isUpdatingTplinkDecoModule } = useUpdateTplinkDecoModule()
+  const { mutateAsync: testTplinkDecoModule, isPending: isTestingTplinkDecoModule } = useTestTplinkDecoModule()
+  const { mutateAsync: syncTplinkDecoModule, isPending: isSyncingTplinkDecoModule } = useSyncTplinkDecoModule()
   const { mutate: refreshFingerprintDataset, isPending: isRefreshingFingerprintDataset } = useRefreshFingerprintDataset()
   const [refreshingDatasetKey, setRefreshingDatasetKey] = useState<string | null>(null)
   const { mutate: resetInventory, isPending: isResettingInventory } = useResetInventory()

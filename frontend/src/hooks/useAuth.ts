@@ -322,7 +322,7 @@ export function useUpdateTplinkDecoModule() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (payload: Omit<TplinkDecoConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>) => {
+    mutationFn: async (payload: Omit<TplinkDecoConfig, 'id' | 'effective_owner_username' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>) => {
       const { data } = await authApi.updateTplinkDecoModule(payload)
       return data as TplinkDecoConfig
     },

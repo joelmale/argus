@@ -1,9 +1,37 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import axios from 'axios'
 import { Eye, Loader2, ShieldCheck } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useCurrentUser, useLogin } from '@/hooks/useAuth'
+
+function getLoginErrorMessage(error: unknown) {
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+
+  if (!axios.isAxiosError(error)) {
+    return 'Sign-in failed before the server returned a usable response. Try again and check the browser console if it repeats.'
+  }
+
+  if (!error.response) {
+    return `Cannot reach the Argus API at ${apiUrl}. Check that the backend container is running and that the browser can reach that address.`
+  }
+
+  if (error.response.status === 401) {
+    return 'Argus rejected the login with HTTP 401. Check the username and password, and confirm the admin account was bootstrapped with the credentials you expect.'
+  }
+
+  if (error.response.status >= 500) {
+    return `The Argus API returned HTTP ${error.response.status}. Check backend logs for the login request and verify the database connection is healthy.`
+  }
+
+  const detail = error.response.data && typeof error.response.data === 'object' ? (error.response.data as { detail?: unknown }).detail : undefined
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail
+  }
+
+  return `Sign-in failed with HTTP ${error.response.status}.`
+}
 
 export default function LoginPage() {
   const router = useRouter()
@@ -27,7 +55,7 @@ export default function LoginPage() {
       { username, password },
       {
         onSuccess: () => router.replace('/dashboard'),
-        onError: () => setError('Incorrect username or password.'),
+        onError: (error) => setError(getLoginErrorMessage(error)),
       },
     )
   }

@@ -198,6 +198,7 @@ export interface TplinkDecoConfig {
   enabled: boolean;
   base_url: string;
   owner_username: string | null;
+  effective_owner_username: string;
   owner_password: string | null;
   fetch_connected_clients: boolean;
   fetch_portal_logs: boolean;

@@ -21,6 +21,8 @@ from app.audit import log_audit_event
 from app.db.models import Asset, AssetTag, TplinkDecoConfig, TplinkDecoSyncRun, User
 from app.fingerprinting.passive import record_passive_observation
 
+DEFAULT_DECO_OWNER_USERNAME = "admin"
+
 
 def _utcnow() -> datetime:
     return datetime.now(timezone.utc)
@@ -96,6 +98,68 @@ def _normalize_mac(value: str | None) -> str | None:
     return None
 
 
+def _effective_owner_username(value: str | None) -> str:
+    # Deco's local portal hides the username field, but the auth signature
+    # still uses the admin username by default.
+    return (value or "").strip() or DEFAULT_DECO_OWNER_USERNAME
+
+
+def _decode_deco_label(value: str | None) -> str | None:
+    if not value:
+        return None
+    text = str(value).strip()
+    if not text:
+        return None
+    try:
+        decoded = base64.b64decode(text, validate=True).decode("utf-8")
+        return decoded.strip() or text
+    except Exception:
+        return text
+
+
+def _parse_deco_log_summary(raw_text: str) -> str:
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    if not lines:
+        return ""
+
+    counters = {
+        "wifi_client_associations": 0,
+        "wifi_handshakes_completed": 0,
+        "80211k_timeouts": 0,
+        "steering_engine_errors": 0,
+        "invalid_message_events": 0,
+        "mesh_band_mismatch_events": 0,
+    }
+    client_macs: set[str] = set()
+
+    for line in lines:
+        upper = line.upper()
+        if "AP-STA-CONNECTED" in upper or "ACTION\":\"ASSOCIATE" in upper or "ACTION:ASSOCIATE" in upper:
+            counters["wifi_client_associations"] += 1
+        if "EAPOL-4WAY-HS-COMPLETED" in upper:
+            counters["wifi_handshakes_completed"] += 1
+        if "TIMEOUT WAITING FOR 802.11K RESPONSE" in upper:
+            counters["80211k_timeouts"] += 1
+        if "STEERALG" in upper:
+            counters["steering_engine_errors"] += 1
+        if "INVALID MESSAGE LEN" in upper:
+            counters["invalid_message_events"] += 1
+        if "TARGETBAND" in upper and "MEASUREDBSS" in upper:
+            counters["mesh_band_mismatch_events"] += 1
+        for match in re.findall(r"(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}", upper):
+            client_macs.add(match.replace("-", ":"))
+
+    summary_lines = ["# Parsed Deco Log Summary"]
+    for key, value in counters.items():
+        if value:
+            summary_lines.append(f"{key}: {value}")
+    if client_macs:
+        summary_lines.append(f"unique_macs_observed: {len(client_macs)}")
+    if len(summary_lines) == 1:
+        return ""
+    return "\n".join(summary_lines)
+
+
 @dataclass(slots=True)
 class DecoClientRecord:
     mac: str | None
@@ -108,12 +172,25 @@ class DecoClientRecord:
     raw: dict[str, Any]
 
 
+@dataclass(slots=True)
+class DecoDeviceRecord:
+    mac: str | None
+    ip: str | None
+    hostname: str | None
+    nickname: str | None
+    model: str | None
+    role: str | None
+    software_version: str | None
+    hardware_version: str | None
+    raw: dict[str, Any]
+
+
 def normalize_deco_client(record: dict[str, Any]) -> DecoClientRecord:
     return DecoClientRecord(
         mac=_normalize_mac(_coalesce_str(record, ["mac", "client_mac", "mac_addr"])),
         ip=_coalesce_str(record, ["ip", "ip_addr", "ipv4", "client_ip"]),
-        hostname=_coalesce_str(record, ["name", "hostname", "host_name"]),
-        nickname=_coalesce_str(record, ["nickname", "device_name", "alias"]),
+        hostname=_decode_deco_label(_coalesce_str(record, ["name", "hostname", "host_name"])),
+        nickname=_decode_deco_label(_coalesce_str(record, ["nickname", "device_name", "alias"])),
         device_model=_coalesce_str(record, ["device_model", "model", "device_type", "brand"]),
         connection_type=_coalesce_str(record, ["interface", "connection_type", "connect_type", "wire_type"]),
         access_point_name=_coalesce_str(record, ["master_device_name", "ap_name", "slave_name", "mesh_node_name"]),
@@ -121,10 +198,26 @@ def normalize_deco_client(record: dict[str, Any]) -> DecoClientRecord:
     )
 
 
+def normalize_deco_device(record: dict[str, Any]) -> DecoDeviceRecord:
+    nickname = _decode_deco_label(_coalesce_str(record, ["custom_nickname", "nickname", "alias"]))
+    hostname = nickname or _decode_deco_label(_coalesce_str(record, ["name", "hostname"]))
+    return DecoDeviceRecord(
+        mac=_normalize_mac(_coalesce_str(record, ["mac", "mac_addr"])),
+        ip=_coalesce_str(record, ["device_ip", "ip", "ip_addr"]),
+        hostname=hostname,
+        nickname=nickname,
+        model=_coalesce_str(record, ["device_model", "model"]),
+        role=_coalesce_str(record, ["role", "device_role"]),
+        software_version=_coalesce_str(record, ["software_ver", "software_version"]),
+        hardware_version=_coalesce_str(record, ["hardware_ver", "hardware_version"]),
+        raw=record,
+    )
+
+
 class TplinkDecoClient:
     def __init__(self, *, base_url: str, owner_username: str | None, owner_password: str, timeout_seconds: int = 10, verify_tls: bool = False):
         self.base_url = _normalize_base_url(base_url)
-        self.owner_username = (owner_username or "").strip()
+        self.owner_username = _effective_owner_username(owner_username)
         self.owner_password = owner_password
         self.timeout_seconds = max(3, timeout_seconds)
         self.verify_tls = verify_tls
@@ -251,6 +344,15 @@ class TplinkDecoClient:
         clients = response.get("result", {}).get("client_list", [])
         return [normalize_deco_client(row) for row in clients if isinstance(row, dict)]
 
+    async def fetch_deco_devices(self) -> list[DecoDeviceRecord]:
+        response = await self.encrypted_request(
+            "/admin/device",
+            form="device_list",
+            payload={"operation": "read"},
+        )
+        devices = response.get("result", {}).get("device_list", [])
+        return [normalize_deco_device(row) for row in devices if isinstance(row, dict)]
+
     async def fetch_portal_logs(self) -> str | None:
         if not self.stok or not self.sysauth:
             await self.login()
@@ -322,6 +424,7 @@ def serialize_tplink_deco_config(config: TplinkDecoConfig) -> dict[str, Any]:
         "enabled": config.enabled,
         "base_url": config.base_url,
         "owner_username": config.owner_username,
+        "effective_owner_username": _effective_owner_username(config.owner_username),
         "owner_password": config.owner_password,
         "fetch_connected_clients": config.fetch_connected_clients,
         "fetch_portal_logs": config.fetch_portal_logs,
@@ -399,6 +502,25 @@ async def _resolve_asset_for_client(db: AsyncSession, client: DecoClientRecord) 
     return asset
 
 
+async def _resolve_asset_for_deco_device(db: AsyncSession, device: DecoDeviceRecord) -> Asset | None:
+    if device.mac:
+        result = await db.execute(select(Asset).where(func_lower(Asset.mac_address) == device.mac.lower()).limit(1))
+        asset = result.scalar_one_or_none()
+        if asset is not None:
+            return asset
+    if device.ip:
+        result = await db.execute(select(Asset).where(Asset.ip_address == device.ip).limit(1))
+        asset = result.scalar_one_or_none()
+        if asset is not None:
+            return asset
+    if not device.ip:
+        return None
+    asset = Asset(ip_address=device.ip, mac_address=device.mac, hostname=device.hostname or device.nickname, status="online")
+    db.add(asset)
+    await db.flush()
+    return asset
+
+
 def func_lower(column):
     from sqlalchemy import func
     return func.lower(column)
@@ -445,6 +567,50 @@ async def _enrich_asset_from_client(db: AsyncSession, asset: Asset, client: Deco
     )
 
 
+async def _enrich_asset_from_deco_device(db: AsyncSession, asset: Asset, device: DecoDeviceRecord) -> None:
+    if device.mac and not asset.mac_address:
+        asset.mac_address = device.mac
+    if device.hostname and not asset.hostname:
+        asset.hostname = device.hostname
+    asset.status = "online"
+    asset.vendor = asset.vendor or "TP-Link"
+    current_custom_fields = dict(asset.custom_fields or {})
+    current_custom_fields["tplink_deco_device"] = {
+        "nickname": device.nickname,
+        "model": device.model,
+        "role": device.role,
+        "software_version": device.software_version,
+        "hardware_version": device.hardware_version,
+        "last_seen_via": "tplink_deco",
+        "raw": device.raw,
+    }
+    asset.custom_fields = current_custom_fields
+
+    tag_names = {tag.tag for tag in (await db.execute(select(AssetTag).where(AssetTag.asset_id == asset.id))).scalars().all()}
+    if "tplink-deco" not in tag_names:
+        db.add(AssetTag(asset_id=asset.id, tag="tplink-deco"))
+    if "access-point" not in tag_names:
+        db.add(AssetTag(asset_id=asset.id, tag="access-point"))
+
+    await record_passive_observation(
+        db,
+        asset=asset,
+        source="tplink_deco",
+        event_type="deco_seen",
+        summary=f"TP-Link Deco portal observed node {device.hostname or device.nickname or device.ip or device.mac or asset.ip_address}",
+        details={
+            "ip": device.ip or asset.ip_address,
+            "mac": device.mac or asset.mac_address,
+            "hostname": device.hostname or device.nickname,
+            "model": device.model,
+            "role": device.role,
+            "software_version": device.software_version,
+            "hardware_version": device.hardware_version,
+            "raw": device.raw,
+        },
+    )
+
+
 async def test_tplink_deco_connection(db: AsyncSession) -> dict[str, Any]:
     config = await get_or_create_tplink_deco_config(db)
     if not config.owner_password:
@@ -457,6 +623,7 @@ async def test_tplink_deco_connection(db: AsyncSession) -> dict[str, Any]:
         verify_tls=config.verify_tls,
     ) as client:
         await client.login()
+        devices = await client.fetch_deco_devices()
         clients: list[DecoClientRecord] = []
         if config.fetch_connected_clients:
             clients = await client.fetch_connected_clients()
@@ -466,7 +633,13 @@ async def test_tplink_deco_connection(db: AsyncSession) -> dict[str, Any]:
     config.last_error = None
     config.last_client_count = len(clients)
     await db.flush()
-    return {"status": "healthy", "client_count": len(clients), "base_url": config.base_url}
+    return {
+        "status": "healthy",
+        "client_count": len(clients),
+        "device_count": len(devices),
+        "base_url": config.base_url,
+        "auth_username": _effective_owner_username(config.owner_username),
+    }
 
 
 async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
@@ -489,6 +662,7 @@ async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
             verify_tls=config.verify_tls,
         ) as client:
             await client.login()
+            devices = await client.fetch_deco_devices()
             clients: list[DecoClientRecord] = []
             if config.fetch_connected_clients:
                 clients = await client.fetch_connected_clients()
@@ -496,6 +670,17 @@ async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
             if config.fetch_portal_logs:
                 logs_excerpt = await client.fetch_portal_logs()
             await client.logout()
+
+        if logs_excerpt:
+            parsed_summary = _parse_deco_log_summary(logs_excerpt)
+            if parsed_summary:
+                logs_excerpt = f"{parsed_summary}\n\n{logs_excerpt}"
+
+        for device_record in devices:
+            asset = await _resolve_asset_for_deco_device(db, device_record)
+            if asset is None:
+                continue
+            await _enrich_asset_from_deco_device(db, asset, device_record)
 
         ingested_assets = 0
         for client_record in clients:
@@ -519,8 +704,10 @@ async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
         return {
             "status": "done",
             "client_count": len(clients),
+            "device_count": len(devices),
             "ingested_assets": ingested_assets,
             "log_excerpt_present": bool(run.logs_excerpt),
+            "auth_username": _effective_owner_username(config.owner_username),
             "run_id": run.id,
         }
     except Exception as exc:
