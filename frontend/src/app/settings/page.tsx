@@ -536,6 +536,63 @@ function TplinkDecoModuleCard({
                 {run.client_count !== null ? ` · clients ${run.client_count}` : ''}
               </p>
               {run.error && <p className="text-xs text-rose-500">{run.error}</p>}
+              {run.log_analysis && (
+                <div className="rounded-lg border border-gray-200 dark:border-zinc-800 p-3 space-y-3 bg-gray-50/70 dark:bg-zinc-900/40">
+                  <div className="flex flex-wrap items-center gap-3 text-xs text-zinc-500">
+                    <span>Health score: <span className="font-medium text-zinc-900 dark:text-zinc-100">{run.log_analysis.health_score}</span></span>
+                    <span>Events parsed: <span className="font-medium text-zinc-900 dark:text-zinc-100">{run.log_analysis.event_count}</span></span>
+                    <span>Unique MACs: <span className="font-medium text-zinc-900 dark:text-zinc-100">{run.log_analysis.observed_macs.length}</span></span>
+                  </div>
+
+                  {run.log_analysis.issues.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Detected issues</p>
+                      {run.log_analysis.issues.slice(0, 6).map((issue) => (
+                        <div key={issue.key} className="rounded-lg border border-gray-200 dark:border-zinc-800 p-3 space-y-1 bg-white dark:bg-zinc-950/40">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{issue.title}</p>
+                            <span className="rounded-full px-2 py-0.5 text-[11px] uppercase tracking-wide bg-gray-100 text-zinc-600 dark:bg-zinc-800 dark:text-zinc-300">{issue.severity}</span>
+                            <span className="text-[11px] text-zinc-500">{issue.count} matches</span>
+                          </div>
+                          <p className="text-xs text-zinc-500">{issue.issue}</p>
+                          <p className="text-xs text-zinc-700 dark:text-zinc-300">Recommendation: {issue.recommendation}</p>
+                          {issue.affected_macs.length > 0 && (
+                            <p className="text-[11px] text-zinc-500">Affected MACs: {issue.affected_macs.join(', ')}</p>
+                          )}
+                          {issue.sample_lines.length > 0 && (
+                            <pre className="rounded bg-zinc-950 text-zinc-200 p-2 text-[10px] whitespace-pre-wrap overflow-x-auto max-h-24 overflow-y-auto">
+                              {issue.sample_lines.join('\n')}
+                            </pre>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {run.log_analysis.recommendations.length > 0 && (
+                    <div className="space-y-2">
+                      <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Recommendations</p>
+                      {run.log_analysis.recommendations.map((item, index) => (
+                        <div key={`${item.title}-${index}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                          <p className="font-medium">{item.title}</p>
+                          <p className="mt-1">{item.recommendation}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+              {run.logs_excerpt && (
+                <div className="flex justify-end">
+                  <button
+                    type="button"
+                    onClick={() => downloadTextFile(`tplink-deco-log-run-${run.id}.log`, run.logs_excerpt ?? '')}
+                    className="inline-flex items-center justify-center gap-2 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+                  >
+                    Download log copy
+                  </button>
+                </div>
+              )}
               {run.logs_excerpt && (
                 <pre className="rounded-lg bg-zinc-950 text-zinc-200 p-3 text-[11px] overflow-x-auto whitespace-pre-wrap max-h-40 overflow-y-auto">
                   {run.logs_excerpt}
@@ -569,6 +626,16 @@ function SettingsSection({
       {children}
     </section>
   )
+}
+
+function downloadTextFile(filename: string, content: string) {
+  const blob = new Blob([content], { type: 'text/plain;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const anchor = document.createElement('a')
+  anchor.href = url
+  anchor.download = filename
+  anchor.click()
+  URL.revokeObjectURL(url)
 }
 
 export default function SettingsPage() {

@@ -514,6 +514,7 @@ class TplinkDecoSyncRun(Base):
     client_count: Mapped[int | None] = mapped_column(Integer)
     clients_payload: Mapped[list | None] = mapped_column(JSONB)
     logs_excerpt: Mapped[str | None] = mapped_column(Text)
+    log_analysis: Mapped[dict | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

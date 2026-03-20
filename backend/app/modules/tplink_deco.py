@@ -160,6 +160,180 @@ def _parse_deco_log_summary(raw_text: str) -> str:
     return "\n".join(summary_lines)
 
 
+def analyze_deco_logs(raw_text: str) -> dict[str, Any]:
+    lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
+    if not lines:
+        return {
+            "health_score": 100,
+            "event_count": 0,
+            "issues": [],
+            "recommendations": [],
+            "observed_macs": [],
+        }
+
+    pattern_catalog = [
+        {
+            "key": "band_steering_mismatch",
+            "title": "Aggressive band steering mismatch",
+            "severity": "medium",
+            "regex": re.compile(r"targetBand\((?P<target>\d+)\)\s*!=\s*measuredBss->band\((?P<measured>\d+)\)", re.IGNORECASE),
+            "issue": "Band steering is attempting to push a client onto a band that does not match the measured BSS state.",
+            "recommendation": "Disable Smart Connect temporarily or split 2.4 GHz / 5 GHz SSIDs if clients are being steered too aggressively.",
+            "health_penalty": 3,
+        },
+        {
+            "key": "mesh_sync_missing_apinfo",
+            "title": "Mesh neighbor database inconsistency",
+            "severity": "medium",
+            "regex": re.compile(r"Cannot find (?P<mac>(?:[0-9A-F]{2}:){5}[0-9A-F]{2}) in apinfo list", re.IGNORECASE),
+            "issue": "The controller cannot reconcile a neighbor BSSID with its mesh state table.",
+            "recommendation": "Restart the affected mesh node or run the Deco network optimization workflow to rebuild neighbor state.",
+            "health_penalty": 4,
+        },
+        {
+            "key": "k11_timeout",
+            "title": "802.11k roaming timeout",
+            "severity": "high",
+            "regex": re.compile(r"Timeout waiting for 802\.11k response from (?P<mac>(?:[0-9A-F]{2}:){5}[0-9A-F]{2})", re.IGNORECASE),
+            "issue": "A client did not answer an 802.11k measurement request during roaming evaluation.",
+            "recommendation": "Check whether the client is near the edge of coverage or lacks solid 802.11k/v/r support. Consider relaxing roaming aggressiveness for that device.",
+            "health_penalty": 6,
+        },
+        {
+            "key": "dead_zone_rate",
+            "title": "Potential dead zone or weak backhaul",
+            "severity": "high",
+            "regex": re.compile(r"(estimated pat datarate is 0|patrate .* is 0\b)", re.IGNORECASE),
+            "issue": "The AP calculated zero viable data rate for a path, which usually indicates severe interference or an overly weak link.",
+            "recommendation": "Move the affected mesh node closer to the main router or reduce physical interference between nodes.",
+            "health_penalty": 8,
+        },
+        {
+            "key": "signal_flapping",
+            "title": "Roaming threshold instability",
+            "severity": "medium",
+            "regex": re.compile(r"update 11K Threshold.*old.*newthreshold", re.IGNORECASE),
+            "issue": "The controller is repeatedly recalculating roaming thresholds, suggesting unstable RSSI around the handoff boundary.",
+            "recommendation": "Increase the roaming threshold slightly or improve coverage overlap so clients stop bouncing between APs.",
+            "health_penalty": 3,
+        },
+        {
+            "key": "beacon_report_state",
+            "title": "Unexpected beacon-report state",
+            "severity": "medium",
+            "regex": re.compile(r"Beacon report .* unexpected state (?P<state>\d+)", re.IGNORECASE),
+            "issue": "A client is producing out-of-sequence or unsupported beacon-report behavior during steering logic.",
+            "recommendation": "Toggle Wi-Fi on the device, update its firmware, or disable fast roaming for that MAC if the issue repeats.",
+            "health_penalty": 4,
+        },
+        {
+            "key": "ssh_management_load",
+            "title": "High management polling load",
+            "severity": "low",
+            "regex": re.compile(r"Pubkey auth succeeded for 'root'", re.IGNORECASE),
+            "issue": "An external tool is logging in over SSH often enough to show up in the AP logs.",
+            "recommendation": "Increase polling intervals in external monitoring or automation tools to reduce CPU overhead on the Deco node.",
+            "health_penalty": 2,
+        },
+        {
+            "key": "invalid_message_length",
+            "title": "Controller message framing error",
+            "severity": "medium",
+            "regex": re.compile(r"Invalid message len:\s*(?P<length>\d+)\s*bytes", re.IGNORECASE),
+            "issue": "The steering process received malformed or truncated controller messages.",
+            "recommendation": "Reboot the affected node and check whether its firmware is aligned with the rest of the mesh.",
+            "health_penalty": 4,
+        },
+        {
+            "key": "client_association",
+            "title": "Client association activity",
+            "severity": "info",
+            "regex": re.compile(r"(AP-STA-CONNECTED|client_action:associate|action\":\"associate\")", re.IGNORECASE),
+            "issue": "A client successfully associated with the AP.",
+            "recommendation": "No action required unless the same client repeatedly reconnects in a short window.",
+            "health_penalty": 0,
+        },
+    ]
+
+    issue_map: dict[str, dict[str, Any]] = {}
+    observed_macs: set[str] = set()
+
+    for line in lines:
+        normalized_line = line.replace("-", ":").upper()
+        for mac in re.findall(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", normalized_line):
+            observed_macs.add(mac)
+
+        for pattern in pattern_catalog:
+            match = pattern["regex"].search(line)
+            if not match:
+                continue
+            bucket = issue_map.setdefault(
+                pattern["key"],
+                {
+                    "key": pattern["key"],
+                    "title": pattern["title"],
+                    "severity": pattern["severity"],
+                    "issue": pattern["issue"],
+                    "recommendation": pattern["recommendation"],
+                    "count": 0,
+                    "sample_lines": [],
+                    "affected_macs": set(),
+                    "health_penalty": pattern["health_penalty"],
+                },
+            )
+            bucket["count"] += 1
+            if len(bucket["sample_lines"]) < 3:
+                bucket["sample_lines"].append(line)
+            for value in match.groupdict().values():
+                if isinstance(value, str) and re.fullmatch(r"(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}", value, re.IGNORECASE):
+                    bucket["affected_macs"].add(value.replace("-", ":").upper())
+
+    issues = []
+    total_penalty = 0
+    for item in issue_map.values():
+        scaled_penalty = item["health_penalty"] * min(item["count"], 5)
+        total_penalty += scaled_penalty
+        issues.append(
+            {
+                "key": item["key"],
+                "title": item["title"],
+                "severity": item["severity"],
+                "issue": item["issue"],
+                "recommendation": item["recommendation"],
+                "count": item["count"],
+                "health_penalty": scaled_penalty,
+                "sample_lines": item["sample_lines"],
+                "affected_macs": sorted(item["affected_macs"]),
+            }
+        )
+
+    severity_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
+    issues.sort(key=lambda item: (severity_order.get(item["severity"], 9), -item["count"], item["title"]))
+
+    recommendations = []
+    seen_recommendations: set[str] = set()
+    for issue in issues:
+        recommendation = issue["recommendation"]
+        if recommendation in seen_recommendations:
+            continue
+        seen_recommendations.add(recommendation)
+        recommendations.append(
+            {
+                "title": issue["title"],
+                "severity": issue["severity"],
+                "recommendation": recommendation,
+            }
+        )
+
+    return {
+        "health_score": max(0, 100 - total_penalty),
+        "event_count": len(lines),
+        "issues": issues,
+        "recommendations": recommendations,
+        "observed_macs": sorted(observed_macs),
+    }
+
+
 @dataclass(slots=True)
 class DecoClientRecord:
     mac: str | None
@@ -183,6 +357,13 @@ class DecoDeviceRecord:
     software_version: str | None
     hardware_version: str | None
     raw: dict[str, Any]
+
+
+@dataclass(slots=True)
+class DecoLogPage:
+    entries: list[str]
+    total_pages: int
+    current_index: int
 
 
 def normalize_deco_client(record: dict[str, Any]) -> DecoClientRecord:
@@ -353,45 +534,87 @@ class TplinkDecoClient:
         devices = response.get("result", {}).get("device_list", [])
         return [normalize_deco_device(row) for row in devices if isinstance(row, dict)]
 
-    async def fetch_portal_logs(self) -> str | None:
+    async def _fetch_feedback_log_page(self, *, level: int = 5, index: int = 0, limit: int = 100) -> DecoLogPage:
         if not self.stok or not self.sysauth:
             await self.login()
+        response = await self._client.post(
+            f"/cgi-bin/luci/;stok={self.stok}/admin/log_export",
+            params={"form": "feedback_log"},
+            data={"operation": "build", "level": str(level), "index": str(index), "limit": str(limit)},
+            cookies={"sysauth": self.sysauth},
+            headers={"Referer": f"{self.base_url}/webpages/index.html"},
+        )
+        response.raise_for_status()
+        body = response.json()
+        if body.get("error_code") not in (0, None):
+            raise RuntimeError(body.get("msg") or body.get("error_code") or "Deco feedback log request failed")
+
+        log_list = body.get("logList") or []
+        entries: list[str] = []
+        for item in log_list:
+            if not isinstance(item, dict):
+                continue
+            # The UI information panel renders the `content` field directly.
+            content = str(item.get("content") or "").strip()
+            if content:
+                entries.append(content)
+        total_pages = int(body.get("totalNum") or 0)
+        current_index = int(body.get("currentIndex") or index)
+        return DecoLogPage(entries=entries, total_pages=total_pages, current_index=current_index)
+
+    async def _attempt_save_log_export(self) -> str | None:
+        if not self.stok or not self.sysauth:
+            await self.login()
+
         attempts = [
-            ("GET", None),
-            ("POST", {"operation": "read"}),
-            ("POST", {"operation": "write"}),
+            {"data": {"operation": "save"}},
+            {"data": {"operation": "save"}, "files": {"save-log-file": ("", "")}},
+            {"data": {"operation": "save"}, "files": {"save-log-file": ("save-log.txt", b"", "text/plain")}},
         ]
-        for method, payload in attempts:
-            if method == "GET":
-                response = await self._client.get(
-                    f"/cgi-bin/luci/;stok={self.stok}/admin/log_export",
-                    params={"form": "save_log"},
-                    cookies={"sysauth": self.sysauth},
-                    headers={"Referer": f"{self.base_url}/webpages/index.html"},
-                )
-            else:
-                response = await self._client.post(
-                    f"/cgi-bin/luci/;stok={self.stok}/admin/log_export",
-                    params={"form": "save_log"},
-                    data=payload,
-                    cookies={"sysauth": self.sysauth},
-                    headers={"Referer": f"{self.base_url}/webpages/index.html"},
-                )
+        for payload in attempts:
+            response = await self._client.post(
+                f"/cgi-bin/luci/;stok={self.stok}/admin/log_export",
+                params={"form": "save_log"},
+                cookies={"sysauth": self.sysauth},
+                headers={"Referer": f"{self.base_url}/webpages/index.html"},
+                **payload,
+            )
             if response.status_code != 200:
                 continue
-            content_type = response.headers.get("content-type", "")
-            text = response.text
-            if "application/json" in content_type or text.strip().startswith("{"):
+
+            content_type = (response.headers.get("content-type") or "").lower()
+            text = response.text.strip()
+            if not text:
+                continue
+            if "application/json" in content_type or text.startswith("{"):
                 try:
                     body = response.json()
-                    if body.get("error_code") not in (0, None):
-                        continue
-                    return json.dumps(body, indent=2)
                 except Exception:
                     continue
-            if text.strip():
-                return text
+                if body.get("error_code") in (0, None):
+                    return json.dumps(body, indent=2)
+                continue
+            return text
         return None
+
+    async def fetch_portal_logs(self) -> str | None:
+        # The live system-log page reads from `feedback_log` with paging. Argus
+        # assembles the same pages into one exportable text blob so log analysis
+        # does not depend on the brittle `save_log` upload helper.
+        first_page = await self._fetch_feedback_log_page(level=5, index=0, limit=100)
+        entries = list(first_page.entries)
+
+        total_pages = max(first_page.total_pages, 1)
+        for index in range(1, total_pages):
+            page = await self._fetch_feedback_log_page(level=5, index=index, limit=100)
+            entries.extend(page.entries)
+
+        deduped_entries = list(dict.fromkeys(entry for entry in entries if entry))
+        assembled = "\n".join(deduped_entries).strip()
+        exported = await self._attempt_save_log_export()
+        if exported:
+            return exported
+        return assembled or None
 
     async def logout(self) -> None:
         if not self.stok:
@@ -447,6 +670,7 @@ def serialize_tplink_deco_sync_run(row: TplinkDecoSyncRun) -> dict[str, Any]:
         "client_count": row.client_count,
         "clients_payload": row.clients_payload or [],
         "logs_excerpt": row.logs_excerpt,
+        "log_analysis": row.log_analysis,
         "error": row.error,
         "started_at": row.started_at.isoformat(),
         "finished_at": row.finished_at.isoformat() if row.finished_at else None,
@@ -675,6 +899,7 @@ async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
             parsed_summary = _parse_deco_log_summary(logs_excerpt)
             if parsed_summary:
                 logs_excerpt = f"{parsed_summary}\n\n{logs_excerpt}"
+        log_analysis = analyze_deco_logs(logs_excerpt or "")
 
         for device_record in devices:
             asset = await _resolve_asset_for_deco_device(db, device_record)
@@ -693,7 +918,10 @@ async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
         run.status = "done"
         run.client_count = len(clients)
         run.clients_payload = [client.raw for client in clients]
-        run.logs_excerpt = logs_excerpt[:12000] if logs_excerpt else None
+        # Keep the assembled log body intact so the UI can offer a faithful
+        # download even when the vendor's save-to-local wrapper is flaky.
+        run.logs_excerpt = logs_excerpt or None
+        run.log_analysis = log_analysis
         run.finished_at = _utcnow()
 
         config.last_sync_at = run.finished_at
@@ -707,6 +935,8 @@ async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
             "device_count": len(devices),
             "ingested_assets": ingested_assets,
             "log_excerpt_present": bool(run.logs_excerpt),
+            "health_score": log_analysis.get("health_score"),
+            "issue_count": len(log_analysis.get("issues", [])),
             "auth_username": _effective_owner_username(config.owner_username),
             "run_id": run.id,
         }

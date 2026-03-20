@@ -219,6 +219,27 @@ export interface TplinkDecoSyncRun {
   client_count: number | null;
   clients_payload: Array<Record<string, unknown>>;
   logs_excerpt: string | null;
+  log_analysis: {
+    health_score: number;
+    event_count: number;
+    issues: Array<{
+      key: string;
+      title: string;
+      severity: string;
+      issue: string;
+      recommendation: string;
+      count: number;
+      health_penalty: number;
+      sample_lines: string[];
+      affected_macs: string[];
+    }>;
+    recommendations: Array<{
+      title: string;
+      severity: string;
+      recommendation: string;
+    }>;
+    observed_macs: string[];
+  } | null;
   error: string | null;
   started_at: string;
   finished_at: string | null;
