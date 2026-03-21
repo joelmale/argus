@@ -164,13 +164,18 @@ Important behavior:
 
 ## Configuration
 
-Bootstrap config comes from `.env`. Day-to-day scanner behavior is now managed primarily through the Settings UI.
+Bootstrap config comes from `.env` in development and `.env.production` in the base production compose stack. Day-to-day scanner behavior is now managed primarily through the Settings UI.
 
-Start from:
+Development start:
 
 ```bash
 cp .env.example .env
 ```
+
+Production compose:
+
+- `docker-compose.yml` reads the committed `.env.production`
+- override secrets and host-specific values in your deployment platform instead of editing the repo file in place
 
 Important `.env` values:
 

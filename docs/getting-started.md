@@ -117,6 +117,7 @@ Base stack:
 - backend
 - scanner
 - frontend
+- reads defaults from `.env.production`
 
 ### `docker-compose.dev.yml`
 
@@ -126,6 +127,7 @@ Development overrides:
 - source-code mounts
 - frontend dev mode
 - scanner host networking
+- local `.env` still applies for development workflows
 
 ## Why the Scanner Uses Host Networking
 

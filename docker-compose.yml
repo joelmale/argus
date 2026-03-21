@@ -4,10 +4,11 @@ services:
     image: postgres:16-alpine
     container_name: argus_db
     restart: unless-stopped
+    env_file: .env.production
     environment:
       POSTGRES_DB: ${POSTGRES_DB:-argus}
       POSTGRES_USER: ${POSTGRES_USER:-argus}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-argus_dev_password}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-db-password}
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
@@ -41,10 +42,42 @@ services:
       dockerfile: Dockerfile
     container_name: argus_backend
     restart: unless-stopped
-    env_file: .env
+    env_file: .env.production
     environment:
-      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@db:5432/argus}
+      APP_ENV: ${APP_ENV:-production}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-to-a-long-random-string}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:change-me-db-password@db:5432/argus}
       REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379/0}
+      SCANNER_DEFAULT_TARGETS: ${SCANNER_DEFAULT_TARGETS:-192.168.1.0/24}
+      SCANNER_INTERVAL_MINUTES: ${SCANNER_INTERVAL_MINUTES:-60}
+      SCANNER_DEFAULT_PROFILE: ${SCANNER_DEFAULT_PROFILE:-balanced}
+      SCANNER_PASSIVE_ARP: ${SCANNER_PASSIVE_ARP:-true}
+      SNMP_COMMUNITY: ${SNMP_COMMUNITY:-public}
+      SNMP_VERSION: ${SNMP_VERSION:-2c}
+      SNMP_TIMEOUT: ${SNMP_TIMEOUT:-5}
+      SNMP_V3_USERNAME: ${SNMP_V3_USERNAME:-}
+      SNMP_V3_AUTH_KEY: ${SNMP_V3_AUTH_KEY:-}
+      SNMP_V3_PRIV_KEY: ${SNMP_V3_PRIV_KEY:-}
+      SNMP_V3_AUTH_PROTOCOL: ${SNMP_V3_AUTH_PROTOCOL:-sha}
+      SNMP_V3_PRIV_PROTOCOL: ${SNMP_V3_PRIV_PROTOCOL:-aes}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost:3000"]}
+      AI_BACKEND: ${AI_BACKEND:-ollama}
+      AI_ENABLE_PER_SCAN: ${AI_ENABLE_PER_SCAN:-true}
+      AI_MAX_CONCURRENT_HOSTS: ${AI_MAX_CONCURRENT_HOSTS:-5}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+      SMTP_HOST: ${SMTP_HOST:-}
+      SMTP_PORT: ${SMTP_PORT:-587}
+      SMTP_USERNAME: ${SMTP_USERNAME:-}
+      SMTP_PASSWORD: ${SMTP_PASSWORD:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      SMTP_TO: ${SMTP_TO:-}
+      NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
     depends_on:
       db:
         condition: service_healthy
@@ -70,10 +103,35 @@ services:
       dockerfile: scanner/Dockerfile
     container_name: argus_scanner
     restart: unless-stopped
-    env_file: .env
+    env_file: .env.production
     environment:
-      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@db:5432/argus}
+      APP_ENV: ${APP_ENV:-production}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-to-a-long-random-string}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:change-me-db-password@db:5432/argus}
       REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379/0}
+      SCANNER_DEFAULT_TARGETS: ${SCANNER_DEFAULT_TARGETS:-192.168.1.0/24}
+      SCANNER_INTERVAL_MINUTES: ${SCANNER_INTERVAL_MINUTES:-60}
+      SCANNER_DEFAULT_PROFILE: ${SCANNER_DEFAULT_PROFILE:-balanced}
+      SCANNER_PASSIVE_ARP: ${SCANNER_PASSIVE_ARP:-true}
+      SNMP_COMMUNITY: ${SNMP_COMMUNITY:-public}
+      SNMP_VERSION: ${SNMP_VERSION:-2c}
+      SNMP_TIMEOUT: ${SNMP_TIMEOUT:-5}
+      SNMP_V3_USERNAME: ${SNMP_V3_USERNAME:-}
+      SNMP_V3_AUTH_KEY: ${SNMP_V3_AUTH_KEY:-}
+      SNMP_V3_PRIV_KEY: ${SNMP_V3_PRIV_KEY:-}
+      SNMP_V3_AUTH_PROTOCOL: ${SNMP_V3_AUTH_PROTOCOL:-sha}
+      SNMP_V3_PRIV_PROTOCOL: ${SNMP_V3_PRIV_PROTOCOL:-aes}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-1440}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost:3000"]}
+      AI_BACKEND: ${AI_BACKEND:-ollama}
+      AI_ENABLE_PER_SCAN: ${AI_ENABLE_PER_SCAN:-true}
+      AI_MAX_CONCURRENT_HOSTS: ${AI_MAX_CONCURRENT_HOSTS:-5}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
     depends_on:
       backend:
         condition: service_healthy
@@ -90,9 +148,10 @@ services:
       dockerfile: Dockerfile
     container_name: argus_frontend
     restart: unless-stopped
+    env_file: .env.production
     environment:
-      NEXT_PUBLIC_API_URL: http://localhost:8000
-      NEXT_PUBLIC_WS_URL: ws://localhost:8000
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+      NEXT_PUBLIC_WS_URL: ${NEXT_PUBLIC_WS_URL:-ws://localhost:8000}
     depends_on:
       backend:
         condition: service_healthy
