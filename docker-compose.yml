@@ -37,9 +37,7 @@ services:
 
   # ── Backend API ─────────────────────────────────────────────
   backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
+    image: ${ARGUS_BACKEND_IMAGE:-ghcr.io/joelmale/argus-backend:main}
     container_name: argus_backend
     restart: unless-stopped
     env_file: .env.production
@@ -97,10 +95,7 @@ services:
 
   # ── Scanner Worker ──────────────────────────────────────────
   scanner:
-    build:
-      # Context must be project root — Dockerfile needs to reach ./backend
-      context: .
-      dockerfile: scanner/Dockerfile
+    image: ${ARGUS_SCANNER_IMAGE:-ghcr.io/joelmale/argus-scanner:main}
     container_name: argus_scanner
     restart: unless-stopped
     env_file: .env.production
@@ -143,9 +138,7 @@ services:
 
   # ── Frontend ────────────────────────────────────────────────
   frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
+    image: ${ARGUS_FRONTEND_IMAGE:-ghcr.io/joelmale/argus-frontend:main}
     container_name: argus_frontend
     restart: unless-stopped
     env_file: .env.production

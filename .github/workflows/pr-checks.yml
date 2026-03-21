@@ -1,14 +1,15 @@
-name: CI
+name: PR Checks
 
 on:
-  push:
-    branches: [main, develop]
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+
 jobs:
-  backend-lint-test:
-    name: Backend — lint & test
+  backend-quality:
+    name: Backend quality
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -24,31 +25,46 @@ jobs:
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
     env:
       DATABASE_URL: postgresql+asyncpg://argus:argus_dev_password@127.0.0.1:5432/argus
+      REDIS_URL: redis://127.0.0.1:6379/0
       APP_SECRET_KEY: ci-test-secret
       APP_DEBUG: "false"
+      APP_ENV: test
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: Install deps
+          cache: "pip"
+          cache-dependency-path: |
+            backend/requirements.txt
+            backend/requirements-dev.txt
+      - name: Install backend dependencies
         run: pip install -r backend/requirements-dev.txt
-      - name: Run migrations
-        run: python backend/scripts/migrate.py
-      - name: Lint
+      - name: Run database migrations
+        run: cd backend && PYTHONPATH=. python scripts/migrate.py
+      - name: Lint backend
         run: npm run lint:backend:local
-      - name: Test with coverage
+      - name: Test backend with coverage
         run: cd backend && PYTHONPATH=. pytest tests --cov=app --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml --cov-fail-under=55 -q
-      - name: Upload backend coverage artifact
+      - name: Upload backend coverage
         uses: actions/upload-artifact@v4
         with:
           name: backend-coverage-xml
           path: backend/coverage.xml
 
-  frontend-lint-typecheck:
-    name: Frontend — lint & type-check
+  frontend-quality:
+    name: Frontend quality
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -57,21 +73,26 @@ jobs:
           node-version: "20"
           cache: "npm"
           cache-dependency-path: frontend/package-lock.json
-      - name: Install deps
+      - name: Install frontend dependencies
         run: cd frontend && npm ci
-      - name: Lint
+      - name: Lint frontend
         run: npm run lint:frontend
-      - name: Type-check
+      - name: Type-check frontend
         run: npm run type-check
-      - name: Build
+      - name: Build frontend
         run: npm run build:frontend
 
-  docker-build:
-    name: Docker — build all images
+  docs-quality:
+    name: Docs build
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Build backend
-        run: docker build ./backend -t argus-backend:ci
-      - name: Build frontend
-        run: docker build ./frontend -t argus-frontend:ci
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: "npm"
+          cache-dependency-path: website/package-lock.json
+      - name: Install docs dependencies
+        run: cd website && npm ci
+      - name: Build docs site
+        run: npm run docs:build

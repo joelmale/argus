@@ -9,8 +9,13 @@ module.exports = {
   organizationName: 'argus',
   projectName: 'argus',
   onBrokenLinks: 'throw',
-  onBrokenMarkdownLinks: 'warn',
   trailingSlash: false,
+  markdown: {
+    mermaid: true,
+    hooks: {
+      onBrokenMarkdownLinks: 'warn',
+    },
+  },
   i18n: {
     defaultLocale: 'en',
     locales: ['en'],
@@ -38,7 +43,7 @@ module.exports = {
         {
           title: 'Docs',
           items: [
-            { label: 'Introduction', to: '/intro' },
+            { label: 'Introduction', to: '/' },
             { label: 'Getting Started', to: '/getting-started' },
           ],
         },
@@ -69,5 +74,5 @@ module.exports = {
       },
     ],
   ],
-  themes: [],
+  themes: ['@docusaurus/theme-mermaid'],
 };

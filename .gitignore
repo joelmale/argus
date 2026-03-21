@@ -22,6 +22,9 @@ node_modules/
 .next/
 out/
 .npm
+.docusaurus/
+website/.docusaurus/
+website/build/
 *.tsbuildinfo
 .pnp
 .pnp.js

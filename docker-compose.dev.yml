@@ -24,6 +24,9 @@ services:
       start_period: 45s
 
   scanner:
+    build:
+      context: .
+      dockerfile: scanner/Dockerfile
     # Celery watchdog reloads worker when Python files change
     command: >
       celery -A app.workers.tasks.celery_app worker
@@ -37,6 +40,9 @@ services:
     network_mode: host
 
   frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     command: >
       sh -c '
         LOCKFILE_HASH=$$(sha256sum package-lock.json | awk "{print \$$1}");
