@@ -61,6 +61,10 @@ export default function ScansPage() {
   }
 
   const runningScans = scans.filter((s) => s.status === 'running' || s.status === 'pending')
+  const followUpScan = scans.find((scan) =>
+    scan.status === 'done'
+    && (scan.scan_type === 'quick' || scan.scan_type === 'balanced')
+  )
   const stageLabel = activeScan?.stage ? formatScanStage(activeScan.stage) : null
 
   return (
@@ -245,6 +249,46 @@ export default function ScansPage() {
             </Card>
           </div>
         </div>
+
+        {followUpScan && !isViewer && (
+          <Card>
+            <CardHeader>
+              <CardTitle><Layers className="w-4 h-4 inline mr-1.5" />Follow-Up Enrichment</CardTitle>
+            </CardHeader>
+            <CardBody className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <p className="text-sm text-zinc-700 dark:text-zinc-300">
+                  Deepen the latest {followUpScan.scan_type.replaceAll('_', ' ')} scan without retyping targets.
+                </p>
+                <p className="mt-1 text-xs text-zinc-500 font-mono">{followUpScan.targets}</p>
+              </div>
+              <button
+                type="button"
+                disabled={isPending || !!activeScan}
+                onClick={() => {
+                  setError(null)
+                  setLastResult(null)
+                  trigger(
+                    { targets: followUpScan.targets, scan_type: 'deep_enrichment' },
+                    {
+                      onSuccess: () => setLastResult('success'),
+                      onError: () => setLastResult('error'),
+                    },
+                  )
+                }}
+                className={cn(
+                  'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium',
+                  isPending || activeScan
+                    ? 'bg-zinc-200 text-zinc-400 dark:bg-zinc-800'
+                    : 'bg-red-500 text-white hover:bg-red-600',
+                )}
+              >
+                <Layers className="w-4 h-4" />
+                Run Deep Enrichment
+              </button>
+            </CardBody>
+          </Card>
+        )}
 
         {/* Scan history */}
         <div>

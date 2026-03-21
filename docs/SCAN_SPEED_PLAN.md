@@ -37,11 +37,12 @@ This document captures the phased plan for making Argus scans feel faster, retur
     - added parent/child scan-job schema for chunked runs
     - split larger target ranges into child chunks while keeping queue position on the parent job
     - orchestrated child chunks through the parent worker and aggregated progress back to the parent job id
-- [ ] Phase 6: Deep Enrichment Follow-Up Workflow
-  - Current status: not started
-  - Gaps:
-    - no dedicated follow-up enrichment action for discovered hosts or selected assets
-    - no post-inventory enrichment workflow in the scans or assets UI
+- [x] Phase 6: Deep Enrichment Follow-Up Workflow
+  - Current status: completed
+  - Completed:
+    - added follow-up deep-enrichment actions after quick or balanced scans
+    - added inventory-side enrichment actions for selected assets, recent discoveries, unresolved assets, and unknown assets
+    - kept enrichment as an explicit second-step workflow instead of slowing baseline inventory scans
 
 ## Goals
 
@@ -266,10 +267,10 @@ Argus can collect baseline inventory quickly and then deepen analysis as a delib
 
 Checklist:
 
-- [ ] Add follow-up enrichment action after quick or balanced scans
-- [ ] Support enrichment for new hosts from the latest scan
-- [ ] Support enrichment for selected assets
-- [ ] Support enrichment for unresolved or unknown assets
+- [x] Add follow-up enrichment action after quick or balanced scans
+- [x] Support enrichment for new hosts from the latest scan
+- [x] Support enrichment for selected assets
+- [x] Support enrichment for unresolved or unknown assets
 - [ ] Make AI optional for the follow-up flow
 
 ## Recommended Implementation Order

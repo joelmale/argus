@@ -2,7 +2,9 @@
 
 import { useState, type Dispatch, type SetStateAction } from 'react'
 import Link from 'next/link'
-import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot, Check, ChevronDown } from 'lucide-react'
+import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot, Check, ChevronDown, Loader2, Microscope } from 'lucide-react'
+import { useCurrentUser } from '@/hooks/useAuth'
+import { useTriggerScan } from '@/hooks/useScans'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { confidenceLabel, timeAgo, cn } from '@/lib/utils'
 import type { Asset } from '@/types'
@@ -103,6 +105,7 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('ip')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [openFilter, setOpenFilter] = useState<FilterKey | null>(null)
+  const [queuedEnrichmentIp, setQueuedEnrichmentIp] = useState<string | null>(null)
   const [filters, setFilters] = useState<Record<FilterKey, string>>({
     hostname: '',
     vendor: '',
@@ -112,6 +115,8 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
     status: '',
     last_seen: '',
   })
+  const { data: currentUser } = useCurrentUser()
+  const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
 
   if (isError) {
     return (
@@ -271,6 +276,9 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
                   </div>
                 </th>
               ))}
+              <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider whitespace-nowrap">
+                Actions
+              </th>
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-zinc-800">
@@ -279,12 +287,30 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
               : sortedViews.length === 0
                 ? (
                   <tr>
-                    <td colSpan={8} className="px-4 py-16 text-center text-zinc-400">
+                    <td colSpan={9} className="px-4 py-16 text-center text-zinc-400">
                       No assets match the current filters.
                     </td>
                   </tr>
                 )
-                : sortedViews.map((view) => <AssetRow key={view.asset.id} asset={view.asset} />)
+                : sortedViews.map((view) => (
+                  <AssetRow
+                    key={view.asset.id}
+                    asset={view.asset}
+                    canEnrich={currentUser?.role === 'admin'}
+                    isEnriching={isEnrichmentPending && queuedEnrichmentIp === view.asset.ip_address}
+                    onRunEnrichment={() => {
+                      setQueuedEnrichmentIp(view.asset.ip_address)
+                      triggerEnrichment(
+                        { targets: view.asset.ip_address, scan_type: 'deep_enrichment' },
+                        {
+                          onSettled: () => setQueuedEnrichmentIp((current) => (
+                            current === view.asset.ip_address ? null : current
+                          )),
+                        },
+                      )
+                    }}
+                  />
+                ))
             }
           </tbody>
         </table>
@@ -370,7 +396,17 @@ function uniqueOptions(values: Array<string | null | undefined>) {
   }))
 }
 
-function AssetRow({ asset }: Readonly<{ asset: Asset }>) {
+function AssetRow({
+  asset,
+  canEnrich,
+  isEnriching,
+  onRunEnrichment,
+}: Readonly<{
+  asset: Asset
+  canEnrich: boolean
+  isEnriching: boolean
+  onRunEnrichment: () => void
+}>) {
   const ai = (asset as any).ai_analysis
   const deviceClass = ai?.device_class ?? asset.device_type ?? 'unknown'
   const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open').length
@@ -428,12 +464,27 @@ function AssetRow({ asset }: Readonly<{ asset: Asset }>) {
       <td className="px-4 py-3 text-xs text-zinc-400 whitespace-nowrap">
         {timeAgo(asset.last_seen)}
       </td>
+      <td className="px-4 py-3">
+        {canEnrich ? (
+          <button
+            type="button"
+            onClick={onRunEnrichment}
+            disabled={isEnriching}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-2.5 py-1.5 text-[11px] text-zinc-600 hover:text-zinc-900 dark:border-zinc-700 dark:text-zinc-300 dark:hover:text-zinc-100"
+          >
+            {isEnriching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Microscope className="w-3.5 h-3.5" />}
+            {isEnriching ? 'Queueing…' : 'Enrich'}
+          </button>
+        ) : (
+          <span className="text-xs text-zinc-400">—</span>
+        )}
+      </td>
     </tr>
   )
 }
 
 function SkeletonRow() {
-  const widths = Array.from({ length: 8 }, (_, index) => ({
+  const widths = Array.from({ length: 9 }, (_, index) => ({
     key: `asset-skeleton-cell-${index}`,
     width: `${60 + index * 10}%`,
   }))

@@ -4,10 +4,11 @@ import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useRefreshAssetAiAnalysis, useRemoveAssetTag, useRestoreAssist, useRunAssetPortScan, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
+import { useTriggerScan } from '@/hooks/useScans'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
-import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert, Microscope, ChevronDown, ChevronUp, Workflow } from 'lucide-react'
+import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert, Microscope, ChevronDown, ChevronUp, Workflow, Loader2 } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { Asset, AssetAutopsyStage, ConfigBackupTarget } from '@/types'
@@ -631,6 +632,7 @@ export default function AssetDetailPage() {
   const { data: currentUser } = useCurrentUser()
   const { mutate: runPortScan, isPending: isPortScanPending } = useRunAssetPortScan()
   const { mutate: refreshAiAnalysis, isPending: isAiLookupPending } = useRefreshAssetAiAnalysis()
+  const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
   const [showAutopsy, setShowAutopsy] = useState(false)
 
   if (isLoading) return (
@@ -673,6 +675,17 @@ export default function AssetDetailPage() {
               )}
             </div>
             <div className="flex items-center gap-2 flex-wrap">
+              {currentUser?.role === 'admin' && (
+                <button
+                  type="button"
+                  onClick={() => triggerEnrichment({ targets: asset.ip_address, scan_type: 'deep_enrichment' })}
+                  disabled={isEnrichmentPending}
+                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+                >
+                  {isEnrichmentPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Microscope className="w-3.5 h-3.5" />}
+                  {isEnrichmentPending ? 'Queueing enrichment…' : 'Run Deep Enrichment'}
+                </button>
+              )}
               <button
                 type="button"
                 onClick={() => setShowAutopsy((current) => !current)}
