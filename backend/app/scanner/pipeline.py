@@ -112,6 +112,11 @@ async def run_scan(
             "job_id": job_id,
             "stage": "discovery",
             "progress": 0.05,
+            "hosts_port_scanned": 0,
+            "hosts_fingerprinted": 0,
+            "hosts_deep_probed": 0,
+            "assets_created": summary.new_assets,
+            "assets_updated": summary.changed_assets,
             "message": f"Starting host discovery for {targets}",
         },
     })
@@ -134,6 +139,11 @@ async def run_scan(
             "stage": "discovery",
             "progress": 0.15,
             "hosts_found": len(hosts),
+            "hosts_port_scanned": 0,
+            "hosts_fingerprinted": 0,
+            "hosts_deep_probed": 0,
+            "assets_created": summary.new_assets,
+            "assets_updated": summary.changed_assets,
             "message": f"Discovered {len(hosts)} live hosts",
         },
     })
@@ -168,6 +178,11 @@ async def run_scan(
             "stage": "port_scan",
             "progress": 0.2,
             "hosts_found": len(hosts),
+            "hosts_port_scanned": 0,
+            "hosts_fingerprinted": 0,
+            "hosts_deep_probed": 0,
+            "assets_created": summary.new_assets,
+            "assets_updated": summary.changed_assets,
             "message": f"Running nmap port scan across {len(hosts)} hosts",
         },
     })
@@ -227,6 +242,7 @@ async def run_scan(
 
     results: list[HostScanResult | None] = []
     completed_hosts = 0
+    deep_probed_hosts = 0
     total_hosts = len(tasks)
     await _broadcast(broadcast_fn, {
         "event": "scan_progress",
@@ -235,7 +251,12 @@ async def run_scan(
             "stage": "investigation",
             "progress": 0.25,
             "hosts_found": len(hosts),
+            "hosts_port_scanned": len(hosts),
+            "hosts_fingerprinted": 0,
+            "hosts_deep_probed": 0,
             "hosts_investigated": 0,
+            "assets_created": summary.new_assets,
+            "assets_updated": summary.changed_assets,
             "message": f"Investigating {total_hosts} discovered hosts",
         },
     })
@@ -244,6 +265,8 @@ async def run_scan(
         result = await task
         results.append(result)
         completed_hosts += 1
+        if result is not None and result.probes:
+            deep_probed_hosts += 1
         if db_session is not None and result is not None:
             await _persist_results(
                 db_session,
@@ -264,8 +287,13 @@ async def run_scan(
                 "stage": "investigation",
                 "progress": round(progress, 3),
                 "hosts_found": len(hosts),
+                "hosts_port_scanned": len(hosts),
+                "hosts_fingerprinted": completed_hosts,
+                "hosts_deep_probed": deep_probed_hosts,
                 "hosts_investigated": completed_hosts,
                 "current_host": current_host,
+                "assets_created": summary.new_assets,
+                "assets_updated": summary.changed_assets,
                 "message": f"Investigated {completed_hosts}/{total_hosts} hosts",
             },
         })
@@ -297,7 +325,12 @@ async def run_scan(
                 "stage": "persist",
                 "progress": 0.9,
                 "hosts_found": len(hosts),
+                "hosts_port_scanned": len(hosts),
+                "hosts_fingerprinted": completed_hosts,
+                "hosts_deep_probed": deep_probed_hosts,
                 "hosts_investigated": completed_hosts,
+                "assets_created": summary.new_assets,
+                "assets_updated": summary.changed_assets,
                 "message": f"Persisting results for {completed_hosts} investigated hosts",
             },
         })

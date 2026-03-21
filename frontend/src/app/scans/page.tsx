@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
@@ -60,6 +61,7 @@ export default function ScansPage() {
   }
 
   const runningScans = scans.filter((s) => s.status === 'running' || s.status === 'pending')
+  const stageLabel = activeScan?.stage ? formatScanStage(activeScan.stage) : null
 
   return (
     <AppShell>
@@ -185,7 +187,7 @@ export default function ScansPage() {
                     <div className="flex items-center gap-2">
                       <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse flex-shrink-0" />
                       <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
-                        {activeScan.stage ? `Stage: ${activeScan.stage}` : 'Scanning…'}
+                        {stageLabel ? `Stage: ${stageLabel}` : 'Scanning…'}
                       </span>
                     </div>
                     {activeScan.current_host && (
@@ -209,10 +211,21 @@ export default function ScansPage() {
                       </div>
                     )}
                     {activeScan.hosts_found !== undefined && (
-                      <p className="text-xs text-zinc-500">
-                        <span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_found}</span> hosts discovered
-                      </p>
+                      <div className="grid grid-cols-2 gap-2 text-xs text-zinc-500">
+                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_found}</span> hosts discovered</p>
+                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_port_scanned ?? 0}</span> port scanned</p>
+                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_fingerprinted ?? 0}</span> fingerprinted</p>
+                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_deep_probed ?? 0}</span> deep probed</p>
+                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.assets_created ?? 0}</span> assets created</p>
+                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.assets_updated ?? 0}</span> assets updated</p>
+                      </div>
                     )}
+                    <Link
+                      href="/assets"
+                      className="inline-flex items-center justify-center rounded-lg border border-sky-200 px-3 py-2 text-xs font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-900 dark:text-sky-300 dark:hover:bg-sky-950/30"
+                    >
+                      View Inventory So Far
+                    </Link>
                   </div>
                 ) : runningScans.length > 0 ? (
                   <div className="flex items-center gap-2">
@@ -249,4 +262,15 @@ export default function ScansPage() {
       </div>
     </AppShell>
   )
+}
+
+function formatScanStage(stage: string) {
+  const labels: Record<string, string> = {
+    discovery: 'Discovery',
+    port_scan: 'Port Scan',
+    investigation: 'Fingerprint + Probes',
+    persist: 'Finalize Inventory',
+    queued: 'Queued',
+  }
+  return labels[stage] ?? stage.replaceAll('_', ' ')
 }

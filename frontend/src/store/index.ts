@@ -14,7 +14,12 @@ export interface ActiveScan {
   stage?: string
   current_host?: string
   hosts_found?: number
+  hosts_port_scanned?: number
+  hosts_fingerprinted?: number
+  hosts_deep_probed?: number
   hosts_investigated?: number
+  assets_created?: number
+  assets_updated?: number
   progress?: number
   message?: string
 }
@@ -105,7 +110,12 @@ export function processWsEvent(payload: WsEvent, store: ReturnType<typeof useApp
         stage: payload.data.stage,
         current_host: payload.data.current_host,
         hosts_found: payload.data.hosts_found,
+        hosts_port_scanned: payload.data.hosts_port_scanned,
+        hosts_fingerprinted: payload.data.hosts_fingerprinted,
+        hosts_deep_probed: payload.data.hosts_deep_probed,
         hosts_investigated: payload.data.hosts_investigated,
+        assets_created: payload.data.assets_created,
+        assets_updated: payload.data.assets_updated,
         progress: payload.data.progress,
         message: payload.data.message,
       })

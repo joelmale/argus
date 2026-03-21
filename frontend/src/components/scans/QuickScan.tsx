@@ -31,7 +31,7 @@ export function QuickScan() {
         {activeScan && (
           <span className="flex items-center gap-1.5 text-xs text-yellow-500">
             <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
-            Scanning…
+            {activeScan.stage ? `Stage: ${formatScanStage(activeScan.stage)}` : 'Scanning…'}
           </span>
         )}
       </CardHeader>
@@ -104,9 +104,23 @@ export function QuickScan() {
             {activeScan.hosts_found !== undefined && (
               <p className="text-xs text-zinc-500 mt-0.5">{activeScan.hosts_found} hosts discovered</p>
             )}
+            {activeScan.assets_created !== undefined && (
+              <p className="text-xs text-zinc-500 mt-0.5">{activeScan.assets_created} created · {activeScan.assets_updated ?? 0} updated</p>
+            )}
           </div>
         )}
       </CardBody>
     </Card>
   )
+}
+
+function formatScanStage(stage: string) {
+  const labels: Record<string, string> = {
+    discovery: 'Discovery',
+    port_scan: 'Port Scan',
+    investigation: 'Fingerprint + Probes',
+    persist: 'Finalize Inventory',
+    queued: 'Queued',
+  }
+  return labels[stage] ?? stage.replaceAll('_', ' ')
 }

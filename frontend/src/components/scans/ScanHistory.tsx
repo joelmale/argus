@@ -278,6 +278,9 @@ function buildScanDetails(scan: ScanJob): string[] {
   const message = typeof summary.message === 'string' ? summary.message : 'Waiting for scanner update'
   const hostsFound = stringifySummaryValue(summary.hosts_found, '—')
   const hostsDone = stringifySummaryValue(summary.hosts_investigated, '0')
+  const portsScanned = stringifySummaryValue(summary.hosts_port_scanned, '0')
+  const hostsFingerprinted = stringifySummaryValue(summary.hosts_fingerprinted, '0')
+  const hostsDeepProbed = stringifySummaryValue(summary.hosts_deep_probed, '0')
   const currentHost = typeof summary.current_host === 'string' ? summary.current_host : '—'
   const newAssets = stringifySummaryValue(summary.new_assets, '0')
   const changedAssets = stringifySummaryValue(summary.changed_assets, '0')
@@ -296,6 +299,7 @@ function buildScanDetails(scan: ScanJob): string[] {
     `[progress] ${progress}`,
     `[message] ${message}`,
     `[hosts] found=${hostsFound} investigated=${hostsDone}`,
+    `[stages] ports=${portsScanned} fingerprinted=${hostsFingerprinted} deep_probed=${hostsDeepProbed}`,
     `[current] ${currentHost}`,
     `[resume_after] ${resumeAfter}`,
     `[preserved_hosts] ${preservedHosts}`,
@@ -419,7 +423,22 @@ function formatSummaryStage(summary: Record<string, unknown>): string | null {
   if (typeof summary.stage !== 'string') {
     return null
   }
-  return summary.stage.replace('_', ' ')
+  return formatScanStage(summary.stage)
+}
+
+function formatScanStage(stage: string): string {
+  const labels: Record<string, string> = {
+    discovery: 'Discovery',
+    port_scan: 'Port Scan',
+    investigation: 'Fingerprint + Probes',
+    persist: 'Finalize Inventory',
+    queued: 'Queued',
+    paused: 'Paused',
+    failed: 'Failed',
+    cancelled: 'Cancelled',
+    done: 'Done',
+  }
+  return labels[stage] ?? stage.replaceAll('_', ' ')
 }
 
 function ProfileBadge({ profile }: Readonly<{ profile: string }>) {

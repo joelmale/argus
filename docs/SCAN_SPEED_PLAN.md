@@ -17,15 +17,14 @@ This document captures the phased plan for making Argus scans feel faster, retur
     - investigated hosts now persist as they finish
     - asset events now carry stage-aware updates during the scan
     - final persistence is reduced to offline reconciliation instead of a single end-of-job flush
-- [ ] Phase 3: Results-So-Far UX
-  - Current status: partial
+- [x] Phase 3: Results-So-Far UX
+  - Current status: completed
   - Completed:
     - live stage/progress updates
     - current host display
     - discovered-host and investigated-host counters
-  - Gaps:
-    - no dedicated counters yet for port-scanned, fingerprinted, deep-probed, assets created, and assets updated
-    - no direct shortcut from the active scan to assets discovered so far
+    - live counters for port-scanned, fingerprinted, deep-probed, assets created, and assets updated
+    - shortcut from the active scan UI into the inventory view
 - [ ] Phase 4: Performance Settings
   - Current status: partial
   - Completed:
@@ -163,14 +162,14 @@ Scans feel active and understandable while they are in progress.
 
 Checklist:
 
-- [ ] Show discovered-host count
-- [ ] Show port-scanned count
-- [ ] Show fingerprinted count
-- [ ] Show deep-probed count
-- [ ] Show assets created count
-- [ ] Show assets updated count
-- [ ] Improve stage labeling to reduce “is it stuck?” confusion
-- [ ] Add a shortcut to view assets discovered from the active scan
+- [x] Show discovered-host count
+- [x] Show port-scanned count
+- [x] Show fingerprinted count
+- [x] Show deep-probed count
+- [x] Show assets created count
+- [x] Show assets updated count
+- [x] Improve stage labeling to reduce “is it stuck?” confusion
+- [x] Add a shortcut to view assets discovered from the active scan
 
 ## Phase 4: Performance Settings
 
