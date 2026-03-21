@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ComponentProps, type ReactNode } from 'react'
 import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
@@ -67,6 +67,67 @@ type ScannerConfigCardProps = {
   }) => void
 }
 
+type TplinkModulePayload = Omit<TplinkDecoConfig, 'id' | 'effective_owner_username' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>
+type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>
+type TplinkDecoModuleCardProps = Readonly<{
+  moduleConfig?: TplinkDecoConfig
+  recentRuns: TplinkDecoSyncRun[]
+  isSaving: boolean
+  isTesting: boolean
+  isSyncing: boolean
+  onSave: (payload: TplinkModulePayload) => Promise<unknown>
+  onTest: () => Promise<unknown>
+  onSync: () => Promise<unknown>
+}>
+type FingerprintDatasetsCardProps = Readonly<{
+  datasets: FingerprintDataset[]
+  onRefresh: (key: string) => void
+  refreshingKey: string | null
+}>
+type SettingsSectionProps = Readonly<{
+  id: string
+  title: string
+  description?: string
+  children: ReactNode
+}>
+
+function describeTplinkActionError(error: unknown) {
+  if (!axios.isAxiosError(error)) {
+    return 'The Deco action failed before Argus returned a usable response.'
+  }
+  if (!error.response) {
+    return 'Argus could not reach the backend while running the Deco action.'
+  }
+  const detail = error.response.data && typeof error.response.data === 'object'
+    ? (error.response.data as { detail?: unknown }).detail
+    : undefined
+  if (typeof detail === 'string' && detail.trim()) {
+    return detail
+  }
+  return `The Deco action failed with HTTP ${error.response.status}.`
+}
+
+function buildTplinkTestMessage(
+  result: { client_count?: number; device_count?: number; status?: string; auth_username?: string } | undefined,
+  saved: { last_client_count?: number } | undefined,
+) {
+  const clientCount = result?.client_count ?? saved?.last_client_count
+  const deviceSummary = typeof result?.device_count === 'number' ? `, ${result.device_count} Deco nodes detected` : ''
+  const clientSummary = typeof clientCount === 'number'
+    ? `${typeof result?.device_count === 'number' ? ' and' : ','} ${clientCount} clients detected`
+    : ''
+  const authSummary = result?.auth_username ? ` using hidden username ${result.auth_username}` : ''
+  return `Connection test ${result?.status ?? 'completed'}${deviceSummary}${clientSummary}${authSummary}.`
+}
+
+function buildTplinkSyncMessage(result: { ingested_assets?: number; client_count?: number; device_count?: number } | undefined) {
+  const assetSummary = typeof result?.ingested_assets === 'number' ? `, ${result.ingested_assets} assets updated` : ''
+  const nodeSummary = typeof result?.device_count === 'number' ? ` from ${result.device_count} Deco nodes` : ''
+  const clientPrefix = typeof result?.device_count === 'number' ? ' and' : ' from'
+  const clientSummary = typeof result?.client_count === 'number' ? `${clientPrefix} ${result.client_count} Deco clients` : ''
+  return `Sync completed${assetSummary}${nodeSummary}${clientSummary}.`
+}
+
 function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: BackupPolicyFormProps) {
   const [backupEnabled, setBackupEnabled] = useState(backupPolicy?.enabled ?? false)
   const [backupInterval, setBackupInterval] = useState(backupPolicy?.interval_minutes ?? 720)
@@ -82,7 +143,7 @@ function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: Back
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={backupEnabled} onChange={(event) => setBackupEnabled(event.target.checked)} />
-            Enable scheduled backups
+            <span>Enable scheduled backups</span>
           </label>
           <input value={backupTag} onChange={(event) => setBackupTag(event.target.value)} placeholder="Tag filter" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
           <input value={backupInterval} type="number" onChange={(event) => setBackupInterval(Number(event.target.value) || 720)} placeholder="Interval minutes" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
@@ -134,11 +195,11 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={scannerEnabled} onChange={(event) => setScannerEnabled(event.target.checked)} />
-            Enable scheduled scans
+            <span>Enable scheduled scans</span>
           </label>
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={autoDetectTargets} onChange={(event) => setAutoDetectTargets(event.target.checked)} />
-            Auto-detect local subnet when no explicit target is set
+            <span>Auto-detect local subnet when no explicit target is set</span>
           </label>
           <input
             value={defaultTargets}
@@ -174,7 +235,7 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
           />
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
-            Enable Ollama fingerprint synthesis
+            <span>Enable Ollama fingerprint synthesis</span>
           </label>
           <input
             value={fingerprintAiModel}
@@ -194,7 +255,7 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
           />
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={internetLookupEnabled} onChange={(event) => setInternetLookupEnabled(event.target.checked)} />
-            Enable internet lookup for unresolved assets
+            <span>Enable internet lookup for unresolved assets</span>
           </label>
           <input
             value={internetLookupBudget}
@@ -272,11 +333,7 @@ function FingerprintDatasetsCard({
   datasets,
   onRefresh,
   refreshingKey,
-}: {
-  datasets: FingerprintDataset[]
-  onRefresh: (key: string) => void
-  refreshingKey: string | null
-}) {
+}: FingerprintDatasetsCardProps) {
   return (
     <Card>
       <CardHeader>
@@ -336,16 +393,7 @@ function TplinkDecoModuleCard({
   onSave,
   onTest,
   onSync,
-}: {
-  moduleConfig?: TplinkDecoConfig
-  recentRuns: TplinkDecoSyncRun[]
-  isSaving: boolean
-  isTesting: boolean
-  isSyncing: boolean
-  onSave: (payload: Omit<TplinkDecoConfig, 'id' | 'effective_owner_username' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>) => Promise<unknown>
-  onTest: () => Promise<unknown>
-  onSync: () => Promise<unknown>
-}) {
+}: TplinkDecoModuleCardProps) {
   const [enabled, setEnabled] = useState(moduleConfig?.enabled ?? false)
   const [baseUrl, setBaseUrl] = useState(moduleConfig?.base_url ?? 'http://tplinkdeco.net')
   const [ownerPassword, setOwnerPassword] = useState(moduleConfig?.owner_password ?? '')
@@ -369,22 +417,6 @@ function TplinkDecoModuleCard({
     }
   }
 
-  function describeActionError(error: unknown) {
-    if (!axios.isAxiosError(error)) {
-      return 'The Deco action failed before Argus returned a usable response.'
-    }
-    if (!error.response) {
-      return 'Argus could not reach the backend while running the Deco action.'
-    }
-    const detail = error.response.data && typeof error.response.data === 'object'
-      ? (error.response.data as { detail?: unknown }).detail
-      : undefined
-    if (typeof detail === 'string' && detail.trim()) {
-      return detail
-    }
-    return `The Deco action failed with HTTP ${error.response.status}.`
-  }
-
   async function handleSave() {
     setActionMessage(null)
     setActionError(null)
@@ -400,12 +432,9 @@ function TplinkDecoModuleCard({
       // not an older persisted password or portal URL.
       const saved = await onSave(buildPayload()) as { last_client_count?: number } | undefined
       const result = await onTest() as { client_count?: number; device_count?: number; status?: string; auth_username?: string } | undefined
-      const clientCount = result?.client_count ?? saved?.last_client_count
-      const deviceCount = result?.device_count
-      const authUsername = result?.auth_username
-      setActionMessage(`Connection test ${result?.status ?? 'completed'}${typeof deviceCount === 'number' ? `, ${deviceCount} Deco nodes detected` : ''}${typeof clientCount === 'number' ? `${typeof deviceCount === 'number' ? ' and' : ','} ${clientCount} clients detected` : ''}${authUsername ? ` using hidden username ${authUsername}` : ''}.`)
+      setActionMessage(buildTplinkTestMessage(result, saved))
     } catch (error) {
-      setActionError(describeActionError(error))
+      setActionError(describeTplinkActionError(error))
     }
   }
 
@@ -415,9 +444,9 @@ function TplinkDecoModuleCard({
     try {
       await onSave(buildPayload())
       const result = await onSync() as { ingested_assets?: number; client_count?: number; device_count?: number } | undefined
-      setActionMessage(`Sync completed${typeof result?.ingested_assets === 'number' ? `, ${result.ingested_assets} assets updated` : ''}${typeof result?.device_count === 'number' ? ` from ${result.device_count} Deco nodes` : ''}${typeof result?.client_count === 'number' ? `${typeof result?.device_count === 'number' ? ' and' : ' from'} ${result.client_count} Deco clients` : ''}.`)
+      setActionMessage(buildTplinkSyncMessage(result))
     } catch (error) {
-      setActionError(describeActionError(error))
+      setActionError(describeTplinkActionError(error))
     }
   }
 
@@ -434,19 +463,19 @@ function TplinkDecoModuleCard({
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-            Enable Deco module
+            <span>Enable Deco module</span>
           </label>
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={fetchConnectedClients} onChange={(event) => setFetchConnectedClients(event.target.checked)} />
-            Pull connected clients
+            <span>Pull connected clients</span>
           </label>
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={fetchPortalLogs} onChange={(event) => setFetchPortalLogs(event.target.checked)} />
-            Pull portal logs
+            <span>Pull portal logs</span>
           </label>
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={verifyTls} onChange={(event) => setVerifyTls(event.target.checked)} />
-            Verify TLS
+            <span>Verify TLS</span>
           </label>
           <input
             value={baseUrl}
@@ -572,8 +601,8 @@ function TplinkDecoModuleCard({
                   {run.log_analysis.recommendations.length > 0 && (
                     <div className="space-y-2">
                       <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Recommendations</p>
-                      {run.log_analysis.recommendations.map((item, index) => (
-                        <div key={`${item.title}-${index}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+                      {run.log_analysis.recommendations.map((item) => (
+                        <div key={`${item.title}:${item.recommendation}`} className="rounded-lg border border-amber-200 bg-amber-50 p-3 text-xs text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
                           <p className="font-medium">{item.title}</p>
                           <p className="mt-1">{item.recommendation}</p>
                         </div>
@@ -611,12 +640,7 @@ function SettingsSection({
   title,
   description,
   children,
-}: {
-  id: string
-  title: string
-  description?: string
-  children: React.ReactNode
-}) {
+}: SettingsSectionProps) {
   return (
     <section id={id} className="space-y-4 scroll-mt-24">
       <div>
@@ -674,7 +698,7 @@ export default function SettingsPage() {
   const [inventoryConfirm, setInventoryConfirm] = useState('')
   const [includeScanHistory, setIncludeScanHistory] = useState(false)
 
-  function handleCreateUser(event: React.FormEvent) {
+  const handleCreateUser: FormSubmitHandler = (event) => {
     event.preventDefault()
     setUserError(null)
     createUser(
@@ -690,7 +714,7 @@ export default function SettingsPage() {
     )
   }
 
-  function handleCreateApiKey(event: React.FormEvent) {
+  const handleCreateApiKey: FormSubmitHandler = (event) => {
     event.preventDefault()
     createApiKey(
       { name: apiKeyName.trim() || 'CLI key' },
@@ -858,7 +882,7 @@ export default function SettingsPage() {
                                 disabled={isUpdatingAlertRule}
                                 onChange={(event) => updateAlertRule({ id: rule.id, payload: { enabled: event.target.checked } })}
                               />
-                              Enabled
+                              <span>Enabled</span>
                             </label>
                             <label className="inline-flex items-center gap-2">
                               <input
@@ -867,7 +891,7 @@ export default function SettingsPage() {
                                 disabled={isUpdatingAlertRule}
                                 onChange={(event) => updateAlertRule({ id: rule.id, payload: { notify_email: event.target.checked } })}
                               />
-                              Email
+                              <span>Email</span>
                             </label>
                             <label className="inline-flex items-center gap-2">
                               <input
@@ -876,7 +900,7 @@ export default function SettingsPage() {
                                 disabled={isUpdatingAlertRule}
                                 onChange={(event) => updateAlertRule({ id: rule.id, payload: { notify_webhook: event.target.checked } })}
                               />
-                              Webhook
+                              <span>Webhook</span>
                             </label>
                           </div>
                         </div>
@@ -1052,7 +1076,7 @@ export default function SettingsPage() {
                           disabled={isUpdatingUser}
                           onChange={(event) => updateUser({ id: user.id, payload: { is_active: event.target.checked } })}
                         />
-                        Active
+                        <span>Active</span>
                       </label>
                     </div>
                   ))}
@@ -1212,7 +1236,7 @@ export default function SettingsPage() {
                       </p>
                       <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
                         <input type="checkbox" checked={includeScanHistory} onChange={(event) => setIncludeScanHistory(event.target.checked)} />
-                        Also delete scan job history
+                        <span>Also delete scan job history</span>
                       </label>
                       <input
                         value={inventoryConfirm}
@@ -1258,8 +1282,8 @@ export default function SettingsPage() {
                 'OLLAMA_BASE_URL=http://ollama:11434/v1',
                 'OLLAMA_MODEL=qwen2.5:7b',
                 '# ANTHROPIC_API_KEY=sk-ant-...',
-              ].map((line, i) => (
-                <div key={i}>
+              ].map((line) => (
+                <div key={line || 'blank-line'}>
                   <span className={line.startsWith('#') ? 'text-zinc-500' : line === '' ? '' : 'text-emerald-400'}>
                     {line || '\u00a0'}
                   </span>

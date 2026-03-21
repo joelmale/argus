@@ -58,7 +58,8 @@ class ScanQueueRequest(BaseModel):
     action: str
 
 
-SCAN_NOT_FOUND_RESPONSE = {404: {"description": "Scan not found"}}
+SCAN_NOT_FOUND_DETAIL = "Scan not found"
+SCAN_NOT_FOUND_RESPONSE = {404: {"description": SCAN_NOT_FOUND_DETAIL}}
 TRIGGER_SCAN_RESPONSES = {400: {"description": "Invalid or unroutable scan targets"}}
 SCAN_CONTROL_RESPONSES = {
     400: {"description": "Unsupported or invalid scan control request"},
@@ -285,7 +286,7 @@ async def ingest_logs(
 async def get_scan(job_id: UUID, db: DBSession, _: CurrentUser):
     job = await db.get(ScanJob, job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
     return job
 
 
@@ -298,7 +299,7 @@ async def control_scan(
 ):
     job = await db.get(ScanJob, job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
 
     action = payload.action.lower()
     mode = (payload.mode or "discard").lower()
@@ -345,7 +346,7 @@ async def reorder_scan_queue(
 
     job = await db.get(ScanJob, job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Scan not found")
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
     if job.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only queued pending scans can be reordered")
 

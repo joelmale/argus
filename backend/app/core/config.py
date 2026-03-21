@@ -1,3 +1,4 @@
+from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -8,7 +9,13 @@ class Settings(BaseSettings):
     APP_SECRET_KEY: str = "change-me"
     APP_DEBUG: bool = True
 
-    DATABASE_URL: str = "postgresql+asyncpg://argus:argus_dev_password@db:5432/argus"
+    DATABASE_URL: str = ""
+    DATABASE_URL_DOCKER: str = ""
+    DATABASE_HOST: str = "db"
+    DATABASE_PORT: int = 5432
+    DATABASE_NAME: str = "argus"
+    DATABASE_USER: str = "argus"
+    DATABASE_PASSWORD: str = ""
     REDIS_URL: str = "redis://redis:6379/0"
 
     SCANNER_DEFAULT_TARGETS: str = "192.168.1.0/24"
@@ -61,6 +68,22 @@ class Settings(BaseSettings):
     SCANNER_DEFAULT_PROFILE: str = "balanced"
     SCANNER_CONCURRENT_HOSTS: int = 10
     SCANNER_PASSIVE_ARP_INTERFACE: str = "eth0"
+
+    @model_validator(mode="after")
+    def _populate_database_url(self) -> "Settings":
+        if self.DATABASE_URL:
+            return self
+        if self.DATABASE_URL_DOCKER:
+            self.DATABASE_URL = self.DATABASE_URL_DOCKER
+            return self
+
+        credentials = self.DATABASE_USER
+        if self.DATABASE_PASSWORD:
+            credentials = f"{credentials}:{self.DATABASE_PASSWORD}"
+        self.DATABASE_URL = (
+            f"postgresql+asyncpg://{credentials}@{self.DATABASE_HOST}:{self.DATABASE_PORT}/{self.DATABASE_NAME}"
+        )
+        return self
 
 
 settings = Settings()

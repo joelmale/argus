@@ -28,7 +28,7 @@ const DEVICE_TYPE_OPTIONS = [
   'unknown',
 ] as const
 
-function AssetMetadataEditor({ asset }: { asset: Asset }) {
+function AssetMetadataEditor({ asset }: Readonly<{ asset: Asset }>) {
   const { mutate: updateAsset, isPending: isSaving } = useUpdateAsset()
   const { mutate: addTag, isPending: isAddingTag } = useAddAssetTag()
   const { mutate: removeTag } = useRemoveAssetTag()
@@ -153,7 +153,7 @@ function AssetMetadataEditor({ asset }: { asset: Asset }) {
   )
 }
 
-function ConfigBackupForm({ asset, target }: { asset: Asset; target: ConfigBackupTarget | null | undefined }) {
+function ConfigBackupForm({ asset, target }: Readonly<{ asset: Asset; target: ConfigBackupTarget | null | undefined }>) {
   const { mutate: saveTarget, isPending: isSaving } = useUpsertConfigBackupTarget()
   const { mutate: triggerBackup, isPending: isRunning } = useTriggerConfigBackup()
   const [driver, setDriver] = useState(target?.driver ?? 'openwrt')
@@ -192,7 +192,7 @@ function ConfigBackupForm({ asset, target }: { asset: Asset; target: ConfigBacku
         <input value={port} type="number" onChange={(event) => setPort(Number(event.target.value) || 22)} placeholder="22" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
         <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
           <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-          Enabled
+          <span>Enabled</span>
         </label>
       </div>
 
@@ -208,7 +208,7 @@ function ConfigBackupForm({ asset, target }: { asset: Asset; target: ConfigBacku
   )
 }
 
-function ConfigBackupCard({ asset }: { asset: Asset }) {
+function ConfigBackupCard({ asset }: Readonly<{ asset: Asset }>) {
   const { data: target } = useConfigBackupTarget(asset.id)
   const { data: backups = [] } = useConfigBackups(asset.id)
   const { mutateAsync: downloadBackup } = useDownloadConfigBackup()
@@ -286,7 +286,7 @@ function ConfigBackupCard({ asset }: { asset: Asset }) {
   )
 }
 
-function WirelessAssociationsCard({ asset }: { asset: Asset }) {
+function WirelessAssociationsCard({ asset }: Readonly<{ asset: Asset }>) {
   const { data: associations = [] } = useWirelessClients(asset.id)
 
   return (
@@ -316,7 +316,7 @@ function WirelessAssociationsCard({ asset }: { asset: Asset }) {
   )
 }
 
-function AssetFindingsCard({ asset }: { asset: Asset }) {
+function AssetFindingsCard({ asset }: Readonly<{ asset: Asset }>) {
   const { data: findings = [] } = useAssetFindings(asset.id)
 
   return (
@@ -344,7 +344,7 @@ function AssetFindingsCard({ asset }: { asset: Asset }) {
   )
 }
 
-function FingerprintEvidenceCard({ asset }: { asset: Asset }) {
+function FingerprintEvidenceCard({ asset }: Readonly<{ asset: Asset }>) {
   const evidence = [...(asset.evidence ?? [])].sort((a, b) => {
     if (b.confidence !== a.confidence) return b.confidence - a.confidence
     return a.category.localeCompare(b.category)
@@ -413,7 +413,7 @@ function FingerprintEvidenceCard({ asset }: { asset: Asset }) {
   )
 }
 
-function PassiveTimelineCard({ asset }: { asset: Asset }) {
+function PassiveTimelineCard({ asset }: Readonly<{ asset: Asset }>) {
   const observations = asset.observations ?? []
 
   return (
@@ -440,7 +440,7 @@ function PassiveTimelineCard({ asset }: { asset: Asset }) {
   )
 }
 
-function FingerprintHypothesesCard({ asset }: { asset: Asset }) {
+function FingerprintHypothesesCard({ asset }: Readonly<{ asset: Asset }>) {
   const hypotheses = asset.fingerprint_hypotheses ?? []
 
   return (
@@ -479,7 +479,7 @@ function FingerprintHypothesesCard({ asset }: { asset: Asset }) {
   )
 }
 
-function LookupProvenanceCard({ asset }: { asset: Asset }) {
+function LookupProvenanceCard({ asset }: Readonly<{ asset: Asset }>) {
   const results = asset.internet_lookup_results ?? []
 
   return (
@@ -513,7 +513,7 @@ function LookupProvenanceCard({ asset }: { asset: Asset }) {
   )
 }
 
-function LifecycleCard({ asset }: { asset: Asset }) {
+function LifecycleCard({ asset }: Readonly<{ asset: Asset }>) {
   const records = asset.lifecycle_records ?? []
 
   return (
@@ -543,7 +543,7 @@ function LifecycleCard({ asset }: { asset: Asset }) {
   )
 }
 
-function AutopsyCard({ asset }: { asset: Asset }) {
+function AutopsyCard({ asset }: Readonly<{ asset: Asset }>) {
   const autopsy = asset.autopsy
   if (!autopsy) {
     return (
@@ -583,8 +583,8 @@ function AutopsyCard({ asset }: { asset: Asset }) {
           </div>
         )}
         <div className="space-y-3">
-          {stages.map((stage, index) => (
-            <div key={`${stage.stage}-${index}`} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
+          {stages.map((stage) => (
+            <div key={`${stage.stage}:${stage.status}:${stage.summary}`} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
               <div className="flex items-start justify-between gap-3">
                 <div>
                   <p className="text-sm font-medium capitalize text-zinc-900 dark:text-zinc-100">
@@ -606,7 +606,7 @@ function AutopsyCard({ asset }: { asset: Asset }) {
   )
 }
 
-function AutopsyOutputs({ stage }: { stage: AssetAutopsyStage }) {
+function AutopsyOutputs({ stage }: Readonly<{ stage: AssetAutopsyStage }>) {
   const outputs = Object.entries(stage.outputs ?? {})
   if (outputs.length === 0) return null
 
@@ -636,8 +636,8 @@ export default function AssetDetailPage() {
   if (isLoading) return (
     <AppShell>
       <div className="max-w-5xl mx-auto space-y-4">
-        {[...Array(4)].map((_, i) => (
-          <div key={i} className="h-40 rounded-xl bg-zinc-200 dark:bg-zinc-900 animate-pulse" />
+        {Array.from({ length: 4 }, (_, index) => (
+          <div key={`asset-detail-skeleton-${index}`} className="h-40 rounded-xl bg-zinc-200 dark:bg-zinc-900 animate-pulse" />
         ))}
       </div>
     </AppShell>
@@ -789,9 +789,9 @@ export default function AssetDetailPage() {
                     <div className="mt-4">
                       <p className="text-xs text-zinc-500 mb-2 font-medium">Services identified:</p>
                       <div className="flex flex-wrap gap-1.5">
-                        {ai.open_services_summary.map((s: string, i: number) => (
-                          <span key={i} className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-xs font-mono text-zinc-700 dark:text-zinc-300">
-                            {s}
+                        {ai.open_services_summary.map((service: string) => (
+                          <span key={service} className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-xs font-mono text-zinc-700 dark:text-zinc-300">
+                            {service}
                           </span>
                         ))}
                       </div>
@@ -893,15 +893,15 @@ export default function AssetDetailPage() {
                   <span className="text-xs text-zinc-400">{ai.security_findings.length}</span>
                 </CardHeader>
                 <CardBody className="space-y-3 p-0">
-                  {ai.security_findings.map((f: any, i: number) => (
-                    <div key={i} className="px-5 py-3 border-b last:border-0 border-gray-100 dark:border-zinc-800">
+                  {ai.security_findings.map((finding: any) => (
+                    <div key={`${finding.severity}:${finding.title}`} className="px-5 py-3 border-b last:border-0 border-gray-100 dark:border-zinc-800">
                       <div className="flex items-start gap-2">
-                        <span className={`mt-0.5 inline-flex px-1.5 py-0.5 rounded text-xs font-medium border ${severityColor(f.severity)}`}>
-                          {f.severity}
+                        <span className={`mt-0.5 inline-flex px-1.5 py-0.5 rounded text-xs font-medium border ${severityColor(finding.severity)}`}>
+                          {finding.severity}
                         </span>
                         <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-zinc-900 dark:text-white">{f.title}</p>
-                          <p className="text-xs text-zinc-500 mt-0.5">{f.detail}</p>
+                          <p className="text-sm font-medium text-zinc-900 dark:text-white">{finding.title}</p>
+                          <p className="text-xs text-zinc-500 mt-0.5">{finding.detail}</p>
                         </div>
                       </div>
                     </div>

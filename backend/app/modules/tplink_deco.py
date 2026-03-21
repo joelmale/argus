@@ -22,6 +22,12 @@ from app.db.models import Asset, AssetTag, TplinkDecoConfig, TplinkDecoSyncRun, 
 from app.fingerprinting.passive import record_passive_observation
 
 DEFAULT_DECO_OWNER_USERNAME = "admin"
+DECO_ISSUE_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
+DECO_LOG_EXPORT_ATTEMPTS = [
+    {"data": {"operation": "save"}},
+    {"data": {"operation": "save"}, "files": {"save-log-file": ("", "")}},
+    {"data": {"operation": "save"}, "files": {"save-log-file": ("save-log.txt", b"", "text/plain")}},
+]
 
 
 def _utcnow() -> datetime:
@@ -255,40 +261,67 @@ def analyze_deco_logs(raw_text: str) -> dict[str, Any]:
         },
     ]
 
+    issue_map, observed_macs = _collect_deco_log_matches(lines, pattern_catalog)
+    issues, total_penalty = _build_deco_issues(issue_map)
+    recommendations = _build_deco_recommendations(issues)
+
+    return {
+        "health_score": max(0, 100 - total_penalty),
+        "event_count": len(lines),
+        "issues": issues,
+        "recommendations": recommendations,
+        "observed_macs": sorted(observed_macs),
+    }
+
+
+def _collect_deco_log_matches(lines: list[str], pattern_catalog: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], set[str]]:
     issue_map: dict[str, dict[str, Any]] = {}
     observed_macs: set[str] = set()
-
     for line in lines:
-        normalized_line = line.replace("-", ":").upper()
-        for mac in re.findall(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", normalized_line):
-            observed_macs.add(mac)
-
+        _collect_observed_macs(line, observed_macs)
         for pattern in pattern_catalog:
-            match = pattern["regex"].search(line)
-            if not match:
-                continue
-            bucket = issue_map.setdefault(
-                pattern["key"],
-                {
-                    "key": pattern["key"],
-                    "title": pattern["title"],
-                    "severity": pattern["severity"],
-                    "issue": pattern["issue"],
-                    "recommendation": pattern["recommendation"],
-                    "count": 0,
-                    "sample_lines": [],
-                    "affected_macs": set(),
-                    "health_penalty": pattern["health_penalty"],
-                },
-            )
-            bucket["count"] += 1
-            if len(bucket["sample_lines"]) < 3:
-                bucket["sample_lines"].append(line)
-            for value in match.groupdict().values():
-                if isinstance(value, str) and re.fullmatch(r"(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}", value, re.IGNORECASE):
-                    bucket["affected_macs"].add(value.replace("-", ":").upper())
+            _record_pattern_match(issue_map, pattern, line)
+    return issue_map, observed_macs
 
-    issues = []
+
+def _collect_observed_macs(line: str, observed_macs: set[str]) -> None:
+    normalized_line = line.replace("-", ":").upper()
+    for mac in re.findall(r"(?:[0-9A-F]{2}:){5}[0-9A-F]{2}", normalized_line):
+        observed_macs.add(mac)
+
+
+def _record_pattern_match(issue_map: dict[str, dict[str, Any]], pattern: dict[str, Any], line: str) -> None:
+    match = pattern["regex"].search(line)
+    if not match:
+        return
+    bucket = issue_map.setdefault(
+        pattern["key"],
+        {
+            "key": pattern["key"],
+            "title": pattern["title"],
+            "severity": pattern["severity"],
+            "issue": pattern["issue"],
+            "recommendation": pattern["recommendation"],
+            "count": 0,
+            "sample_lines": [],
+            "affected_macs": set(),
+            "health_penalty": pattern["health_penalty"],
+        },
+    )
+    bucket["count"] += 1
+    if len(bucket["sample_lines"]) < 3:
+        bucket["sample_lines"].append(line)
+    _add_match_group_macs(bucket["affected_macs"], match.groupdict().values())
+
+
+def _add_match_group_macs(affected_macs: set[str], values) -> None:
+    for value in values:
+        if isinstance(value, str) and re.fullmatch(r"(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}", value, re.IGNORECASE):
+            affected_macs.add(value.replace("-", ":").upper())
+
+
+def _build_deco_issues(issue_map: dict[str, dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    issues: list[dict[str, Any]] = []
     total_penalty = 0
     for item in issue_map.values():
         scaled_penalty = item["health_penalty"] * min(item["count"], 5)
@@ -306,11 +339,12 @@ def analyze_deco_logs(raw_text: str) -> dict[str, Any]:
                 "affected_macs": sorted(item["affected_macs"]),
             }
         )
+    issues.sort(key=lambda item: (DECO_ISSUE_SEVERITY_ORDER.get(item["severity"], 9), -item["count"], item["title"]))
+    return issues, total_penalty
 
-    severity_order = {"high": 0, "medium": 1, "low": 2, "info": 3}
-    issues.sort(key=lambda item: (severity_order.get(item["severity"], 9), -item["count"], item["title"]))
 
-    recommendations = []
+def _build_deco_recommendations(issues: list[dict[str, Any]]) -> list[dict[str, str]]:
+    recommendations: list[dict[str, str]] = []
     seen_recommendations: set[str] = set()
     for issue in issues:
         recommendation = issue["recommendation"]
@@ -324,14 +358,7 @@ def analyze_deco_logs(raw_text: str) -> dict[str, Any]:
                 "recommendation": recommendation,
             }
         )
-
-    return {
-        "health_score": max(0, 100 - total_penalty),
-        "event_count": len(lines),
-        "issues": issues,
-        "recommendations": recommendations,
-        "observed_macs": sorted(observed_macs),
-    }
+    return recommendations
 
 
 @dataclass(slots=True)
@@ -566,12 +593,7 @@ class TplinkDecoClient:
         if not self.stok or not self.sysauth:
             await self.login()
 
-        attempts = [
-            {"data": {"operation": "save"}},
-            {"data": {"operation": "save"}, "files": {"save-log-file": ("", "")}},
-            {"data": {"operation": "save"}, "files": {"save-log-file": ("save-log.txt", b"", "text/plain")}},
-        ]
-        for payload in attempts:
+        for payload in DECO_LOG_EXPORT_ATTEMPTS:
             response = await self._client.post(
                 f"/cgi-bin/luci/;stok={self.stok}/admin/log_export",
                 params={"form": "save_log"},
@@ -579,22 +601,9 @@ class TplinkDecoClient:
                 headers={"Referer": f"{self.base_url}/webpages/index.html"},
                 **payload,
             )
-            if response.status_code != 200:
-                continue
-
-            content_type = (response.headers.get("content-type") or "").lower()
-            text = response.text.strip()
-            if not text:
-                continue
-            if "application/json" in content_type or text.startswith("{"):
-                try:
-                    body = response.json()
-                except Exception:
-                    continue
-                if body.get("error_code") in (0, None):
-                    return json.dumps(body, indent=2)
-                continue
-            return text
+            exported = _parse_log_export_response(response)
+            if exported is not None:
+                return exported
         return None
 
     async def fetch_portal_logs(self) -> str | None:
@@ -878,68 +887,13 @@ async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
     await db.flush()
 
     try:
-        async with TplinkDecoClient(
-            base_url=config.base_url,
-            owner_username=config.owner_username,
-            owner_password=config.owner_password,
-            timeout_seconds=config.request_timeout_seconds,
-            verify_tls=config.verify_tls,
-        ) as client:
-            await client.login()
-            devices = await client.fetch_deco_devices()
-            clients: list[DecoClientRecord] = []
-            if config.fetch_connected_clients:
-                clients = await client.fetch_connected_clients()
-            logs_excerpt = None
-            if config.fetch_portal_logs:
-                logs_excerpt = await client.fetch_portal_logs()
-            await client.logout()
-
-        if logs_excerpt:
-            parsed_summary = _parse_deco_log_summary(logs_excerpt)
-            if parsed_summary:
-                logs_excerpt = f"{parsed_summary}\n\n{logs_excerpt}"
+        devices, clients, logs_excerpt = await _fetch_tplink_sync_payload(config)
+        logs_excerpt = _augment_logs_with_summary(logs_excerpt)
         log_analysis = analyze_deco_logs(logs_excerpt or "")
-
-        for device_record in devices:
-            asset = await _resolve_asset_for_deco_device(db, device_record)
-            if asset is None:
-                continue
-            await _enrich_asset_from_deco_device(db, asset, device_record)
-
-        ingested_assets = 0
-        for client_record in clients:
-            asset = await _resolve_asset_for_client(db, client_record)
-            if asset is None:
-                continue
-            await _enrich_asset_from_client(db, asset, client_record)
-            ingested_assets += 1
-
-        run.status = "done"
-        run.client_count = len(clients)
-        run.clients_payload = [client.raw for client in clients]
-        # Keep the assembled log body intact so the UI can offer a faithful
-        # download even when the vendor's save-to-local wrapper is flaky.
-        run.logs_excerpt = logs_excerpt or None
-        run.log_analysis = log_analysis
-        run.finished_at = _utcnow()
-
-        config.last_sync_at = run.finished_at
-        config.last_status = "healthy"
-        config.last_error = None
-        config.last_client_count = len(clients)
+        ingested_assets = await _ingest_tplink_records(db, devices, clients)
+        _finalize_tplink_sync_run(run, config, clients, logs_excerpt, log_analysis)
         await db.flush()
-        return {
-            "status": "done",
-            "client_count": len(clients),
-            "device_count": len(devices),
-            "ingested_assets": ingested_assets,
-            "log_excerpt_present": bool(run.logs_excerpt),
-            "health_score": log_analysis.get("health_score"),
-            "issue_count": len(log_analysis.get("issues", [])),
-            "auth_username": _effective_owner_username(config.owner_username),
-            "run_id": run.id,
-        }
+        return _serialize_tplink_sync_result(run, config, devices, clients, ingested_assets, log_analysis)
     except Exception as exc:
         run.status = "failed"
         run.error = str(exc)
@@ -948,6 +902,106 @@ async def sync_tplink_deco_module(db: AsyncSession) -> dict[str, Any]:
         config.last_error = str(exc)
         await db.flush()
         raise
+
+
+def _parse_log_export_response(response: httpx.Response) -> str | None:
+    if response.status_code != 200:
+        return None
+    content_type = (response.headers.get("content-type") or "").lower()
+    text = response.text.strip()
+    if not text:
+        return None
+    if "application/json" in content_type or text.startswith("{"):
+        try:
+            body = response.json()
+        except Exception:
+            return None
+        if body.get("error_code") in (0, None):
+            return json.dumps(body, indent=2)
+        return None
+    return text
+
+
+async def _fetch_tplink_sync_payload(config: TplinkDecoConfig) -> tuple[list[DecoDeviceRecord], list[DecoClientRecord], str | None]:
+    async with TplinkDecoClient(
+        base_url=config.base_url,
+        owner_username=config.owner_username,
+        owner_password=config.owner_password,
+        timeout_seconds=config.request_timeout_seconds,
+        verify_tls=config.verify_tls,
+    ) as client:
+        await client.login()
+        devices = await client.fetch_deco_devices()
+        clients = await client.fetch_connected_clients() if config.fetch_connected_clients else []
+        logs_excerpt = await client.fetch_portal_logs() if config.fetch_portal_logs else None
+        await client.logout()
+    return devices, clients, logs_excerpt
+
+
+def _augment_logs_with_summary(logs_excerpt: str | None) -> str | None:
+    if not logs_excerpt:
+        return logs_excerpt
+    parsed_summary = _parse_deco_log_summary(logs_excerpt)
+    if not parsed_summary:
+        return logs_excerpt
+    return f"{parsed_summary}\n\n{logs_excerpt}"
+
+
+async def _ingest_tplink_records(db: AsyncSession, devices: list[DecoDeviceRecord], clients: list[DecoClientRecord]) -> int:
+    for device_record in devices:
+        asset = await _resolve_asset_for_deco_device(db, device_record)
+        if asset is None:
+            continue
+        await _enrich_asset_from_deco_device(db, asset, device_record)
+
+    ingested_assets = 0
+    for client_record in clients:
+        asset = await _resolve_asset_for_client(db, client_record)
+        if asset is None:
+            continue
+        await _enrich_asset_from_client(db, asset, client_record)
+        ingested_assets += 1
+    return ingested_assets
+
+
+def _finalize_tplink_sync_run(
+    run: TplinkDecoSyncRun,
+    config: TplinkDecoConfig,
+    clients: list[DecoClientRecord],
+    logs_excerpt: str | None,
+    log_analysis: dict[str, Any],
+) -> None:
+    run.status = "done"
+    run.client_count = len(clients)
+    run.clients_payload = [client.raw for client in clients]
+    run.logs_excerpt = logs_excerpt or None
+    run.log_analysis = log_analysis
+    run.finished_at = _utcnow()
+    config.last_sync_at = run.finished_at
+    config.last_status = "healthy"
+    config.last_error = None
+    config.last_client_count = len(clients)
+
+
+def _serialize_tplink_sync_result(
+    run: TplinkDecoSyncRun,
+    config: TplinkDecoConfig,
+    devices: list[DecoDeviceRecord],
+    clients: list[DecoClientRecord],
+    ingested_assets: int,
+    log_analysis: dict[str, Any],
+) -> dict[str, Any]:
+    return {
+        "status": "done",
+        "client_count": len(clients),
+        "device_count": len(devices),
+        "ingested_assets": ingested_assets,
+        "log_excerpt_present": bool(run.logs_excerpt),
+        "health_score": log_analysis.get("health_score"),
+        "issue_count": len(log_analysis.get("issues", [])),
+        "auth_username": _effective_owner_username(config.owner_username),
+        "run_id": run.id,
+    }
 
 
 async def audit_tplink_config_change(db: AsyncSession, *, user: User, config: TplinkDecoConfig) -> None:

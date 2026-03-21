@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type Dispatch, type SetStateAction } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot, Check, ChevronDown } from 'lucide-react'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
@@ -12,9 +12,9 @@ type SortDirection = 'asc' | 'desc'
 type FilterKey = Exclude<SortKey, 'ip'>
 
 interface AssetTableProps {
-  assets: Asset[]
-  isLoading: boolean
-  isError: boolean
+  readonly assets: Asset[]
+  readonly isLoading: boolean
+  readonly isError: boolean
 }
 
 type AssetView = {
@@ -37,6 +37,14 @@ type ColumnDef = {
   options?: Array<{ value: string; label: string }>
 }
 
+interface ColumnFilterMenuProps {
+  readonly column: ColumnDef
+  readonly filters: Record<FilterKey, string>
+  readonly openFilter: FilterKey | null
+  setOpenFilter: Dispatch<SetStateAction<FilterKey | null>>
+  setFilters: Dispatch<SetStateAction<Record<FilterKey, string>>>
+}
+
 const EMPTY_VALUE = '__empty__'
 const LAST_SEEN_BUCKETS = ['Last Hour', 'Today', 'This Week', 'Older']
 
@@ -44,6 +52,13 @@ function buildAssetView(asset: Asset): AssetView {
   const ai = (asset as any).ai_analysis
   const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open').length
   const confidence = ai?.confidence ?? -1
+  const confidenceText = ai
+    ? confidenceLabel(ai.confidence).label
+    : asset.device_type_source === 'manual'
+      ? 'Manual'
+      : asset.device_type
+        ? 'Stored'
+        : '—'
   return {
     asset,
     ai,
@@ -51,7 +66,7 @@ function buildAssetView(asset: Asset): AssetView {
     openPorts,
     vendorLabel: ai?.vendor ?? asset.vendor ?? asset.os_name ?? '—',
     hostnameLabel: asset.hostname ?? '—',
-    confidenceLabel: ai ? confidenceLabel(ai.confidence).label : asset.device_type_source === 'manual' ? 'Manual' : asset.device_type ? 'Stored' : '—',
+    confidenceLabel: confidenceText,
     confidenceValue: confidence,
     statusLabel: asset.status,
     lastSeenBucket: bucketLastSeen(asset.last_seen),
@@ -67,8 +82,8 @@ function bucketLastSeen(value: string): string {
 }
 
 function compareIp(a: string, b: string): number {
-  const left = a.split('.').map((segment) => Number(segment))
-  const right = b.split('.').map((segment) => Number(segment))
+  const left = a.split('.').map(Number)
+  const right = b.split('.').map(Number)
   for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
     const delta = (left[index] ?? 0) - (right[index] ?? 0)
     if (delta !== 0) return delta
@@ -77,7 +92,7 @@ function compareIp(a: string, b: string): number {
 }
 
 function normalizeFilterValue(value: string | null | undefined): string {
-  return value && value.trim() ? value : EMPTY_VALUE
+  return value?.trim() ? value : EMPTY_VALUE
 }
 
 function filterValueMatches(current: string, selected: string) {
@@ -244,54 +259,15 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
                         <ArrowUpDown className="w-3.5 h-3.5 opacity-70" />
                       )}
                     </button>
-                    {column.filterKey && column.options && (() => {
-                      const filterKey = column.filterKey
-                      return (
-                        <div className="relative">
-                          <button
-                            type="button"
-                            onClick={() => setOpenFilter((current) => (current === filterKey ? null : filterKey))}
-                            className={cn(
-                              'inline-flex items-center gap-1 rounded-md border px-1.5 py-1 normal-case',
-                              filters[filterKey]
-                                ? 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400'
-                                : 'border-gray-200 dark:border-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200',
-                            )}
-                          >
-                            <ChevronDown className="w-3.5 h-3.5" />
-                          </button>
-                          {openFilter === filterKey && (
-                            <div className="absolute left-0 top-8 z-20 min-w-44 rounded-lg border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg">
-                              <button
-                                type="button"
-                                onClick={() => {
-                                  setFilters((current) => ({ ...current, [filterKey]: '' }))
-                                  setOpenFilter(null)
-                                }}
-                                className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
-                              >
-                                <span>All</span>
-                                {!filters[filterKey] && <Check className="w-3.5 h-3.5 text-sky-500" />}
-                              </button>
-                              {column.options.map((option) => (
-                                <button
-                                  key={option.value}
-                                  type="button"
-                                  onClick={() => {
-                                    setFilters((current) => ({ ...current, [filterKey]: option.value }))
-                                    setOpenFilter(null)
-                                  }}
-                                  className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
-                                >
-                                  <span>{option.label}</span>
-                                  {filters[filterKey] === option.value && <Check className="w-3.5 h-3.5 text-sky-500" />}
-                                </button>
-                              ))}
-                            </div>
-                          )}
-                        </div>
-                      )
-                    })()}
+                    {column.filterKey && column.options && (
+                      <ColumnFilterMenu
+                        column={column}
+                        filters={filters}
+                        openFilter={openFilter}
+                        setOpenFilter={setOpenFilter}
+                        setFilters={setFilters}
+                      />
+                    )}
                   </div>
                 </th>
               ))}
@@ -299,7 +275,7 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-zinc-800">
             {isLoading
-              ? [...Array(8)].map((_, i) => <SkeletonRow key={i} />)
+              ? Array.from({ length: 8 }, (_, index) => <SkeletonRow key={`asset-skeleton-${index}`} />)
               : sortedViews.length === 0
                 ? (
                   <tr>
@@ -317,6 +293,76 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
   )
 }
 
+function ColumnFilterMenu({ column, filters, openFilter, setOpenFilter, setFilters }: ColumnFilterMenuProps) {
+  if (!column.filterKey || !column.options) {
+    return null
+  }
+
+  const filterKey = column.filterKey
+  const updateFilter = (value: string) => {
+    setFilters((current) => ({ ...current, [filterKey]: value }))
+    setOpenFilter(null)
+  }
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpenFilter((current) => (current === filterKey ? null : filterKey))}
+        className={cn(
+          'inline-flex items-center gap-1 rounded-md border px-1.5 py-1 normal-case',
+          filters[filterKey]
+            ? 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400'
+            : 'border-gray-200 dark:border-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200',
+        )}
+      >
+        <ChevronDown className="w-3.5 h-3.5" />
+      </button>
+      {openFilter === filterKey && (
+        <FilterOptionsMenu
+          options={column.options}
+          selectedValue={filters[filterKey]}
+          onSelect={updateFilter}
+        />
+      )}
+    </div>
+  )
+}
+
+function FilterOptionsMenu({
+  options,
+  selectedValue,
+  onSelect,
+}: Readonly<{
+  options: Array<{ value: string; label: string }>
+  selectedValue: string
+  onSelect: (value: string) => void
+}>) {
+  return (
+    <div className="absolute left-0 top-8 z-20 min-w-44 rounded-lg border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg">
+      <button
+        type="button"
+        onClick={() => onSelect('')}
+        className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
+      >
+        <span>All</span>
+        {!selectedValue && <Check className="w-3.5 h-3.5 text-sky-500" />}
+      </button>
+      {options.map((option) => (
+        <button
+          key={option.value}
+          type="button"
+          onClick={() => onSelect(option.value)}
+          className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
+        >
+          <span>{option.label}</span>
+          {selectedValue === option.value && <Check className="w-3.5 h-3.5 text-sky-500" />}
+        </button>
+      ))}
+    </div>
+  )
+}
+
 function uniqueOptions(values: Array<string | null | undefined>) {
   return [...new Set(values.map(normalizeFilterValue))].sort((left, right) => left.localeCompare(right)).map((value) => ({
     value,
@@ -324,7 +370,7 @@ function uniqueOptions(values: Array<string | null | undefined>) {
   }))
 }
 
-function AssetRow({ asset }: { asset: Asset }) {
+function AssetRow({ asset }: Readonly<{ asset: Asset }>) {
   const ai = (asset as any).ai_analysis
   const deviceClass = ai?.device_class ?? asset.device_type ?? 'unknown'
   const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open').length
@@ -387,11 +433,15 @@ function AssetRow({ asset }: { asset: Asset }) {
 }
 
 function SkeletonRow() {
+  const widths = Array.from({ length: 8 }, (_, index) => ({
+    key: `asset-skeleton-cell-${index}`,
+    width: `${60 + index * 10}%`,
+  }))
   return (
     <tr>
-      {[...Array(8)].map((_, i) => (
-        <td key={i} className="px-4 py-3">
-          <div className="h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" style={{ width: `${60 + i * 10}%` }} />
+      {widths.map((cell) => (
+        <td key={cell.key} className="px-4 py-3">
+          <div className="h-4 bg-zinc-200 dark:bg-zinc-800 rounded animate-pulse" style={{ width: cell.width }} />
         </td>
       ))}
     </tr>

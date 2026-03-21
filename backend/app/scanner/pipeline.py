@@ -435,16 +435,24 @@ async def _lookup_host_enrichment(mac_vendor, dns_lookup, host: DiscoveredHost, 
 
 def _resolve_hostname_from_probes(probe_results) -> str | None:
     for probe in probe_results:
-        if probe.probe_type == "dns" and probe.success:
-            return probe.data.get("hostname")
-        if probe.probe_type == "mdns" and probe.success:
-            services = probe.data.get("services", [])
-            if services and services[0].get("host"):
-                return services[0]["host"]
-        if probe.probe_type == "snmp" and probe.success:
-            sys_name = probe.data.get("sys_name")
-            if sys_name:
-                return sys_name
+        hostname = _extract_probe_hostname(probe)
+        if hostname:
+            return hostname
+    return None
+
+
+def _extract_probe_hostname(probe) -> str | None:
+    if not probe.success:
+        return None
+    if probe.probe_type == "dns":
+        return probe.data.get("hostname")
+    if probe.probe_type == "mdns":
+        services = probe.data.get("services", [])
+        if services and services[0].get("host"):
+            return services[0]["host"]
+        return None
+    if probe.probe_type == "snmp":
+        return probe.data.get("sys_name")
     return None
 
 

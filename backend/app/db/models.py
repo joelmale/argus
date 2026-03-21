@@ -20,6 +20,9 @@ from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from app.db.session import Base
 
+CASCADING_CHILDREN = "all, delete-orphan"
+ASSET_ID_FK = "assets.id"
+SET_NULL = "SET NULL"
 
 def utcnow():
     return datetime.now(timezone.utc)
@@ -35,7 +38,7 @@ class User(Base):
     role: Mapped[str] = mapped_column(String(16), default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
-    api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade="all, delete-orphan")
+    api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade=CASCADING_CHILDREN)
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="user")
 
     @property
@@ -62,17 +65,17 @@ class Asset(Base):
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    ports: Mapped[list["Port"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    tags: Mapped[list["AssetTag"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    history: Mapped[list["AssetHistory"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    ai_analysis: Mapped["AssetAIAnalysis | None"] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    evidence: Mapped[list["AssetEvidence"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    probe_runs: Mapped[list["ProbeRun"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    observations: Mapped[list["PassiveObservation"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    fingerprint_hypotheses: Mapped[list["FingerprintHypothesis"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    internet_lookup_results: Mapped[list["InternetLookupResult"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    lifecycle_records: Mapped[list["LifecycleRecord"]] = relationship(back_populates="asset", cascade="all, delete-orphan")
-    autopsy: Mapped["AssetAutopsy | None"] = relationship(back_populates="asset", cascade="all, delete-orphan")
+    ports: Mapped[list["Port"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    tags: Mapped[list["AssetTag"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    history: Mapped[list["AssetHistory"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    ai_analysis: Mapped["AssetAIAnalysis | None"] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    evidence: Mapped[list["AssetEvidence"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    probe_runs: Mapped[list["ProbeRun"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    observations: Mapped[list["PassiveObservation"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    fingerprint_hypotheses: Mapped[list["FingerprintHypothesis"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    internet_lookup_results: Mapped[list["InternetLookupResult"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    lifecycle_records: Mapped[list["LifecycleRecord"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    autopsy: Mapped["AssetAutopsy | None"] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)
 
@@ -93,7 +96,7 @@ class Port(Base):
     __tablename__ = "ports"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"))
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"))
     port_number: Mapped[int] = mapped_column(Integer, nullable=False)
     protocol: Mapped[str] = mapped_column(String(4), default="tcp")   # tcp | udp
     service: Mapped[str | None] = mapped_column(String(64))
@@ -109,7 +112,7 @@ class AssetTag(Base):
     __tablename__ = "asset_tags"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"))
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"))
     tag: Mapped[str] = mapped_column(String(64), nullable=False)
 
     asset: Mapped["Asset"] = relationship(back_populates="tags")
@@ -120,7 +123,7 @@ class AssetHistory(Base):
     __tablename__ = "asset_history"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"))
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"))
     changed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     change_type: Mapped[str] = mapped_column(String(32))  # discovered | port_changed | os_changed | offline | online
     diff: Mapped[dict | None] = mapped_column(JSONB)      # {field: {old, new}}
@@ -134,7 +137,7 @@ class AssetAIAnalysis(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     asset_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("assets.id", ondelete="CASCADE"),
+        ForeignKey(ASSET_ID_FK, ondelete="CASCADE"),
         nullable=False,
         unique=True,
     )
@@ -160,7 +163,7 @@ class AssetEvidence(Base):
     __tablename__ = "asset_evidence"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)          # ai | rule | mac_oui | probe_http | ...
     category: Mapped[str] = mapped_column(String(32), nullable=False)        # device_type | vendor | os | service | identity
     key: Mapped[str] = mapped_column(String(64), nullable=False)
@@ -176,7 +179,7 @@ class ProbeRun(Base):
     __tablename__ = "probe_runs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
     probe_type: Mapped[str] = mapped_column(String(32), nullable=False)
     target_port: Mapped[int | None] = mapped_column(Integer)
     success: Mapped[bool] = mapped_column(Boolean, default=False)
@@ -193,7 +196,7 @@ class PassiveObservation(Base):
     __tablename__ = "passive_observations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
     source: Mapped[str] = mapped_column(String(32), nullable=False)
     event_type: Mapped[str] = mapped_column(String(32), nullable=False)
     summary: Mapped[str] = mapped_column(String(512), nullable=False)
@@ -207,7 +210,7 @@ class FingerprintHypothesis(Base):
     __tablename__ = "fingerprint_hypotheses"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
     source: Mapped[str] = mapped_column(String(32), default="ollama")
     device_type: Mapped[str | None] = mapped_column(String(64))
     vendor: Mapped[str | None] = mapped_column(String(256))
@@ -228,7 +231,7 @@ class InternetLookupResult(Base):
     __tablename__ = "internet_lookup_results"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
     query: Mapped[str] = mapped_column(String(512), nullable=False)
     domain: Mapped[str] = mapped_column(String(255), nullable=False)
     url: Mapped[str] = mapped_column(Text, nullable=False)
@@ -244,7 +247,7 @@ class LifecycleRecord(Base):
     __tablename__ = "lifecycle_records"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
     product: Mapped[str] = mapped_column(String(255), nullable=False)
     version: Mapped[str | None] = mapped_column(String(128))
     support_status: Mapped[str] = mapped_column(String(32), nullable=False)
@@ -262,7 +265,7 @@ class AssetAutopsy(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     asset_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("assets.id", ondelete="CASCADE"),
+        ForeignKey(ASSET_ID_FK, ondelete="CASCADE"),
         nullable=False,
         unique=True,
     )
@@ -278,8 +281,8 @@ class TopologyLink(Base):
     __tablename__ = "topology_links"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"))
-    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"))
+    source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"))
+    target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"))
     link_type: Mapped[str] = mapped_column(String(32), default="ethernet")  # ethernet | wifi | vlan | vpn
     vlan_id: Mapped[int | None] = mapped_column(Integer)
     link_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
@@ -324,7 +327,7 @@ class AuditLog(Base):
     __tablename__ = "audit_logs"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete="SET NULL"))
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete=SET_NULL))
     action: Mapped[str] = mapped_column(String(64), nullable=False)
     target_type: Mapped[str | None] = mapped_column(String(64))
     target_id: Mapped[str | None] = mapped_column(String(64))
@@ -352,7 +355,7 @@ class ConfigBackupTarget(Base):
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     asset_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True),
-        ForeignKey("assets.id", ondelete="CASCADE"),
+        ForeignKey(ASSET_ID_FK, ondelete="CASCADE"),
         nullable=False,
         unique=True,
     )
@@ -370,8 +373,8 @@ class ConfigBackupSnapshot(Base):
     __tablename__ = "config_backup_snapshots"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
-    target_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("config_backup_targets.id", ondelete="SET NULL"))
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
+    target_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("config_backup_targets.id", ondelete=SET_NULL))
     status: Mapped[str] = mapped_column(String(16), default="pending")
     driver: Mapped[str] = mapped_column(String(64), nullable=False)
     command: Mapped[str | None] = mapped_column(Text)
@@ -384,8 +387,8 @@ class WirelessAssociation(Base):
     __tablename__ = "wireless_associations"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    access_point_asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
-    client_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="SET NULL"))
+    access_point_asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
+    client_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete=SET_NULL))
     client_mac: Mapped[str | None] = mapped_column(String(17))
     client_ip: Mapped[str | None] = mapped_column(String(45))
     ssid: Mapped[str | None] = mapped_column(String(128))
@@ -400,8 +403,8 @@ class Finding(Base):
     __tablename__ = "findings"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
-    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey("assets.id", ondelete="CASCADE"), nullable=False)
-    port_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ports.id", ondelete="SET NULL"))
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
+    port_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("ports.id", ondelete=SET_NULL))
     source_tool: Mapped[str] = mapped_column(String(64), nullable=False)
     external_id: Mapped[str | None] = mapped_column(String(128))
     title: Mapped[str] = mapped_column(String(255), nullable=False)

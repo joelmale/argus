@@ -40,6 +40,7 @@ AssetSearch = Annotated[str | None, Query(description="Search by IP, hostname, o
 AssetStatus = Annotated[str | None, Query(description="Filter by status: online | offline")]
 AssetTagFilter = Annotated[str | None, Query(description="Filter by tag")]
 CompareToSnapshot = Annotated[int | None, Query()]
+PLAIN_TEXT_MEDIA_TYPE = "text/plain"
 ASSET_NOT_FOUND_RESPONSE = {404: {"description": ASSET_NOT_FOUND_DETAIL}}
 ASSET_UPDATE_RESPONSES = {
     404: {"description": ASSET_NOT_FOUND_DETAIL},
@@ -330,7 +331,7 @@ async def export_assets_ansible(db: DBSession, _: CurrentUser):
     assets = result.scalars().all()
     return Response(
         content=render_ansible_inventory(assets),
-        media_type="text/plain",
+        media_type=PLAIN_TEXT_MEDIA_TYPE,
         headers={"Content-Disposition": 'attachment; filename="argus-inventory.ini"'},
     )
 
@@ -856,7 +857,7 @@ async def diff_config_backup(
         diff = await generate_backup_diff(db, asset_id, snapshot_id, compare_to)
     except LookupError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
-    return Response(content=diff or "No diff\n", media_type="text/plain")
+    return Response(content=diff or "No diff\n", media_type=PLAIN_TEXT_MEDIA_TYPE)
 
 
 @router.get("/{asset_id}/config-backups/{snapshot_id}/restore-assist", responses=BACKUP_SNAPSHOT_RESPONSES)

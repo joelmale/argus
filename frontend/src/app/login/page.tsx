@@ -1,10 +1,12 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useState, type ComponentProps } from 'react'
 import axios from 'axios'
 import { Eye, Loader2, ShieldCheck, UserCog } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { useCurrentUser, useInitializeFirstAdmin, useLogin, useSetupStatus } from '@/hooks/useAuth'
+
+type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>
 
 function getLoginErrorMessage(error: unknown) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
@@ -73,7 +75,7 @@ export default function LoginPage() {
     }
   }, [currentUser, router])
 
-  function handleLoginSubmit(event: React.FormEvent) {
+  const handleLoginSubmit: FormSubmitHandler = (event) => {
     event.preventDefault()
     setError(null)
 
@@ -86,7 +88,7 @@ export default function LoginPage() {
     )
   }
 
-  function handleSetupSubmit(event: React.FormEvent) {
+  const handleSetupSubmit: FormSubmitHandler = (event) => {
     event.preventDefault()
     setError(null)
 
@@ -133,10 +135,11 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
+              <label htmlFor="setup-username" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
                 Admin username
               </label>
               <input
+                id="setup-username"
                 value={setupUsername}
                 onChange={(event) => setSetupUsername(event.target.value)}
                 className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
@@ -145,10 +148,11 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
+              <label htmlFor="setup-email" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
                 Email
               </label>
               <input
+                id="setup-email"
                 type="email"
                 value={setupEmail}
                 onChange={(event) => setSetupEmail(event.target.value)}
@@ -158,10 +162,11 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
+              <label htmlFor="setup-password" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
                 Password
               </label>
               <input
+                id="setup-password"
                 type="password"
                 value={setupPassword}
                 onChange={(event) => setSetupPassword(event.target.value)}
@@ -172,10 +177,11 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
+              <label htmlFor="confirm-password" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
                 Confirm password
               </label>
               <input
+                id="confirm-password"
                 type="password"
                 value={confirmPassword}
                 onChange={(event) => setConfirmPassword(event.target.value)}
@@ -209,10 +215,11 @@ export default function LoginPage() {
         ) : (
           <form onSubmit={handleLoginSubmit} className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
+              <label htmlFor="login-username" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
                 Username
               </label>
               <input
+                id="login-username"
                 value={username}
                 onChange={(event) => setUsername(event.target.value)}
                 className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
@@ -221,10 +228,11 @@ export default function LoginPage() {
             </div>
 
             <div>
-              <label className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
+              <label htmlFor="login-password" className="block text-sm font-medium text-zinc-700 dark:text-zinc-200 mb-1.5">
                 Password
               </label>
               <input
+                id="login-password"
                 type="password"
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
