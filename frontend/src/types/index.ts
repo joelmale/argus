@@ -446,6 +446,7 @@ export interface TopologyGraph {
 
 export type WsEvent =
   | { event: "device_discovered"; data: Asset }
+  | { event: "device_updated"; data: { job_id: string; stage?: string; ip: string; hostname?: string | null } }
   | { event: "scan_progress"; data: { job_id: string; stage?: string; progress?: number; current_host?: string; hosts_found?: number; hosts_investigated?: number; message?: string } }
   | { event: "scan_complete"; data: Record<string, unknown> }
   | { event: "device_investigated"; data: { job_id: string; ip: string; device_class: string; vendor: string | null; confidence: number } }

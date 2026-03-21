@@ -44,7 +44,7 @@ export function useWebSocket(enabled = true) {
         processWsEvent(payload, store)
 
         // Invalidate relevant queries so TanStack Query refetches
-        if (payload.event === 'device_discovered' || payload.event === 'scan_complete') {
+        if (payload.event === 'device_discovered' || payload.event === 'device_updated' || payload.event === 'scan_complete') {
           queryClient.invalidateQueries({ queryKey: ['assets'] })
           queryClient.invalidateQueries({ queryKey: ['stats'] })
         }

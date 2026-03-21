@@ -10,11 +10,13 @@ This document captures the phased plan for making Argus scans feel faster, retur
     - added `quick`, `balanced`, and `deep_enrichment` backend scan modes
     - mapped legacy `polite` and `aggressive` values into the new model for compatibility
     - exposed the new modes in the scans UI and settings default-profile selector
-- [ ] Phase 2: Per-Stage Live Persistence
-  - Current status: not completed
-  - Gaps:
-    - results are still persisted after the per-host investigation loop finishes
-    - assets do not appear progressively by stage while the scan is running
+- [x] Phase 2: Per-Stage Live Persistence
+  - Current status: completed
+  - Completed:
+    - discovery results now persist before the port-scan/investigation work completes
+    - investigated hosts now persist as they finish
+    - asset events now carry stage-aware updates during the scan
+    - final persistence is reduced to offline reconciliation instead of a single end-of-job flush
 - [ ] Phase 3: Results-So-Far UX
   - Current status: partial
   - Completed:
@@ -127,10 +129,10 @@ Assets begin appearing and improving during the scan instead of only after final
 
 Checklist:
 
-- [ ] Persist discovery-only results immediately
-- [ ] Persist investigated hosts as they complete
-- [ ] Emit stage-aware asset updates while the scan is still active
-- [ ] Stop waiting for the final scan completion before assets appear
+- [x] Persist discovery-only results immediately
+- [x] Persist investigated hosts as they complete
+- [x] Emit stage-aware asset updates while the scan is still active
+- [x] Stop waiting for the final scan completion before assets appear
 
 ## Phase 3: Results-So-Far UX
 

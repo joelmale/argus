@@ -138,6 +138,19 @@ async def run_scan(
         },
     })
 
+    if db_session is not None:
+        await _persist_results(
+            db_session,
+            _build_partial_results(hosts, [], summary.profile),
+            {host.ip_address for host in hosts},
+            summary,
+            broadcast_fn,
+            job_id,
+            mark_missing_offline=False,
+            allow_discovery_only=True,
+            stage="discovery",
+        )
+
     await _check_control(
         control_fn,
         stage="post_discovery",
@@ -231,6 +244,17 @@ async def run_scan(
         result = await task
         results.append(result)
         completed_hosts += 1
+        if db_session is not None and result is not None:
+            await _persist_results(
+                db_session,
+                [result],
+                {result.host.ip_address},
+                summary,
+                broadcast_fn,
+                job_id,
+                mark_missing_offline=False,
+                stage="investigation",
+            )
         progress = 0.25 + (0.6 * (completed_hosts / max(total_hosts, 1)))
         current_host = result.host.ip_address if result else None
         await _broadcast(broadcast_fn, {
@@ -256,7 +280,7 @@ async def run_scan(
             tasks=tasks,
         )
 
-    # ── Stage 6: Persist all results ─────────────────────────────────────────
+    # ── Stage 6: Finalize offline reconciliation ────────────────────────────
     if db_session is not None:
         await _check_control(
             control_fn,
@@ -277,8 +301,16 @@ async def run_scan(
                 "message": f"Persisting results for {completed_hosts} investigated hosts",
             },
         })
-        scanned_ips = {r.host.ip_address for r in results if r}
-        await _persist_results(db_session, results, scanned_ips, summary, broadcast_fn, job_id)
+        scanned_ips = {host.ip_address for host in hosts}
+        await _persist_results(
+            db_session,
+            [],
+            scanned_ips,
+            summary,
+            broadcast_fn,
+            job_id,
+            stage="persist",
+        )
 
     # Tally summary
     for r in results:
@@ -501,6 +533,7 @@ async def _persist_results(
     job_id: str,
     mark_missing_offline: bool = True,
     allow_discovery_only: bool = False,
+    stage: str = "investigation",
 ) -> None:
     """Persist all scan results to the database."""
     from app.db.upsert import mark_offline, upsert_scan_result
@@ -520,6 +553,7 @@ async def _persist_results(
             summary,
             broadcast_fn,
             job_id,
+            stage,
             allow_discovery_only,
             has_meaningful_scan_evidence,
             upsert_scan_result,
@@ -561,6 +595,7 @@ async def _persist_result(
     summary: ScanSummary,
     broadcast_fn,
     job_id: str,
+    stage: str,
     allow_discovery_only: bool,
     has_meaningful_scan_evidence,
     upsert_scan_result,
@@ -576,7 +611,7 @@ async def _persist_result(
     try:
         asset, change_type = await upsert_scan_result(db_session, result)
         await _persist_snmp_topology(db_session, asset, result, infer_topology_links_from_snmp)
-        await _update_summary(summary, broadcast_fn, job_id, result, change_type, db_session, notify_new_device_if_enabled)
+        await _update_summary(summary, broadcast_fn, job_id, result, change_type, db_session, notify_new_device_if_enabled, stage)
     except Exception as exc:
         log.error("DB upsert failed for %s: %s", result.host.ip_address, exc)
         summary.errors.append(f"{result.host.ip_address}: {exc}")
@@ -596,6 +631,7 @@ async def _update_summary(
     change_type: str,
     db_session,
     notify_new_device_if_enabled,
+    stage: str,
 ) -> None:
     if change_type == "discovered":
         summary.new_assets += 1
@@ -603,6 +639,7 @@ async def _update_summary(
             "event": "device_discovered",
             "data": {
                 "job_id": job_id,
+                "stage": stage,
                 "ip": result.host.ip_address,
                 "mac": result.host.mac_address,
                 "hostname": result.reverse_hostname,
@@ -613,6 +650,15 @@ async def _update_summary(
         await notify_new_device_if_enabled(db_session, discovered_event["data"])
     elif change_type == "updated":
         summary.changed_assets += 1
+        await _broadcast(broadcast_fn, {
+            "event": "device_updated",
+            "data": {
+                "job_id": job_id,
+                "stage": stage,
+                "ip": result.host.ip_address,
+                "hostname": result.reverse_hostname,
+            },
+        })
 
 
 async def _broadcast(fn, payload: dict) -> None:

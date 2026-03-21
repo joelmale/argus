@@ -94,6 +94,10 @@ export function processWsEvent(payload: WsEvent, store: ReturnType<typeof useApp
       if ('ip' in payload.data) store.addRecentlyDiscovered(payload.data.ip as string)
       break
 
+    case 'device_updated':
+      store.addEvent({ id, timestamp, event: 'device_updated', data: toRecord(payload.data) })
+      break
+
     case 'scan_progress':
       store.addEvent({ id, timestamp, event: 'scan_progress', data: toRecord(payload.data) })
       store.setActiveScan({
