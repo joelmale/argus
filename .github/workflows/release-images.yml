@@ -81,6 +81,12 @@ jobs:
         with:
           sarif_file: trivy-results.sarif
           category: ${{ matrix.image_name }}
+      - name: Upload Trivy SARIF artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: trivy-sarif-${{ matrix.image_name }}
+          path: trivy-results.sarif
       - name: Build and push release image
         id: build
         uses: docker/build-push-action@v6
