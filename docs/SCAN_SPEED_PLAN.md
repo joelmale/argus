@@ -2,6 +2,50 @@
 
 This document captures the phased plan for making Argus scans feel faster, return useful results earlier, and provide clearer operator feedback during large network scans.
 
+## Implementation Checklist
+
+- [x] Phase 1: Scan Modes
+  - Current status: completed
+  - Completed:
+    - added `quick`, `balanced`, and `deep_enrichment` backend scan modes
+    - mapped legacy `polite` and `aggressive` values into the new model for compatibility
+    - exposed the new modes in the scans UI and settings default-profile selector
+- [ ] Phase 2: Per-Stage Live Persistence
+  - Current status: not completed
+  - Gaps:
+    - results are still persisted after the per-host investigation loop finishes
+    - assets do not appear progressively by stage while the scan is running
+- [ ] Phase 3: Results-So-Far UX
+  - Current status: partial
+  - Completed:
+    - live stage/progress updates
+    - current host display
+    - discovered-host and investigated-host counters
+  - Gaps:
+    - no dedicated counters yet for port-scanned, fingerprinted, deep-probed, assets created, and assets updated
+    - no direct shortcut from the active scan to assets discovered so far
+- [ ] Phase 4: Performance Settings
+  - Current status: partial
+  - Completed:
+    - database-backed `default_profile`
+    - database-backed `concurrent_hosts`
+  - Gaps:
+    - chunk size not configurable
+    - top ports count not configurable
+    - deep-probe timeout not configurable
+    - AI after-scan toggle not configurable
+- [ ] Phase 5: Chunked Parent/Child Scan Jobs
+  - Current status: not started
+  - Gaps:
+    - no parent/child scan-job model
+    - no chunk orchestration for large scans
+    - queueing still operates at the single-job level
+- [ ] Phase 6: Deep Enrichment Follow-Up Workflow
+  - Current status: not started
+  - Gaps:
+    - no dedicated follow-up enrichment action for discovered hosts or selected assets
+    - no post-inventory enrichment workflow in the scans or assets UI
+
 ## Goals
 
 - Reduce time to first visible result.
@@ -49,6 +93,16 @@ Commit point: `Add quick and deep scan mode framework`
 
 Users can choose a fast first-pass scan instead of always paying for the full deep-investigation cost.
 
+Checklist:
+
+- [x] Add `quick`, `balanced`, and `deep_enrichment` modes in one backend definition
+- [x] Make `quick` skip AI by default
+- [x] Make `quick` limit the initial port scan depth
+- [x] Make `quick` avoid the heavier deep-probe stage
+- [x] Make `deep_enrichment` run the heavier scan/probe path
+- [x] Expose the new modes in the scans UI
+- [x] Expose the new default profile choices in settings
+
 ## Phase 2: Per-Stage Live Persistence
 
 Commit point: `Persist partial scan results by stage`
@@ -70,6 +124,13 @@ Commit point: `Persist partial scan results by stage`
 ### Outcome
 
 Assets begin appearing and improving during the scan instead of only after final completion.
+
+Checklist:
+
+- [ ] Persist discovery-only results immediately
+- [ ] Persist investigated hosts as they complete
+- [ ] Emit stage-aware asset updates while the scan is still active
+- [ ] Stop waiting for the final scan completion before assets appear
 
 ## Phase 3: Results-So-Far UX
 
@@ -98,6 +159,17 @@ Commit point: `Add progressive scan counters and summaries`
 
 Scans feel active and understandable while they are in progress.
 
+Checklist:
+
+- [ ] Show discovered-host count
+- [ ] Show port-scanned count
+- [ ] Show fingerprinted count
+- [ ] Show deep-probed count
+- [ ] Show assets created count
+- [ ] Show assets updated count
+- [ ] Improve stage labeling to reduce “is it stuck?” confusion
+- [ ] Add a shortcut to view assets discovered from the active scan
+
 ## Phase 4: Performance Settings
 
 Commit point: `Add advanced scan performance settings`
@@ -124,6 +196,15 @@ Commit point: `Add advanced scan performance settings`
 
 Operators can tune scan speed and scan depth for their own network without code changes.
 
+Checklist:
+
+- [ ] Add host concurrency setting
+- [ ] Add chunk size setting
+- [ ] Add top ports count setting
+- [ ] Add deep-probe timeout setting
+- [ ] Add AI after-scan toggle
+- [ ] Add bounds/help text for each setting
+
 ## Phase 5: Chunked Parent/Child Scan Jobs
 
 Commit point: `Split large scans into chunked child jobs`
@@ -145,6 +226,14 @@ Commit point: `Split large scans into chunked child jobs`
 ### Outcome
 
 Large scans start yielding results from early chunks quickly, and orchestration becomes more predictable.
+
+Checklist:
+
+- [ ] Add parent scan jobs
+- [ ] Add child chunk jobs
+- [ ] Split large targets into configurable chunks
+- [ ] Aggregate child progress into the parent job
+- [ ] Keep queue management at the parent-job level
 
 ## Phase 6: Deep Enrichment Follow-Up Workflow
 
@@ -169,6 +258,14 @@ Commit point: `Add follow-up enrichment scans for discovered hosts`
 ### Outcome
 
 Argus can collect baseline inventory quickly and then deepen analysis as a deliberate second step.
+
+Checklist:
+
+- [ ] Add follow-up enrichment action after quick or balanced scans
+- [ ] Support enrichment for new hosts from the latest scan
+- [ ] Support enrichment for selected assets
+- [ ] Support enrichment for unresolved or unknown assets
+- [ ] Make AI optional for the follow-up flow
 
 ## Recommended Implementation Order
 

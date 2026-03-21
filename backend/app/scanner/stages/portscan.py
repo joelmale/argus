@@ -22,7 +22,7 @@ from typing import Optional
 
 import nmap
 
-from app.scanner.models import NMAP_PROFILE_ARGS, DiscoveredHost, OSFingerprint, PortResult, ScanProfile
+from app.scanner.models import DiscoveredHost, OSFingerprint, PortResult, ScanProfile, get_scan_mode_behavior
 
 log = logging.getLogger(__name__)
 
@@ -124,7 +124,8 @@ def _scan_sync(
     from app.scanner.enrichment.instant_win import fingerprint_from_nmap_host_data, merge_into_os_fingerprint
 
     target_str = " ".join(h.ip_address for h in hosts)
-    base_args = custom_args or NMAP_PROFILE_ARGS.get(profile, NMAP_PROFILE_ARGS[ScanProfile.BALANCED])
+    mode_behavior = get_scan_mode_behavior(profile)
+    base_args = custom_args or mode_behavior.nmap_args
     args = base_args if "-Pn" in base_args.split() else f"-Pn {base_args}"
 
     log.info("Port scan [%s] %d hosts | args: %s", profile.value, len(hosts), args)

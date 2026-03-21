@@ -15,21 +15,21 @@ import {
 
 const PROFILES = [
   {
-    value: 'balanced',
-    label: 'Balanced',
-    desc: 'Port scan + OS fingerprint + AI analysis. Recommended.',
-    color: 'sky',
-  },
-  {
-    value: 'polite',
-    label: 'Polite',
-    desc: 'Slow, quiet scan. Safe for fragile or production devices.',
+    value: 'quick',
+    label: 'Quick',
+    desc: 'Fast first-pass inventory. Limited ports, no AI, no deep probes.',
     color: 'emerald',
   },
   {
-    value: 'aggressive',
-    label: 'Aggressive',
-    desc: 'All ports, all NSE scripts. Thorough but loud.',
+    value: 'balanced',
+    label: 'Balanced',
+    desc: 'Inventory plus OS fingerprinting, deep probes, and AI analysis.',
+    color: 'sky',
+  },
+  {
+    value: 'deep_enrichment',
+    label: 'Deep Enrichment',
+    desc: 'Full-port, deeper service inspection for deliberate follow-up work.',
     color: 'red',
   },
 ]
@@ -125,7 +125,7 @@ export default function ScansPage() {
                             profile === p.value
                               ? p.value === 'balanced'
                                 ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                                : p.value === 'polite'
+                                : p.value === 'quick'
                                 ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
                                 : 'border-red-500 bg-red-500/10 text-red-700 dark:text-red-300'
                               : 'border-gray-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500',

@@ -11,6 +11,7 @@ deliberately separate so the scanner can operate without a DB connection
 """
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from enum import Enum
 from typing import Any
@@ -21,10 +22,23 @@ from pydantic import BaseModel, Field
 # ─── Enums ──────────────────────────────────────────────────────────────────
 
 class ScanProfile(str, Enum):
-    POLITE     = "polite"       # -T2, top 1000, no UDP — safe for fragile devices
+    QUICK      = "quick"        # fast first-pass inventory with shallow scan depth
     BALANCED   = "balanced"     # -T4, top 1000, OS+version — default
-    AGGRESSIVE = "aggressive"   # -T5, all ports, all scripts — thorough but loud
+    DEEP_ENRICHMENT = "deep_enrichment"  # deeper scan/probes for follow-up investigation
     CUSTOM     = "custom"       # caller supplies raw nmap_args
+
+
+@dataclass(frozen=True, slots=True)
+class ScanModeBehavior:
+    nmap_args: str
+    enable_ai_by_default: bool
+    run_deep_probes: bool
+
+
+LEGACY_SCAN_PROFILE_ALIASES: dict[str, ScanProfile] = {
+    "polite": ScanProfile.QUICK,
+    "aggressive": ScanProfile.DEEP_ENRICHMENT,
+}
 
 
 class DeviceClass(str, Enum):
@@ -44,10 +58,9 @@ class DeviceClass(str, Enum):
 
 
 NMAP_PROFILE_ARGS: dict[ScanProfile, str] = {
-    # Polite — version detection only, no OS probing, slow timing.
-    # Safe for fragile devices (industrial controllers, old printers, etc.)
-    ScanProfile.POLITE: (
-        "-sV -T2 --top-ports 1000 --host-timeout 30s"
+    # Quick — version detection on a small top-port set, no OS probing.
+    ScanProfile.QUICK: (
+        "-sV -T4 --top-ports 100 --host-timeout 20s"
     ),
 
     # Balanced — version detection + OS detection, but NO guessing.
@@ -60,12 +73,39 @@ NMAP_PROFILE_ARGS: dict[ScanProfile, str] = {
         "-sV -O -T4 --top-ports 1000 --host-timeout 60s"
     ),
 
-    # Aggressive — full port range, OS guessing enabled (user explicitly asked
-    # for it), all default+safe+vuln NSE scripts. Loud but thorough.
-    ScanProfile.AGGRESSIVE: (
-        "-A -T5 -p- --osscan-guess --script=default,safe,vuln"
+    # Deep enrichment — full port range, OS guessing enabled, and service scripts.
+    ScanProfile.DEEP_ENRICHMENT: (
+        "-A -T4 -p- --osscan-guess --script=default,safe,vuln --host-timeout 90s"
     ),
 }
+
+
+SCAN_MODE_BEHAVIORS: dict[ScanProfile, ScanModeBehavior] = {
+    ScanProfile.QUICK: ScanModeBehavior(
+        nmap_args=NMAP_PROFILE_ARGS[ScanProfile.QUICK],
+        enable_ai_by_default=False,
+        run_deep_probes=False,
+    ),
+    ScanProfile.BALANCED: ScanModeBehavior(
+        nmap_args=NMAP_PROFILE_ARGS[ScanProfile.BALANCED],
+        enable_ai_by_default=True,
+        run_deep_probes=True,
+    ),
+    ScanProfile.DEEP_ENRICHMENT: ScanModeBehavior(
+        nmap_args=NMAP_PROFILE_ARGS[ScanProfile.DEEP_ENRICHMENT],
+        enable_ai_by_default=True,
+        run_deep_probes=True,
+    ),
+    ScanProfile.CUSTOM: ScanModeBehavior(
+        nmap_args=NMAP_PROFILE_ARGS[ScanProfile.BALANCED],
+        enable_ai_by_default=True,
+        run_deep_probes=True,
+    ),
+}
+
+
+def get_scan_mode_behavior(profile: ScanProfile) -> ScanModeBehavior:
+    return SCAN_MODE_BEHAVIORS.get(profile, SCAN_MODE_BEHAVIORS[ScanProfile.BALANCED])
 
 
 # ─── Stage 1: Discovery ──────────────────────────────────────────────────────

@@ -269,10 +269,12 @@ def _build_control_fn(db, job, scan_control_decision):
 
 
 def _resolve_scan_profile(scan_type: str, scan_profile_enum):
+    from app.scanner.models import LEGACY_SCAN_PROFILE_ALIASES
+
     try:
         return scan_profile_enum(scan_type)
     except ValueError:
-        return scan_profile_enum.BALANCED
+        return LEGACY_SCAN_PROFILE_ALIASES.get(scan_type, scan_profile_enum.BALANCED)
 
 
 async def _complete_scan_job(db, job: ScanJob, job_id: str, summary) -> None:

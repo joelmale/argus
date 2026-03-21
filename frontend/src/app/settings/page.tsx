@@ -212,9 +212,9 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             onChange={(event) => setDefaultProfile(event.target.value)}
             className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
           >
+            <option value="quick">Quick</option>
             <option value="balanced">Balanced</option>
-            <option value="polite">Polite</option>
-            <option value="aggressive">Aggressive</option>
+            <option value="deep_enrichment">Deep Enrichment</option>
           </select>
           <input
             value={scanInterval}

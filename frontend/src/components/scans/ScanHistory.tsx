@@ -424,14 +424,17 @@ function formatSummaryStage(summary: Record<string, unknown>): string | null {
 
 function ProfileBadge({ profile }: Readonly<{ profile: string }>) {
   const colors: Record<string, string> = {
+    quick:      'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     polite:     'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
     balanced:   'bg-sky-500/10 text-sky-600 dark:text-sky-400',
+    deep_enrichment: 'bg-red-500/10 text-red-600 dark:text-red-400',
     aggressive: 'bg-red-500/10 text-red-600 dark:text-red-400',
     custom:     'bg-zinc-500/10 text-zinc-600 dark:text-zinc-400',
   }
+  const label = profile.replaceAll('_', ' ')
   return (
     <span className={`text-xs px-1.5 py-0.5 rounded font-medium capitalize ${colors[profile] ?? colors.custom}`}>
-      {profile ?? 'balanced'}
+      {label || 'balanced'}
     </span>
   )
 }

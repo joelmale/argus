@@ -36,6 +36,7 @@ from app.scanner.models import (
     OSFingerprint,
     ScanProfile,
     ScanSummary,
+    get_scan_mode_behavior,
 )
 
 log = logging.getLogger(__name__)
@@ -100,6 +101,7 @@ async def run_scan(
     """
     t0 = time.monotonic()
     summary = ScanSummary(job_id=job_id, targets=targets, profile=profile)
+    mode_behavior = get_scan_mode_behavior(profile)
 
     log.info("=== Scan started: job=%s targets=%s profile=%s ai=%s ===",
              job_id, targets, profile.value, enable_ai)
@@ -187,7 +189,7 @@ async def run_scan(
     # ── Stages 3–6: Per-host investigation (concurrent) ──────────────────────
     semaphore = asyncio.Semaphore(max(1, concurrent_hosts))
     analyst = None
-    if enable_ai:
+    if enable_ai and mode_behavior.enable_ai_by_default:
         from app.scanner.agent import get_analyst
         analyst = get_analyst()
 
@@ -201,6 +203,7 @@ async def run_scan(
                 nmap_vendor=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[3],
                 profile=profile,
                 analyst=analyst,
+                run_deep_probes=mode_behavior.run_deep_probes,
                 semaphore=semaphore,
                 broadcast_fn=broadcast_fn,
                 job_id=job_id,
@@ -381,6 +384,7 @@ async def _investigate_host(
     nmap_vendor: str | None,
     profile: ScanProfile,
     analyst,
+    run_deep_probes: bool,
     semaphore: asyncio.Semaphore,
     broadcast_fn,
     job_id: str,
@@ -410,8 +414,7 @@ async def _investigate_host(
         )
 
         # Stage 4: Deep probes
-        from app.scanner.stages import deep_probe
-        probe_results = await deep_probe.run(host, ports, priority_probes, profile)
+        probe_results = await _run_deep_probe_stage(run_deep_probes, host, ports, priority_probes, profile)
         result.probes = probe_results
 
         # Further enrich hostname from probes if still missing
@@ -423,6 +426,19 @@ async def _investigate_host(
 
         result.scan_duration_ms = round((time.monotonic() - t0) * 1000, 1)
         return result
+
+
+async def _run_deep_probe_stage(
+    run_deep_probes: bool,
+    host: DiscoveredHost,
+    ports,
+    priority_probes,
+    profile: ScanProfile,
+) -> list:
+    if not run_deep_probes:
+        return []
+    from app.scanner.stages import deep_probe
+    return await deep_probe.run(host, ports, priority_probes, profile)
 
 
 async def _lookup_host_enrichment(mac_vendor, dns_lookup, host: DiscoveredHost, ip: str, nmap_vendor: str | None) -> tuple[str | None, str | None]:

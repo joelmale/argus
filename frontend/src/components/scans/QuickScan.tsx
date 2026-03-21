@@ -8,14 +8,14 @@ import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 
 const PROFILES = [
-  { value: 'balanced',   label: 'Balanced',   desc: 'Ports + OS + AI analysis' },
-  { value: 'polite',     label: 'Polite',      desc: 'Slow scan, safe for fragile devices' },
-  { value: 'aggressive', label: 'Aggressive',  desc: 'All ports + all scripts' },
+  { value: 'quick', label: 'Quick', desc: 'Fast first-pass inventory' },
+  { value: 'balanced', label: 'Balanced', desc: 'Ports + OS + AI analysis' },
+  { value: 'deep_enrichment', label: 'Deep Enrichment', desc: 'Follow-up full-port investigation' },
 ]
 
 export function QuickScan() {
   const [targets, setTargets] = useState('')
-  const [profile, setProfile] = useState('balanced')
+  const [profile, setProfile] = useState('quick')
   const { mutate: trigger, isPending } = useTriggerScan()
   const { activeScan } = useAppStore()
 
