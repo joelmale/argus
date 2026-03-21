@@ -55,6 +55,10 @@ class ScannerConfigUpdateRequest(BaseModel):
     default_profile: str
     interval_minutes: int
     concurrent_hosts: int
+    host_chunk_size: int = 64
+    top_ports_count: int = 1000
+    deep_probe_timeout_seconds: int = 6
+    ai_after_scan_enabled: bool = True
     passive_arp_enabled: bool = True
     passive_arp_interface: str = "eth0"
     snmp_enabled: bool = True
@@ -128,6 +132,10 @@ def _serialize_scanner_config(config, effective) -> dict:
         "default_profile": config.default_profile,
         "interval_minutes": config.interval_minutes,
         "concurrent_hosts": config.concurrent_hosts,
+        "host_chunk_size": config.host_chunk_size,
+        "top_ports_count": config.top_ports_count,
+        "deep_probe_timeout_seconds": config.deep_probe_timeout_seconds,
+        "ai_after_scan_enabled": config.ai_after_scan_enabled,
         "passive_arp_enabled": config.passive_arp_enabled,
         "passive_arp_interface": config.passive_arp_interface,
         "snmp_enabled": config.snmp_enabled,
@@ -355,6 +363,10 @@ async def write_scanner_config(
             default_profile=payload.default_profile,
             interval_minutes=payload.interval_minutes,
             concurrent_hosts=payload.concurrent_hosts,
+            host_chunk_size=payload.host_chunk_size,
+            top_ports_count=payload.top_ports_count,
+            deep_probe_timeout_seconds=payload.deep_probe_timeout_seconds,
+            ai_after_scan_enabled=payload.ai_after_scan_enabled,
             passive_arp_enabled=payload.passive_arp_enabled,
             passive_arp_interface=payload.passive_arp_interface,
             snmp_enabled=payload.snmp_enabled,

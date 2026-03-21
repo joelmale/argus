@@ -81,6 +81,9 @@ async def run_scan(
     profile: ScanProfile = ScanProfile.BALANCED,
     enable_ai: bool = True,
     concurrent_hosts: int = CONCURRENT_HOSTS,
+    host_chunk_size: int = 64,
+    top_ports_count: int = 1000,
+    deep_probe_timeout_seconds: int = 6,
     db_session=None,
     broadcast_fn=None,   # Optional: async callable(dict) for WebSocket events
     control_fn=None,
@@ -101,7 +104,7 @@ async def run_scan(
     """
     t0 = time.monotonic()
     summary = ScanSummary(job_id=job_id, targets=targets, profile=profile)
-    mode_behavior = get_scan_mode_behavior(profile)
+    mode_behavior = get_scan_mode_behavior(profile, top_ports_count=top_ports_count)
 
     log.info("=== Scan started: job=%s targets=%s profile=%s ai=%s ===",
              job_id, targets, profile.value, enable_ai)
@@ -196,14 +199,15 @@ async def run_scan(
         total_hosts=len(hosts),
     )
 
-    from app.scanner.stages import portscan
-    port_results = await portscan.scan_hosts(hosts, profile)
-
-    # Build a map: ip → (ports, os_fp, nmap_hostname, nmap_vendor)
-    port_map: dict[str, tuple] = {
-        ip: (ports, os_fp, nmap_hostname, nmap_vendor)
-        for ports, os_fp, ip, nmap_hostname, nmap_vendor in port_results
-    }
+    port_map = await _run_port_scan_chunks(
+        hosts,
+        profile,
+        top_ports_count,
+        host_chunk_size,
+        broadcast_fn,
+        job_id,
+        summary,
+    )
 
     await _check_control(
         control_fn,
@@ -232,6 +236,7 @@ async def run_scan(
                 profile=profile,
                 analyst=analyst,
                 run_deep_probes=mode_behavior.run_deep_probes,
+                deep_probe_timeout_seconds=deep_probe_timeout_seconds,
                 semaphore=semaphore,
                 broadcast_fn=broadcast_fn,
                 job_id=job_id,
@@ -450,6 +455,7 @@ async def _investigate_host(
     profile: ScanProfile,
     analyst,
     run_deep_probes: bool,
+    deep_probe_timeout_seconds: int,
     semaphore: asyncio.Semaphore,
     broadcast_fn,
     job_id: str,
@@ -479,7 +485,14 @@ async def _investigate_host(
         )
 
         # Stage 4: Deep probes
-        probe_results = await _run_deep_probe_stage(run_deep_probes, host, ports, priority_probes, profile)
+        probe_results = await _run_deep_probe_stage(
+            run_deep_probes,
+            host,
+            ports,
+            priority_probes,
+            profile,
+            deep_probe_timeout_seconds,
+        )
         result.probes = probe_results
 
         # Further enrich hostname from probes if still missing
@@ -499,11 +512,64 @@ async def _run_deep_probe_stage(
     ports,
     priority_probes,
     profile: ScanProfile,
+    deep_probe_timeout_seconds: int,
 ) -> list:
     if not run_deep_probes:
         return []
     from app.scanner.stages import deep_probe
-    return await deep_probe.run(host, ports, priority_probes, profile)
+    return await deep_probe.run(
+        host,
+        ports,
+        priority_probes,
+        profile,
+        timeout_seconds=deep_probe_timeout_seconds,
+    )
+
+
+async def _run_port_scan_chunks(
+    hosts: list[DiscoveredHost],
+    profile: ScanProfile,
+    top_ports_count: int,
+    host_chunk_size: int,
+    broadcast_fn,
+    job_id: str,
+    summary: ScanSummary,
+) -> dict[str, tuple]:
+    from app.scanner.stages import portscan
+
+    chunk_size = max(1, min(256, host_chunk_size))
+    chunks = [hosts[index:index + chunk_size] for index in range(0, len(hosts), chunk_size)]
+    scanned_hosts = 0
+    port_results = []
+    for index, chunk in enumerate(chunks, start=1):
+        chunk_results = await portscan.scan_hosts(
+            chunk,
+            profile,
+            top_ports_count=top_ports_count,
+        )
+        port_results.extend(chunk_results)
+        scanned_hosts += len(chunk)
+        progress = 0.2 + (0.05 * (scanned_hosts / max(len(hosts), 1)))
+        await _broadcast(broadcast_fn, {
+            "event": "scan_progress",
+            "data": {
+                "job_id": job_id,
+                "stage": "port_scan",
+                "progress": round(progress, 3),
+                "hosts_found": len(hosts),
+                "hosts_port_scanned": scanned_hosts,
+                "hosts_fingerprinted": 0,
+                "hosts_deep_probed": 0,
+                "assets_created": summary.new_assets,
+                "assets_updated": summary.changed_assets,
+                "message": f"Port scanned chunk {index}/{len(chunks)} ({scanned_hosts}/{len(hosts)} hosts)",
+            },
+        })
+
+    return {
+        ip: (ports, os_fp, nmap_hostname, nmap_vendor)
+        for ports, os_fp, ip, nmap_hostname, nmap_vendor in port_results
+    }
 
 
 async def _lookup_host_enrichment(mac_vendor, dns_lookup, host: DiscoveredHost, ip: str, nmap_vendor: str | None) -> tuple[str | None, str | None]:

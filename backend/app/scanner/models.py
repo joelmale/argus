@@ -57,55 +57,54 @@ class DeviceClass(str, Enum):
     UNKNOWN        = "unknown"
 
 
-NMAP_PROFILE_ARGS: dict[ScanProfile, str] = {
-    # Quick — version detection on a small top-port set, no OS probing.
-    ScanProfile.QUICK: (
-        "-sV -T4 --top-ports 100 --host-timeout 20s"
-    ),
-
-    # Balanced — version detection + OS detection, but NO guessing.
-    # --osscan-guess is intentionally omitted: it forces nmap to guess even at
-    # 5-10% confidence, causing projector/printer fingerprints (e.g. the infamous
-    # "Sanyo PLC-XU88 digital projector") to be applied to most IoT devices that
-    # share similar minimal TCP/IP stacks. Trust only confident fingerprints.
-    # -A already includes -sV and -O so we avoid doubling up.
-    ScanProfile.BALANCED: (
-        "-sV -O -T4 --top-ports 1000 --host-timeout 60s"
-    ),
-
-    # Deep enrichment — full port range, OS guessing enabled, and service scripts.
-    ScanProfile.DEEP_ENRICHMENT: (
-        "-A -T4 -p- --osscan-guess --script=default,safe,vuln --host-timeout 90s"
-    ),
-}
+DEFAULT_TOP_PORTS_COUNT = 1000
 
 
-SCAN_MODE_BEHAVIORS: dict[ScanProfile, ScanModeBehavior] = {
-    ScanProfile.QUICK: ScanModeBehavior(
-        nmap_args=NMAP_PROFILE_ARGS[ScanProfile.QUICK],
-        enable_ai_by_default=False,
-        run_deep_probes=False,
-    ),
-    ScanProfile.BALANCED: ScanModeBehavior(
-        nmap_args=NMAP_PROFILE_ARGS[ScanProfile.BALANCED],
+def _normalize_top_ports_count(top_ports_count: int | None) -> int:
+    if top_ports_count is None:
+        return DEFAULT_TOP_PORTS_COUNT
+    return max(10, min(65535, int(top_ports_count)))
+
+
+def _build_nmap_args(profile: ScanProfile, top_ports_count: int) -> str:
+    if profile == ScanProfile.QUICK:
+        return f"-sV -T4 --top-ports {top_ports_count} --host-timeout 20s"
+    if profile == ScanProfile.BALANCED:
+        return f"-sV -O -T4 --top-ports {top_ports_count} --host-timeout 60s"
+    if profile == ScanProfile.DEEP_ENRICHMENT:
+        return "-A -T4 -p- --osscan-guess --script=default,safe,vuln --host-timeout 90s"
+    return _build_nmap_args(ScanProfile.BALANCED, top_ports_count)
+
+
+def get_scan_mode_behavior(
+    profile: ScanProfile,
+    *,
+    top_ports_count: int | None = None,
+) -> ScanModeBehavior:
+    normalized_top_ports = _normalize_top_ports_count(top_ports_count)
+    if profile == ScanProfile.QUICK:
+        return ScanModeBehavior(
+            nmap_args=_build_nmap_args(ScanProfile.QUICK, normalized_top_ports),
+            enable_ai_by_default=False,
+            run_deep_probes=False,
+        )
+    if profile == ScanProfile.DEEP_ENRICHMENT:
+        return ScanModeBehavior(
+            nmap_args=_build_nmap_args(ScanProfile.DEEP_ENRICHMENT, normalized_top_ports),
+            enable_ai_by_default=True,
+            run_deep_probes=True,
+        )
+    if profile == ScanProfile.CUSTOM:
+        return ScanModeBehavior(
+            nmap_args=_build_nmap_args(ScanProfile.BALANCED, normalized_top_ports),
+            enable_ai_by_default=True,
+            run_deep_probes=True,
+        )
+    return ScanModeBehavior(
+        nmap_args=_build_nmap_args(ScanProfile.BALANCED, normalized_top_ports),
         enable_ai_by_default=True,
         run_deep_probes=True,
-    ),
-    ScanProfile.DEEP_ENRICHMENT: ScanModeBehavior(
-        nmap_args=NMAP_PROFILE_ARGS[ScanProfile.DEEP_ENRICHMENT],
-        enable_ai_by_default=True,
-        run_deep_probes=True,
-    ),
-    ScanProfile.CUSTOM: ScanModeBehavior(
-        nmap_args=NMAP_PROFILE_ARGS[ScanProfile.BALANCED],
-        enable_ai_by_default=True,
-        run_deep_probes=True,
-    ),
-}
-
-
-def get_scan_mode_behavior(profile: ScanProfile) -> ScanModeBehavior:
-    return SCAN_MODE_BEHAVIORS.get(profile, SCAN_MODE_BEHAVIORS[ScanProfile.BALANCED])
+    )
 
 
 # ─── Stage 1: Discovery ──────────────────────────────────────────────────────

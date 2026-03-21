@@ -37,6 +37,10 @@ type ScannerConfigCardProps = {
     default_profile: string
     interval_minutes: number
     concurrent_hosts: number
+    host_chunk_size: number
+    top_ports_count: number
+    deep_probe_timeout_seconds: number
+    ai_after_scan_enabled: boolean
     fingerprint_ai_enabled: boolean
     fingerprint_ai_model: string
     fingerprint_ai_min_confidence: number
@@ -56,6 +60,10 @@ type ScannerConfigCardProps = {
     default_profile: string
     interval_minutes: number
     concurrent_hosts: number
+    host_chunk_size: number
+    top_ports_count: number
+    deep_probe_timeout_seconds: number
+    ai_after_scan_enabled: boolean
     fingerprint_ai_enabled: boolean
     fingerprint_ai_model: string
     fingerprint_ai_min_confidence: number
@@ -177,6 +185,10 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
   const [defaultProfile, setDefaultProfile] = useState(scannerConfig?.default_profile ?? 'balanced')
   const [scanInterval, setScanInterval] = useState(scannerConfig?.interval_minutes ?? 60)
   const [concurrentHosts, setConcurrentHosts] = useState(scannerConfig?.concurrent_hosts ?? 10)
+  const [hostChunkSize, setHostChunkSize] = useState(scannerConfig?.host_chunk_size ?? 64)
+  const [topPortsCount, setTopPortsCount] = useState(scannerConfig?.top_ports_count ?? 1000)
+  const [deepProbeTimeoutSeconds, setDeepProbeTimeoutSeconds] = useState(scannerConfig?.deep_probe_timeout_seconds ?? 6)
+  const [aiAfterScanEnabled, setAiAfterScanEnabled] = useState(scannerConfig?.ai_after_scan_enabled ?? true)
   const [fingerprintAiEnabled, setFingerprintAiEnabled] = useState(scannerConfig?.fingerprint_ai_enabled ?? false)
   const [fingerprintAiModel, setFingerprintAiModel] = useState(scannerConfig?.fingerprint_ai_model ?? 'qwen2.5:7b')
   const [fingerprintAiMinConfidence, setFingerprintAiMinConfidence] = useState(scannerConfig?.fingerprint_ai_min_confidence ?? 0.75)
@@ -233,6 +245,37 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             placeholder="Concurrent hosts"
             className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
           />
+          <input
+            value={hostChunkSize}
+            type="number"
+            min={1}
+            max={256}
+            onChange={(event) => setHostChunkSize(Number(event.target.value) || 64)}
+            placeholder="Host chunk size"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <input
+            value={topPortsCount}
+            type="number"
+            min={10}
+            max={65535}
+            onChange={(event) => setTopPortsCount(Number(event.target.value) || 1000)}
+            placeholder="Top ports count"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <input
+            value={deepProbeTimeoutSeconds}
+            type="number"
+            min={1}
+            max={30}
+            onChange={(event) => setDeepProbeTimeoutSeconds(Number(event.target.value) || 6)}
+            placeholder="Deep probe timeout seconds"
+            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+            <input type="checkbox" checked={aiAfterScanEnabled} onChange={(event) => setAiAfterScanEnabled(event.target.checked)} />
+            <span>Enable AI after-scan investigation</span>
+          </label>
           <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
             <input type="checkbox" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
             <span>Enable Ollama fingerprint synthesis</span>
@@ -301,6 +344,13 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             Last scheduled run: {scannerConfig?.last_scheduled_scan_at ? new Date(scannerConfig.last_scheduled_scan_at).toLocaleString() : 'never'}
           </p>
         </div>
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1 text-xs text-zinc-500">
+          <p>Host concurrency controls how many devices Argus investigates at once.</p>
+          <p>Chunk size controls how many discovered hosts go into each nmap batch before the next chunk starts.</p>
+          <p>Top ports count applies to quick and balanced scans; deep enrichment still scans the full port range.</p>
+          <p>Deep probe timeout is applied per protocol probe and is clamped between 1 and 30 seconds.</p>
+          <p>AI after-scan investigation lets you disable the post-probe analyst pass without turning off fingerprint AI settings.</p>
+        </div>
         <button
           type="button"
           disabled={isUpdatingScannerConfig}
@@ -311,6 +361,10 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             default_profile: defaultProfile,
             interval_minutes: scanInterval,
             concurrent_hosts: concurrentHosts,
+            host_chunk_size: hostChunkSize,
+            top_ports_count: topPortsCount,
+            deep_probe_timeout_seconds: deepProbeTimeoutSeconds,
+            ai_after_scan_enabled: aiAfterScanEnabled,
             fingerprint_ai_enabled: fingerprintAiEnabled,
             fingerprint_ai_model: fingerprintAiModel,
             fingerprint_ai_min_confidence: fingerprintAiMinConfidence,

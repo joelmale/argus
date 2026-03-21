@@ -164,7 +164,7 @@ async def _run_job_async(job_id: str) -> None:
         try:
             profile = _resolve_scan_profile(job.scan_type, ScanProfile)
             summary = ScanSummary(job_id=job_id, targets=job.targets, profile=profile)
-            enable_ai = settings.AI_ENABLE_PER_SCAN
+            enable_ai = config.ai_after_scan_enabled
 
             summary = await run_scan(
                 job_id=job_id,
@@ -172,6 +172,9 @@ async def _run_job_async(job_id: str) -> None:
                 profile=profile,
                 enable_ai=enable_ai,
                 concurrent_hosts=config.concurrent_hosts,
+                host_chunk_size=config.host_chunk_size,
+                top_ports_count=config.top_ports_count,
+                deep_probe_timeout_seconds=config.deep_probe_timeout_seconds,
                 db_session=db,
                 broadcast_fn=_get_job_broadcast_fn(db, job),
                 control_fn=control_fn,

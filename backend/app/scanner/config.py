@@ -43,6 +43,10 @@ class EffectiveScannerConfig:
     default_profile: str
     interval_minutes: int
     concurrent_hosts: int
+    host_chunk_size: int
+    top_ports_count: int
+    deep_probe_timeout_seconds: int
+    ai_after_scan_enabled: bool
     passive_arp_enabled: bool
     passive_arp_interface: str
     snmp_enabled: bool
@@ -230,6 +234,10 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
         default_profile=settings.SCANNER_DEFAULT_PROFILE,
         interval_minutes=settings.SCANNER_INTERVAL_MINUTES,
         concurrent_hosts=settings.SCANNER_CONCURRENT_HOSTS,
+        host_chunk_size=64,
+        top_ports_count=1000,
+        deep_probe_timeout_seconds=6,
+        ai_after_scan_enabled=settings.AI_ENABLE_PER_SCAN,
         passive_arp_enabled=settings.SCANNER_PASSIVE_ARP,
         passive_arp_interface=settings.SCANNER_PASSIVE_ARP_INTERFACE,
         snmp_enabled=True,
@@ -266,6 +274,10 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         default_profile=config.default_profile,
         interval_minutes=config.interval_minutes,
         concurrent_hosts=config.concurrent_hosts,
+        host_chunk_size=config.host_chunk_size,
+        top_ports_count=config.top_ports_count,
+        deep_probe_timeout_seconds=config.deep_probe_timeout_seconds,
+        ai_after_scan_enabled=config.ai_after_scan_enabled,
         passive_arp_enabled=config.passive_arp_enabled,
         passive_arp_interface=config.passive_arp_interface,
         snmp_enabled=config.snmp_enabled,
@@ -303,6 +315,10 @@ async def update_scanner_config(
     default_profile: str,
     interval_minutes: int,
     concurrent_hosts: int,
+    host_chunk_size: int,
+    top_ports_count: int,
+    deep_probe_timeout_seconds: int,
+    ai_after_scan_enabled: bool,
     passive_arp_enabled: bool,
     passive_arp_interface: str,
     snmp_enabled: bool,
@@ -334,6 +350,10 @@ async def update_scanner_config(
     config.default_profile = default_profile
     config.interval_minutes = interval_minutes
     config.concurrent_hosts = concurrent_hosts
+    config.host_chunk_size = max(1, min(256, host_chunk_size))
+    config.top_ports_count = max(10, min(65535, top_ports_count))
+    config.deep_probe_timeout_seconds = max(1, min(30, deep_probe_timeout_seconds))
+    config.ai_after_scan_enabled = ai_after_scan_enabled
     config.passive_arp_enabled = passive_arp_enabled
     config.passive_arp_interface = (passive_arp_interface or "").strip() or settings.SCANNER_PASSIVE_ARP_INTERFACE
     config.snmp_enabled = snmp_enabled

@@ -103,6 +103,10 @@ export interface ScannerConfig {
   default_profile: string;
   interval_minutes: number;
   concurrent_hosts: number;
+  host_chunk_size: number;
+  top_ports_count: number;
+  deep_probe_timeout_seconds: number;
+  ai_after_scan_enabled: boolean;
   fingerprint_ai_enabled: boolean;
   fingerprint_ai_model: string;
   fingerprint_ai_min_confidence: number;

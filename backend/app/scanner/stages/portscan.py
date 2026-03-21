@@ -79,12 +79,13 @@ async def scan_host(
     host: DiscoveredHost,
     profile: ScanProfile = ScanProfile.BALANCED,
     custom_args: Optional[str] = None,
+    top_ports_count: int | None = None,
 ) -> tuple[list[PortResult], OSFingerprint]:
     """
     Scan a single host. Returns (ports, os_fingerprint).
     Used for targeted per-host scans (e.g. passive ARP discovery).
     """
-    results = await scan_hosts([host], profile, custom_args)
+    results = await scan_hosts([host], profile, custom_args, top_ports_count=top_ports_count)
     if results:
         ports, os_fp, _, nmap_hostname, _ = results[0]
         # Attach nmap hostname back onto the host object for callers that need it
@@ -98,6 +99,7 @@ async def scan_hosts(
     hosts: list[DiscoveredHost],
     profile: ScanProfile = ScanProfile.BALANCED,
     custom_args: Optional[str] = None,
+    top_ports_count: int | None = None,
 ) -> list[HostScanTuple]:
     """
     Scan a list of hosts.
@@ -111,7 +113,12 @@ async def scan_hosts(
     loop = asyncio.get_event_loop()
     # Run nmap in thread executor — it's synchronous and CPU/IO bound
     return await loop.run_in_executor(
-        None, _scan_sync, hosts, profile, custom_args
+        None,
+        _scan_sync,
+        hosts,
+        profile,
+        custom_args,
+        top_ports_count,
     )
 
 
@@ -119,12 +126,13 @@ def _scan_sync(
     hosts: list[DiscoveredHost],
     profile: ScanProfile,
     custom_args: Optional[str],
+    top_ports_count: int | None,
 ) -> list[HostScanTuple]:
     """Synchronous nmap scan — runs in thread executor."""
     from app.scanner.enrichment.instant_win import fingerprint_from_nmap_host_data, merge_into_os_fingerprint
 
     target_str = " ".join(h.ip_address for h in hosts)
-    mode_behavior = get_scan_mode_behavior(profile)
+    mode_behavior = get_scan_mode_behavior(profile, top_ports_count=top_ports_count)
     base_args = custom_args or mode_behavior.nmap_args
     args = base_args if "-Pn" in base_args.split() else f"-Pn {base_args}"
 

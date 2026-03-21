@@ -25,16 +25,12 @@ This document captures the phased plan for making Argus scans feel faster, retur
     - discovered-host and investigated-host counters
     - live counters for port-scanned, fingerprinted, deep-probed, assets created, and assets updated
     - shortcut from the active scan UI into the inventory view
-- [ ] Phase 4: Performance Settings
-  - Current status: partial
+- [x] Phase 4: Performance Settings
+  - Current status: completed
   - Completed:
-    - database-backed `default_profile`
-    - database-backed `concurrent_hosts`
-  - Gaps:
-    - chunk size not configurable
-    - top ports count not configurable
-    - deep-probe timeout not configurable
-    - AI after-scan toggle not configurable
+    - persisted `host_chunk_size`, `top_ports_count`, `deep_probe_timeout_seconds`, and `ai_after_scan_enabled` in scanner config
+    - threaded the new settings into nmap batching, top-port selection, deep-probe execution, and AI post-scan analysis
+    - added bounds and operator help text in the settings UI
 - [ ] Phase 5: Chunked Parent/Child Scan Jobs
   - Current status: not started
   - Gaps:
@@ -199,12 +195,12 @@ Operators can tune scan speed and scan depth for their own network without code 
 
 Checklist:
 
-- [ ] Add host concurrency setting
-- [ ] Add chunk size setting
-- [ ] Add top ports count setting
-- [ ] Add deep-probe timeout setting
-- [ ] Add AI after-scan toggle
-- [ ] Add bounds/help text for each setting
+- [x] Add host concurrency setting
+- [x] Add chunk size setting
+- [x] Add top ports count setting
+- [x] Add deep-probe timeout setting
+- [x] Add AI after-scan toggle
+- [x] Add bounds/help text for each setting
 
 ## Phase 5: Chunked Parent/Child Scan Jobs
 
