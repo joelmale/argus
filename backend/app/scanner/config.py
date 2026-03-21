@@ -4,6 +4,7 @@ import ipaddress
 import fcntl
 import socket
 import struct
+from collections.abc import Iterable
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -212,6 +213,48 @@ def validate_scan_targets_routable(targets: str) -> str | None:
         f"Known IPv4 routes: {known_routes}{suffix}. "
         f"Update the scanner target range in Settings or fix scanner host networking.{environment_hint}"
     )
+
+
+def split_scan_targets(
+    targets: str,
+    *,
+    max_network_prefix: int = 24,
+    max_ip_group_size: int = 256,
+) -> list[str]:
+    chunks: list[str] = []
+    ip_group: list[str] = []
+    for token in _iter_target_tokens(targets):
+        try:
+            network = ipaddress.ip_network(token, strict=False)
+        except ValueError:
+            ip_group.append(token)
+            if len(ip_group) >= max_ip_group_size:
+                chunks.append(" ".join(ip_group))
+                ip_group = []
+            continue
+
+        if isinstance(network, ipaddress.IPv4Network) and network.prefixlen < max_network_prefix:
+            if ip_group:
+                chunks.append(" ".join(ip_group))
+                ip_group = []
+            chunks.extend(str(subnet) for subnet in network.subnets(new_prefix=max_network_prefix))
+            continue
+
+        ip_group.append(str(network))
+        if len(ip_group) >= max_ip_group_size:
+            chunks.append(" ".join(ip_group))
+            ip_group = []
+
+    if ip_group:
+        chunks.append(" ".join(ip_group))
+    return chunks or [targets]
+
+
+def _iter_target_tokens(targets: str) -> Iterable[str]:
+    for token in targets.replace(",", " ").split():
+        candidate = token.strip()
+        if candidate:
+            yield candidate
 
 
 def _bootstrap_targets_from_env() -> tuple[str | None, bool]:

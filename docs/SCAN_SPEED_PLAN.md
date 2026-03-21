@@ -31,12 +31,12 @@ This document captures the phased plan for making Argus scans feel faster, retur
     - persisted `host_chunk_size`, `top_ports_count`, `deep_probe_timeout_seconds`, and `ai_after_scan_enabled` in scanner config
     - threaded the new settings into nmap batching, top-port selection, deep-probe execution, and AI post-scan analysis
     - added bounds and operator help text in the settings UI
-- [ ] Phase 5: Chunked Parent/Child Scan Jobs
-  - Current status: not started
-  - Gaps:
-    - no parent/child scan-job model
-    - no chunk orchestration for large scans
-    - queueing still operates at the single-job level
+- [x] Phase 5: Chunked Parent/Child Scan Jobs
+  - Current status: completed
+  - Completed:
+    - added parent/child scan-job schema for chunked runs
+    - split larger target ranges into child chunks while keeping queue position on the parent job
+    - orchestrated child chunks through the parent worker and aggregated progress back to the parent job id
 - [ ] Phase 6: Deep Enrichment Follow-Up Workflow
   - Current status: not started
   - Gaps:
@@ -223,6 +223,14 @@ Commit point: `Split large scans into chunked child jobs`
 ### Outcome
 
 Large scans start yielding results from early chunks quickly, and orchestration becomes more predictable.
+
+Checklist:
+
+- [x] Introduce parent scan jobs
+- [x] Split larger targets into child chunks
+- [x] Run child chunks in controlled sequence
+- [x] Aggregate child progress into the parent scan
+- [x] Keep queue management at the parent-job level
 
 Checklist:
 

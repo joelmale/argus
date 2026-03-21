@@ -152,6 +152,21 @@ async def _run_job_async(job_id: str) -> None:
         if job is None:
             return
 
+        if job.parent_id is None and await _has_child_jobs(db, job.id):
+            await _run_parent_job_async(
+                db,
+                job,
+                job_id,
+                config_factory=get_or_create_scanner_config,
+                scan_profile_enum=ScanProfile,
+                scan_summary_model=ScanSummary,
+                run_scan_fn=run_scan,
+                persist_results=_persist_results,
+                scan_control_decision=ScanControlDecision,
+                scan_control_interrupt=ScanControlInterrupt,
+            )
+            return
+
         job.targets = materialize_scan_targets(job.targets)
         route_error = validate_scan_targets_routable(job.targets)
         if route_error:
@@ -191,6 +206,195 @@ async def _run_job_async(job_id: str) -> None:
         await _dispatch_next_scan_if_idle(db)
 
     await engine.dispose()
+
+
+async def _run_parent_job_async(
+    db,
+    job: ScanJob,
+    job_id: str,
+    *,
+    config_factory,
+    scan_profile_enum,
+    scan_summary_model,
+    run_scan_fn,
+    persist_results,
+    scan_control_decision,
+    scan_control_interrupt,
+) -> None:
+    config = await config_factory(db)
+    await _mark_job_running(db, job)
+    profile = _resolve_scan_profile(job.scan_type, scan_profile_enum)
+    summary = scan_summary_model(job_id=job_id, targets=job.targets, profile=profile)
+    scanned_ips: set[str] = set()
+    children = await _list_child_jobs(db, job.id)
+    progress_state = {"last_flush": 0.0, "last_stage": None}
+
+    for child in children:
+        if child.status == "done":
+            continue
+
+        child.status = "running"
+        child.started_at = datetime.now(timezone.utc)
+        child.finished_at = None
+        await db.commit()
+
+        child_broadcast = _build_parent_chunk_broadcast_fn(
+            db,
+            job,
+            progress_state,
+            chunk_index=child.chunk_index or 1,
+            chunk_count=child.chunk_count or len(children) or 1,
+        )
+        control_fn = _build_control_fn(db, job, scan_control_decision)
+
+        try:
+            child_summary = await run_scan_fn(
+                job_id=job_id,
+                targets=child.targets,
+                profile=profile,
+                enable_ai=config.ai_after_scan_enabled,
+                concurrent_hosts=config.concurrent_hosts,
+                host_chunk_size=config.host_chunk_size,
+                top_ports_count=config.top_ports_count,
+                deep_probe_timeout_seconds=config.deep_probe_timeout_seconds,
+                db_session=db,
+                broadcast_fn=child_broadcast,
+                control_fn=control_fn,
+                mark_missing_offline=False,
+                scanned_ips_buffer=scanned_ips,
+            )
+        except scan_control_interrupt as exc:
+            child.status = exc.status
+            child.finished_at = datetime.now(timezone.utc) if exc.status == "cancelled" else None
+            child.result_summary = {
+                **(child.result_summary or {}),
+                **summary.model_dump(mode="json"),
+                "stage": exc.status,
+                "message": exc.message,
+            }
+            if exc.status == "cancelled":
+                await _cancel_remaining_child_jobs(db, job.id, message=exc.message)
+            await _apply_interrupt_result(db, job, exc, summary)
+            await db.commit()
+            await _publish_event({
+                "event": "scan_complete",
+                "data": {
+                    "job_id": job_id,
+                    "status": exc.status,
+                    "message": exc.message,
+                    "resume_after": exc.resume_after,
+                },
+            })
+            return
+        except Exception as exc:
+            child.status = "failed"
+            child.finished_at = datetime.now(timezone.utc)
+            child.result_summary = {"error": str(exc)}
+            await db.commit()
+            await _publish_scan_failure(db, job, job_id, exc)
+            raise
+
+        child.status = "done"
+        child.finished_at = datetime.now(timezone.utc)
+        child.result_summary = child_summary.model_dump(mode="json")
+        _merge_scan_summary(summary, child_summary)
+        job.result_summary = {
+            **summary.model_dump(mode="json"),
+            "stage": "investigation",
+            "chunk_index": child.chunk_index,
+            "chunk_count": child.chunk_count,
+            "message": f"Completed chunk {child.chunk_index}/{child.chunk_count}",
+        }
+        await db.commit()
+
+    if scanned_ips:
+        await persist_results(
+            db,
+            [],
+            scanned_ips,
+            summary,
+            None,
+            job_id,
+            mark_missing_offline=True,
+            stage="persist",
+        )
+
+    await _complete_scan_job(db, job, job_id, summary)
+    await _publish_event({
+        "event": "scan_complete",
+        "data": summary.model_dump(mode="json"),
+    })
+
+
+def _build_parent_chunk_broadcast_fn(db, job, progress_state: dict, *, chunk_index: int, chunk_count: int):
+    async def broadcast(payload: dict):
+        event = payload.get("event")
+        data = dict(payload.get("data", {}))
+        if "job_id" in data:
+            data["job_id"] = str(job.id)
+        if event == "scan_complete":
+            return
+        if event == "scan_progress":
+            child_progress = float(data.get("progress", 0.0) or 0.0)
+            overall_progress = ((chunk_index - 1) + child_progress) / max(chunk_count, 1)
+            data["progress"] = round(overall_progress, 3)
+            data["chunk_index"] = chunk_index
+            data["chunk_count"] = chunk_count
+            message = data.get("message")
+            if isinstance(message, str) and message:
+                data["message"] = f"Chunk {chunk_index}/{chunk_count}: {message}"
+            payload = {"event": event, "data": data}
+            await _record_job_progress(db, job, payload, progress_state)
+            await _publish_event(payload)
+            return
+
+        payload = {"event": event, "data": data}
+        await _publish_event(payload)
+
+    return broadcast
+
+
+def _merge_scan_summary(parent_summary, child_summary) -> None:
+    parent_summary.hosts_scanned += child_summary.hosts_scanned
+    parent_summary.hosts_up += child_summary.hosts_up
+    parent_summary.total_open_ports += child_summary.total_open_ports
+    parent_summary.new_assets += child_summary.new_assets
+    parent_summary.changed_assets += child_summary.changed_assets
+    parent_summary.offline_assets += child_summary.offline_assets
+    parent_summary.ai_analyses_completed += child_summary.ai_analyses_completed
+    parent_summary.duration_seconds = round(parent_summary.duration_seconds + child_summary.duration_seconds, 2)
+
+
+async def _has_child_jobs(db, parent_id) -> bool:
+    result = await db.execute(select(ScanJob).where(ScanJob.parent_id == parent_id).limit(1))
+    return result.scalar_one_or_none() is not None
+
+
+async def _list_child_jobs(db, parent_id) -> list[ScanJob]:
+    result = await db.execute(
+        select(ScanJob)
+        .where(ScanJob.parent_id == parent_id)
+        .order_by(ScanJob.chunk_index.asc().nullslast(), ScanJob.created_at.asc())
+    )
+    return list(result.scalars().all())
+
+
+async def _cancel_remaining_child_jobs(db, parent_id, *, message: str) -> None:
+    children = await _list_child_jobs(db, parent_id)
+    finished_at = datetime.now(timezone.utc)
+    for child in children:
+        if child.status in {"done", "failed", "cancelled"}:
+            continue
+        child.status = "cancelled"
+        child.finished_at = finished_at
+        child.control_action = None
+        child.control_mode = None
+        child.result_summary = {
+            **(child.result_summary or {}),
+            "stage": "cancelled",
+            "message": message,
+        }
+    await db.commit()
 
 
 async def _get_runnable_job(db, job_id: str):
@@ -364,7 +568,7 @@ async def _enqueue_scheduled_scan() -> None:
     """Create and enqueue a ScanJob for the default targets."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.db.models import ScanJob
-    from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets, should_enqueue_scheduled_scan
+    from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets, should_enqueue_scheduled_scan, split_scan_targets
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
     Session = async_sessionmaker(engine, expire_on_commit=False)
@@ -380,8 +584,33 @@ async def _enqueue_scheduled_scan() -> None:
             triggered_by="schedule",
             queue_position=await _next_queue_position(db),
         )
-        config.last_scheduled_scan_at = datetime.now(timezone.utc)
         db.add(job)
+        await db.flush()
+        child_targets = split_scan_targets(targets)
+        if len(child_targets) > 1:
+            job.result_summary = {
+                "stage": "queued",
+                "message": f"Queued parent scan with {len(child_targets)} child chunks",
+                "chunk_count": len(child_targets),
+            }
+            for index, child_target in enumerate(child_targets, start=1):
+                db.add(ScanJob(
+                    parent_id=job.id,
+                    targets=child_target,
+                    scan_type=config.default_profile,
+                    triggered_by="schedule",
+                    status="pending",
+                    queue_position=None,
+                    chunk_index=index,
+                    chunk_count=len(child_targets),
+                    result_summary={
+                        "stage": "queued",
+                        "message": f"Queued chunk {index}/{len(child_targets)}",
+                    },
+                ))
+        else:
+            job.targets = child_targets[0]
+        config.last_scheduled_scan_at = datetime.now(timezone.utc)
         await db.commit()
         await db.refresh(job)
         job_id = str(job.id)
@@ -456,12 +685,20 @@ async def _resume_paused_scans_async() -> None:
 
 
 async def _has_active_scan(db) -> bool:
-    result = await db.execute(select(ScanJob).where(ScanJob.status.in_(("running", "paused"))).limit(1))
+    result = await db.execute(
+        select(ScanJob)
+        .where(ScanJob.parent_id.is_(None), ScanJob.status.in_(("running", "paused")))
+        .limit(1)
+    )
     return result.scalar_one_or_none() is not None
 
 
 async def _next_queue_position(db) -> int:
-    result = await db.execute(select(ScanJob).where(ScanJob.status == "pending").order_by(ScanJob.queue_position.asc().nullslast(), ScanJob.created_at.asc()))
+    result = await db.execute(
+        select(ScanJob)
+        .where(ScanJob.parent_id.is_(None), ScanJob.status == "pending")
+        .order_by(ScanJob.queue_position.asc().nullslast(), ScanJob.created_at.asc())
+    )
     jobs = list(result.scalars().all())
     if not jobs:
         return 1
@@ -470,7 +707,11 @@ async def _next_queue_position(db) -> int:
 
 
 async def _normalize_pending_queue(db) -> None:
-    result = await db.execute(select(ScanJob).where(ScanJob.status == "pending").order_by(ScanJob.queue_position.asc().nullslast(), ScanJob.created_at.asc()))
+    result = await db.execute(
+        select(ScanJob)
+        .where(ScanJob.parent_id.is_(None), ScanJob.status == "pending")
+        .order_by(ScanJob.queue_position.asc().nullslast(), ScanJob.created_at.asc())
+    )
     jobs = list(result.scalars().all())
     for index, job in enumerate(jobs, start=1):
         job.queue_position = index
@@ -479,7 +720,10 @@ async def _normalize_pending_queue(db) -> None:
 async def _get_next_queued_job(db):
     await _normalize_pending_queue(db)
     result = await db.execute(
-        select(ScanJob).where(ScanJob.status == "pending").order_by(ScanJob.queue_position.asc(), ScanJob.created_at.asc()).limit(1)
+        select(ScanJob)
+        .where(ScanJob.parent_id.is_(None), ScanJob.status == "pending")
+        .order_by(ScanJob.queue_position.asc(), ScanJob.created_at.asc())
+        .limit(1)
     )
     return result.scalar_one_or_none()
 

@@ -20,6 +20,7 @@ from app.scanner.config import (
     get_or_create_scanner_config,
     materialize_scan_targets,
     resolve_scan_targets,
+    split_scan_targets,
     validate_scan_targets_routable,
 )
 from app.workers.tasks import (
@@ -87,6 +88,24 @@ def _mark_job_cancelled(job: ScanJob, *, finished_at: datetime, message: str) ->
     job.control_mode = None
 
 
+async def _cancel_child_scan_jobs(db: AsyncSession, parent_id: UUID | str, *, message: str) -> None:
+    result = await db.execute(select(ScanJob).where(ScanJob.parent_id == parent_id))
+    finished_at = datetime.now(timezone.utc)
+    for child in result.scalars().all():
+        if child.status in {"done", "failed", "cancelled"}:
+            continue
+        child.status = "cancelled"
+        child.finished_at = finished_at
+        child.control_action = None
+        child.control_mode = None
+        child.resume_after = None
+        child.result_summary = {
+            **(child.result_summary or {}),
+            "stage": "cancelled",
+            "message": message,
+        }
+
+
 async def _resume_scan_job(job: ScanJob, db: AsyncSession) -> dict:
     if job.status != "paused":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only paused scans can be resumed")
@@ -149,13 +168,16 @@ async def _cancel_scan_job(job: ScanJob, mode: str, db: AsyncSession) -> tuple[b
             orphaned_cancel = True
 
         if terminated or orphaned_cancel:
+            message = "Operator terminated scan" if terminated else "Operator cancelled stale running scan"
+            await _cancel_child_scan_jobs(db, job.id, message=message)
             _mark_job_cancelled(
                 job,
                 finished_at=finished_at,
-                message="Operator terminated scan" if terminated else "Operator cancelled stale running scan",
+                message=message,
             )
 
     if job.status == "pending":
+        await _cancel_child_scan_jobs(db, job.id, message="Cancelled before execution")
         _mark_job_cancelled(job, finished_at=finished_at, message="Cancelled before execution")
 
     await db.commit()
@@ -172,7 +194,9 @@ def _move_queue_item(queue: list[ScanJob], current_index: int, action: str) -> N
 
 
 async def _handle_start_now(queue: list[ScanJob], db: AsyncSession) -> None:
-    active_result = await db.execute(select(ScanJob).where(ScanJob.status == "running").limit(1))
+    active_result = await db.execute(
+        select(ScanJob).where(ScanJob.parent_id.is_(None), ScanJob.status == "running").limit(1)
+    )
     active = active_result.scalar_one_or_none()
     if active is not None:
         active.control_action = "requeue"
@@ -185,6 +209,59 @@ def _serialize_queue(queue: list[ScanJob]) -> list[dict]:
     return [{"id": str(item.id), "queue_position": item.queue_position} for item in queue]
 
 
+def _serialize_scan_job(job: ScanJob) -> dict:
+    return {column.name: getattr(job, column.name) for column in job.__table__.columns}
+
+
+async def _create_scan_job_graph(
+    db: AsyncSession,
+    *,
+    targets: str,
+    scan_type: str,
+    triggered_by: str,
+) -> tuple[ScanJob, list[ScanJob]]:
+    queue_position = await _next_queue_position(db)
+    child_targets = split_scan_targets(targets)
+    parent = ScanJob(
+        targets=targets,
+        scan_type=scan_type,
+        triggered_by=triggered_by,
+        queue_position=queue_position,
+    )
+    db.add(parent)
+    await db.flush()
+
+    if len(child_targets) == 1:
+        parent.targets = child_targets[0]
+        return parent, []
+
+    children: list[ScanJob] = []
+    for index, child_target in enumerate(child_targets, start=1):
+        child = ScanJob(
+            parent_id=parent.id,
+            targets=child_target,
+            scan_type=scan_type,
+            triggered_by=triggered_by,
+            status="pending",
+            queue_position=None,
+            chunk_index=index,
+            chunk_count=len(child_targets),
+            result_summary={
+                "stage": "queued",
+                "message": f"Queued chunk {index}/{len(child_targets)}",
+            },
+        )
+        children.append(child)
+        db.add(child)
+
+    parent.result_summary = {
+        "stage": "queued",
+        "message": f"Queued parent scan with {len(child_targets)} child chunks",
+        "chunk_count": len(child_targets),
+    }
+    return parent, children
+
+
 @router.get("/")
 async def list_scans(
     db: DBSession,
@@ -192,7 +269,7 @@ async def list_scans(
     limit: int = 20,
 ):
     result = await db.execute(select(ScanJob))
-    scans = list(result.scalars().all())
+    scans = [scan for scan in result.scalars().all() if scan.parent_id is None]
     scans.sort(
         key=lambda scan: (
             0 if scan.status == "running" else 1 if scan.status == "paused" else 2 if scan.status == "pending" else 3,
@@ -219,13 +296,12 @@ async def trigger_scan(
     route_error = validate_scan_targets_routable(materialized_targets)
     if route_error:
         raise HTTPException(status_code=400, detail=route_error)
-    job = ScanJob(
+    job, _ = await _create_scan_job_graph(
+        db,
         targets=materialized_targets,
         scan_type=payload.scan_type,
         triggered_by="manual",
-        queue_position=await _next_queue_position(db),
     )
-    db.add(job)
     await db.commit()
     await db.refresh(job)
     should_start = not await _has_active_scan(db) and job.queue_position == 1
@@ -287,6 +363,20 @@ async def get_scan(job_id: UUID, db: DBSession, _: CurrentUser):
     job = await db.get(ScanJob, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
+    if job.parent_id is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Child scan chunks are controlled through the parent scan")
+    if job.parent_id is None:
+        child_result = await db.execute(
+            select(ScanJob)
+            .where(ScanJob.parent_id == job.id)
+            .order_by(ScanJob.chunk_index.asc().nullslast(), ScanJob.created_at.asc())
+        )
+        child_jobs = list(child_result.scalars().all())
+        if child_jobs:
+            return {
+                **_serialize_scan_job(job),
+                "child_jobs": [_serialize_scan_job(child) for child in child_jobs],
+            }
     return job
 
 
@@ -347,11 +437,15 @@ async def reorder_scan_queue(
     job = await db.get(ScanJob, job_id)
     if job is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
+    if job.parent_id is not None:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Child scan chunks cannot be reordered directly")
     if job.status != "pending":
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Only queued pending scans can be reordered")
 
     result = await db.execute(
-        select(ScanJob).where(ScanJob.status == "pending").order_by(ScanJob.queue_position.asc().nullslast(), ScanJob.created_at.asc())
+        select(ScanJob)
+        .where(ScanJob.parent_id.is_(None), ScanJob.status == "pending")
+        .order_by(ScanJob.queue_position.asc().nullslast(), ScanJob.created_at.asc())
     )
     queue = list(result.scalars().all())
     await _normalize_pending_queue(db)

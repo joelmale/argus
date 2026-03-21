@@ -84,6 +84,8 @@ async def run_scan(
     host_chunk_size: int = 64,
     top_ports_count: int = 1000,
     deep_probe_timeout_seconds: int = 6,
+    mark_missing_offline: bool = True,
+    scanned_ips_buffer: set[str] | None = None,
     db_session=None,
     broadcast_fn=None,   # Optional: async callable(dict) for WebSocket events
     control_fn=None,
@@ -129,6 +131,8 @@ async def run_scan(
     hosts = await discovery.sweep(targets)
     summary.hosts_scanned = len(hosts)
     summary.hosts_up = len(hosts)
+    if scanned_ips_buffer is not None:
+        scanned_ips_buffer.update(host.ip_address for host in hosts)
 
     if not hosts:
         log.info("No hosts discovered in %s", targets)
@@ -347,6 +351,7 @@ async def run_scan(
             summary,
             broadcast_fn,
             job_id,
+            mark_missing_offline=mark_missing_offline,
             stage="persist",
         )
 
