@@ -316,23 +316,37 @@ async def _check_control(
     if decision.action not in {"cancel", "pause"}:
         return
 
-    if tasks:
-        for task in tasks:
-            if not task.done():
-                task.cancel()
-        await asyncio.gather(*tasks, return_exceptions=True)
-
+    await _cancel_pending_tasks(tasks)
     partial_results = _build_partial_results(hosts, completed_results, summary.profile)
-    scanned_ips = {result.host.ip_address for result in partial_results}
+    raise _build_control_interrupt(decision, stage, summary, partial_results, completed_results)
+
+
+async def _cancel_pending_tasks(tasks: list[asyncio.Task] | None) -> None:
+    if not tasks:
+        return
+    for task in tasks:
+        if not task.done():
+            task.cancel()
+    await asyncio.gather(*tasks, return_exceptions=True)
+
+
+def _build_control_interrupt(
+    decision: ScanControlDecision,
+    stage: str,
+    summary: ScanSummary,
+    partial_results: list[HostScanResult],
+    completed_results: list[HostScanResult],
+) -> ScanControlInterrupt:
+    preserve_discovery = decision.mode == "preserve_discovery"
+    persisted_results = partial_results if preserve_discovery else completed_results
     action_label = "paused" if decision.action == "pause" else "cancelled"
     message = decision.message or f"Scan {action_label} during {stage}"
-
-    raise ScanControlInterrupt(
+    return ScanControlInterrupt(
         status="paused" if decision.action == "pause" else "cancelled",
         message=message,
         summary=summary.model_copy(deep=True),
-        partial_results=partial_results if decision.mode == "preserve_discovery" else completed_results,
-        scanned_ips=scanned_ips if decision.mode == "preserve_discovery" else {result.host.ip_address for result in completed_results},
+        partial_results=persisted_results,
+        scanned_ips={result.host.ip_address for result in persisted_results},
         resume_after=decision.resume_after,
         mark_missing_offline=False,
     )
@@ -381,19 +395,9 @@ async def _investigate_host(
         from app.scanner.stages.fingerprint import classify, probe_priority
         from app.scanner.enrichment import mac_vendor, dns_lookup
 
-        # Enrichment: MAC vendor + reverse DNS (quick, always run)
-        vendor_lookup, reverse_hostname = await asyncio.gather(
-            asyncio.get_event_loop().run_in_executor(None, mac_vendor.lookup, host.mac_address),
-            dns_lookup.reverse_lookup(ip),
-        )
-        vendor = vendor_lookup or nmap_vendor
+        vendor, reverse_hostname = await _lookup_host_enrichment(mac_vendor, dns_lookup, host, ip, nmap_vendor)
         hint = classify(host, ports, os_fp, vendor)
         priority_probes = probe_priority(host, ports, hint)
-
-        # Hostname priority: reverse DNS > nmap-resolved > None
-        # We keep reverse_hostname as the primary field but fall back to
-        # nmap's own resolution when reverse DNS has no entry.
-        best_hostname = reverse_hostname or nmap_hostname
 
         # Build partial result
         result = HostScanResult(
@@ -401,7 +405,7 @@ async def _investigate_host(
             ports=ports,
             os_fingerprint=os_fp,
             mac_vendor=vendor,
-            reverse_hostname=best_hostname,
+            reverse_hostname=reverse_hostname or nmap_hostname,
             scan_profile=profile,
         )
 
@@ -412,47 +416,56 @@ async def _investigate_host(
 
         # Further enrich hostname from probes if still missing
         if not result.reverse_hostname:
-            for pr in probe_results:
-                if pr.probe_type == "dns" and pr.success:
-                    result.reverse_hostname = pr.data.get("hostname")
-                    break
-            # Also check mDNS and SNMP probes for human-readable names
-            if not result.reverse_hostname:
-                for pr in probe_results:
-                    if pr.probe_type == "mdns" and pr.success:
-                        services = pr.data.get("services", [])
-                        if services and services[0].get("host"):
-                            result.reverse_hostname = services[0]["host"]
-                            break
-            if not result.reverse_hostname:
-                for pr in probe_results:
-                    if pr.probe_type == "snmp" and pr.success:
-                        sys_name = pr.data.get("sys_name")
-                        if sys_name:
-                            result.reverse_hostname = sys_name
-                            break
+            result.reverse_hostname = _resolve_hostname_from_probes(probe_results)
 
         # Stage 5: AI analysis
-        if analyst is not None:
-            try:
-                ai_analysis = await analyst.investigate(result)
-                result.ai_analysis = ai_analysis
-
-                await _broadcast(broadcast_fn, {
-                    "event": "device_investigated",
-                    "data": {
-                        "job_id": job_id,
-                        "ip": ip,
-                        "device_class": ai_analysis.device_class.value,
-                        "vendor": ai_analysis.vendor,
-                        "confidence": ai_analysis.confidence,
-                    },
-                })
-            except Exception as exc:
-                log.error("AI analysis failed for %s: %s", ip, exc)
+        await _run_ai_investigation(analyst, result, broadcast_fn, job_id, ip)
 
         result.scan_duration_ms = round((time.monotonic() - t0) * 1000, 1)
         return result
+
+
+async def _lookup_host_enrichment(mac_vendor, dns_lookup, host: DiscoveredHost, ip: str, nmap_vendor: str | None) -> tuple[str | None, str | None]:
+    vendor_lookup, reverse_hostname = await asyncio.gather(
+        asyncio.get_event_loop().run_in_executor(None, mac_vendor.lookup, host.mac_address),
+        dns_lookup.reverse_lookup(ip),
+    )
+    return vendor_lookup or nmap_vendor, reverse_hostname
+
+
+def _resolve_hostname_from_probes(probe_results) -> str | None:
+    for probe in probe_results:
+        if probe.probe_type == "dns" and probe.success:
+            return probe.data.get("hostname")
+        if probe.probe_type == "mdns" and probe.success:
+            services = probe.data.get("services", [])
+            if services and services[0].get("host"):
+                return services[0]["host"]
+        if probe.probe_type == "snmp" and probe.success:
+            sys_name = probe.data.get("sys_name")
+            if sys_name:
+                return sys_name
+    return None
+
+
+async def _run_ai_investigation(analyst, result: HostScanResult, broadcast_fn, job_id: str, ip: str) -> None:
+    if analyst is None:
+        return
+    try:
+        ai_analysis = await analyst.investigate(result)
+        result.ai_analysis = ai_analysis
+        await _broadcast(broadcast_fn, {
+            "event": "device_investigated",
+            "data": {
+                "job_id": job_id,
+                "ip": ip,
+                "device_class": ai_analysis.device_class.value,
+                "vendor": ai_analysis.vendor,
+                "confidence": ai_analysis.confidence,
+            },
+        })
+    except Exception as exc:
+        log.error("AI analysis failed for %s: %s", ip, exc)
 
 
 async def _persist_results(
@@ -474,44 +487,21 @@ async def _persist_results(
     # Find assets that were online before but not in this scan
     from sqlalchemy import select
     from app.db.models import Asset
-    offline_ips: list[str] = []
-    if mark_missing_offline:
-        stmt = select(Asset.ip_address).where(Asset.status == "online")
-        previously_online = {row[0] for row in (await db_session.execute(stmt)).all()}
-        offline_ips = list(previously_online - scanned_ips)
+    offline_ips = await _get_offline_ips(db_session, select, Asset, scanned_ips, mark_missing_offline)
 
     for result in results:
-        if result is None:
-            continue
-        if not has_meaningful_scan_evidence(result) and not allow_discovery_only:
-            log.info("Skipping weak scan result for %s: insufficient evidence to persist asset", result.host.ip_address)
-            continue
-        try:
-            asset, change_type = await upsert_scan_result(db_session, result)
-            snmp_probe = next((probe for probe in result.probes if probe.probe_type == "snmp" and probe.success), None)
-            if snmp_probe:
-                await infer_topology_links_from_snmp(db_session, asset, snmp_probe.data)
-
-            if change_type == "discovered":
-                summary.new_assets += 1
-                discovered_event = {
-                    "event": "device_discovered",
-                    "data": {
-                        "job_id": job_id,
-                        "ip": result.host.ip_address,
-                        "mac": result.host.mac_address,
-                        "hostname": result.reverse_hostname,
-                        "device_class": result.ai_analysis.device_class.value if result.ai_analysis else "unknown",
-                    },
-                }
-                await _broadcast(broadcast_fn, discovered_event)
-                await notify_new_device_if_enabled(db_session, discovered_event["data"])
-            elif change_type == "updated":
-                summary.changed_assets += 1
-
-        except Exception as exc:
-            log.error("DB upsert failed for %s: %s", result.host.ip_address, exc)
-            summary.errors.append(f"{result.host.ip_address}: {exc}")
+        await _persist_result(
+            db_session,
+            result,
+            summary,
+            broadcast_fn,
+            job_id,
+            allow_discovery_only,
+            has_meaningful_scan_evidence,
+            upsert_scan_result,
+            infer_topology_links_from_snmp,
+            notify_new_device_if_enabled,
+        )
 
     # Mark offline assets
     if mark_missing_offline:
@@ -531,6 +521,74 @@ async def _persist_results(
             )
 
     await db_session.commit()
+
+
+async def _get_offline_ips(db_session, select_fn, asset_model, scanned_ips: set[str], mark_missing_offline: bool) -> list[str]:
+    if not mark_missing_offline:
+        return []
+    stmt = select_fn(asset_model.ip_address).where(asset_model.status == "online")
+    previously_online = {row[0] for row in (await db_session.execute(stmt)).all()}
+    return list(previously_online - scanned_ips)
+
+
+async def _persist_result(
+    db_session,
+    result: HostScanResult | None,
+    summary: ScanSummary,
+    broadcast_fn,
+    job_id: str,
+    allow_discovery_only: bool,
+    has_meaningful_scan_evidence,
+    upsert_scan_result,
+    infer_topology_links_from_snmp,
+    notify_new_device_if_enabled,
+) -> None:
+    if result is None:
+        return
+    if not has_meaningful_scan_evidence(result) and not allow_discovery_only:
+        log.info("Skipping weak scan result for %s: insufficient evidence to persist asset", result.host.ip_address)
+        return
+
+    try:
+        asset, change_type = await upsert_scan_result(db_session, result)
+        await _persist_snmp_topology(db_session, asset, result, infer_topology_links_from_snmp)
+        await _update_summary(summary, broadcast_fn, job_id, result, change_type, db_session, notify_new_device_if_enabled)
+    except Exception as exc:
+        log.error("DB upsert failed for %s: %s", result.host.ip_address, exc)
+        summary.errors.append(f"{result.host.ip_address}: {exc}")
+
+
+async def _persist_snmp_topology(db_session, asset, result: HostScanResult, infer_topology_links_from_snmp) -> None:
+    snmp_probe = next((probe for probe in result.probes if probe.probe_type == "snmp" and probe.success), None)
+    if snmp_probe:
+        await infer_topology_links_from_snmp(db_session, asset, snmp_probe.data)
+
+
+async def _update_summary(
+    summary: ScanSummary,
+    broadcast_fn,
+    job_id: str,
+    result: HostScanResult,
+    change_type: str,
+    db_session,
+    notify_new_device_if_enabled,
+) -> None:
+    if change_type == "discovered":
+        summary.new_assets += 1
+        discovered_event = {
+            "event": "device_discovered",
+            "data": {
+                "job_id": job_id,
+                "ip": result.host.ip_address,
+                "mac": result.host.mac_address,
+                "hostname": result.reverse_hostname,
+                "device_class": result.ai_analysis.device_class.value if result.ai_analysis else "unknown",
+            },
+        }
+        await _broadcast(broadcast_fn, discovered_event)
+        await notify_new_device_if_enabled(db_session, discovered_event["data"])
+    elif change_type == "updated":
+        summary.changed_assets += 1
 
 
 async def _broadcast(fn, payload: dict) -> None:

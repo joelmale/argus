@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException, Query, status
 from pydantic import BaseModel, Field
 from sqlalchemy import select
@@ -11,6 +13,12 @@ from app.db.session import get_db
 from app.findings import ingest_findings, summarize_findings
 
 router = APIRouter()
+DBSession = Annotated[AsyncSession, Depends(get_db)]
+AdminUser = Annotated[User, Depends(get_current_admin)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
+SeverityFilter = Annotated[str | None, Query()]
+StatusFilter = Annotated[str | None, Query(alias="status")]
+AssetFilter = Annotated[str | None, Query()]
 
 
 class FindingIngestItem(BaseModel):
@@ -63,11 +71,11 @@ def _serialize_finding(finding: Finding) -> dict:
 
 @router.get("/")
 async def list_findings(
-    severity: str | None = Query(None),
-    status_filter: str | None = Query(None, alias="status"),
-    asset_id: str | None = Query(None),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    severity: SeverityFilter = None,
+    status_filter: StatusFilter = None,
+    asset_id: AssetFilter = None,
+    db: DBSession = None,
+    _: CurrentUser = None,
 ):
     stmt = select(Finding).order_by(Finding.last_seen.desc())
     if severity:
@@ -82,8 +90,8 @@ async def list_findings(
 
 @router.get("/summary")
 async def get_findings_summary(
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    db: DBSession,
+    _: CurrentUser,
 ):
     return await summarize_findings(db)
 
@@ -91,8 +99,8 @@ async def get_findings_summary(
 @router.post("/ingest")
 async def ingest_findings_route(
     payload: FindingIngestRequest,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     return await ingest_findings(
         db,
@@ -105,8 +113,8 @@ async def ingest_findings_route(
 async def update_finding_status(
     finding_id: int,
     payload: FindingStatusRequest,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     finding = await db.get(Finding, finding_id)
     if finding is None:

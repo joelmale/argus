@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Annotated
+
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -28,6 +30,15 @@ from app.plugins import list_plugins
 from app.scanner.config import clear_inventory, read_effective_scanner_config, update_scanner_config
 
 router = APIRouter()
+DBSession = Annotated[AsyncSession, Depends(get_db)]
+AdminUser = Annotated[User, Depends(get_current_admin)]
+FINGERPRINT_REFRESH_RESPONSES = {404: {"description": "Fingerprint dataset not found"}}
+TPLINK_MODULE_RESPONSES = {
+    400: {"description": "Module configuration is invalid"},
+    502: {"description": "Module connection failed"},
+}
+SCANNER_CONFIG_RESPONSES = {400: {"description": "Scanner configuration is invalid"}}
+RESET_INVENTORY_RESPONSES = {400: {"description": "Inventory reset confirmation text is invalid"}}
 
 
 class BackupPolicyUpdateRequest(BaseModel):
@@ -143,35 +154,35 @@ def _serialize_scanner_config(config, effective) -> dict:
 
 
 @router.get("/backup-drivers")
-async def get_backup_drivers(_: User = Depends(get_current_admin)):
+async def get_backup_drivers(_: AdminUser):
     return list_backup_drivers()
 
 
 @router.get("/plugins")
-async def get_plugins(_: User = Depends(get_current_admin)):
+async def get_plugins(_: AdminUser):
     return list_plugins()
 
 
 @router.get("/integration-events")
-async def get_integration_events(_: User = Depends(get_current_admin)):
+async def get_integration_events(_: AdminUser):
     return list_integration_events()
 
 
 @router.get("/fingerprint-datasets")
 async def get_fingerprint_datasets(
-    _: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    _: AdminUser,
+    db: DBSession,
 ):
     rows = await list_datasets(db)
     await db.commit()
     return [_serialize_dataset(row) for row in rows]
 
 
-@router.post("/fingerprint-datasets/{dataset_key}/refresh")
+@router.post("/fingerprint-datasets/{dataset_key}/refresh", responses=FINGERPRINT_REFRESH_RESPONSES)
 async def refresh_fingerprint_dataset(
     dataset_key: str,
-    user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    user: AdminUser,
+    db: DBSession,
 ):
     try:
         row = await refresh_dataset(db, dataset_key)
@@ -191,8 +202,8 @@ async def refresh_fingerprint_dataset(
 
 @router.get("/integrations/home-assistant/entities")
 async def get_home_assistant_entities(
-    _: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    _: AdminUser,
+    db: DBSession,
 ):
     result = await db.execute(
         select(Asset)
@@ -206,8 +217,8 @@ async def get_home_assistant_entities(
 
 @router.get("/integrations/inventory-sync")
 async def get_inventory_sync_export(
-    _: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    _: AdminUser,
+    db: DBSession,
 ):
     result = await db.execute(
         select(Asset)
@@ -224,8 +235,8 @@ async def get_inventory_sync_export(
 
 @router.get("/backup-policy")
 async def read_backup_policy(
-    _: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    _: AdminUser,
+    db: DBSession,
 ):
     policy = await get_backup_policy(db)
     return {
@@ -242,8 +253,8 @@ async def read_backup_policy(
 
 @router.get("/scanner-config")
 async def get_scanner_config(
-    _: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    _: AdminUser,
+    db: DBSession,
 ):
     config, effective = await read_effective_scanner_config(db)
     return _serialize_scanner_config(config, effective)
@@ -251,8 +262,8 @@ async def get_scanner_config(
 
 @router.get("/modules/tplink-deco")
 async def get_tplink_deco_module(
-    _: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    _: AdminUser,
+    db: DBSession,
 ):
     config = await get_or_create_tplink_deco_config(db)
     runs = await list_recent_tplink_deco_sync_runs(db)
@@ -265,8 +276,8 @@ async def get_tplink_deco_module(
 @router.put("/modules/tplink-deco")
 async def write_tplink_deco_module(
     payload: TplinkDecoConfigUpdateRequest,
-    user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    user: AdminUser,
+    db: DBSession,
 ):
     config = await update_tplink_deco_config(
         db,
@@ -284,10 +295,10 @@ async def write_tplink_deco_module(
     return serialize_tplink_deco_config(config)
 
 
-@router.post("/modules/tplink-deco/test")
+@router.post("/modules/tplink-deco/test", responses=TPLINK_MODULE_RESPONSES)
 async def test_tplink_deco_module(
-    user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    user: AdminUser,
+    db: DBSession,
 ):
     try:
         result = await test_tplink_deco_connection(db)
@@ -306,10 +317,10 @@ async def test_tplink_deco_module(
     return result
 
 
-@router.post("/modules/tplink-deco/sync")
+@router.post("/modules/tplink-deco/sync", responses=TPLINK_MODULE_RESPONSES)
 async def run_tplink_deco_module_sync(
-    user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    user: AdminUser,
+    db: DBSession,
 ):
     try:
         result = await sync_tplink_deco_module(db)
@@ -329,11 +340,11 @@ async def run_tplink_deco_module_sync(
     return result
 
 
-@router.put("/scanner-config")
+@router.put("/scanner-config", responses=SCANNER_CONFIG_RESPONSES)
 async def write_scanner_config(
     payload: ScannerConfigUpdateRequest,
-    user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    user: AdminUser,
+    db: DBSession,
 ):
     try:
         config, effective = await update_scanner_config(
@@ -378,11 +389,11 @@ async def write_scanner_config(
     return _serialize_scanner_config(config, effective)
 
 
-@router.post("/inventory/reset")
+@router.post("/inventory/reset", responses=RESET_INVENTORY_RESPONSES)
 async def reset_inventory(
     payload: ResetInventoryRequest,
-    user: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    user: AdminUser,
+    db: DBSession,
 ):
     if payload.confirm.strip().lower() != "reset inventory":
         raise HTTPException(status_code=400, detail="Confirmation text must be 'reset inventory'")
@@ -394,8 +405,8 @@ async def reset_inventory(
 @router.put("/backup-policy")
 async def write_backup_policy(
     payload: BackupPolicyUpdateRequest,
-    _: User = Depends(get_current_admin),
-    db: AsyncSession = Depends(get_db),
+    _: AdminUser,
+    db: DBSession,
 ):
     policy = await update_backup_policy(
         db,

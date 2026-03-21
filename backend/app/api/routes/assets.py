@@ -2,6 +2,7 @@
 import asyncio
 import csv
 from io import StringIO
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Response
@@ -31,6 +32,33 @@ from app.scanner.stages import portscan
 
 router = APIRouter()
 VALID_DEVICE_TYPES = {member.value for member in DeviceClass}
+ASSET_NOT_FOUND_DETAIL = "Asset not found"
+DBSession = Annotated[AsyncSession, Depends(get_db)]
+AdminUser = Annotated[User, Depends(get_current_admin)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
+AssetSearch = Annotated[str | None, Query(description="Search by IP, hostname, or vendor")]
+AssetStatus = Annotated[str | None, Query(description="Filter by status: online | offline")]
+AssetTagFilter = Annotated[str | None, Query(description="Filter by tag")]
+CompareToSnapshot = Annotated[int | None, Query()]
+ASSET_NOT_FOUND_RESPONSE = {404: {"description": ASSET_NOT_FOUND_DETAIL}}
+ASSET_UPDATE_RESPONSES = {
+    404: {"description": ASSET_NOT_FOUND_DETAIL},
+    422: {"description": "Invalid asset update payload"},
+}
+ASSET_TAG_RESPONSES = {
+    400: {"description": "Tag value is invalid"},
+    404: {"description": ASSET_NOT_FOUND_DETAIL},
+    409: {"description": "Tag already exists"},
+}
+BACKUP_TARGET_RESPONSES = {
+    400: {"description": "Backup target configuration is invalid"},
+    404: {"description": ASSET_NOT_FOUND_DETAIL},
+}
+BACKUP_CAPTURE_RESPONSES = {
+    400: {"description": "Backup capture failed"},
+    404: {"description": ASSET_NOT_FOUND_DETAIL},
+}
+BACKUP_SNAPSHOT_RESPONSES = {404: {"description": "Backup snapshot not found"}}
 
 
 def _serialize_ai_analysis(ai: AssetAIAnalysis | None) -> dict | None:
@@ -207,19 +235,19 @@ async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
     )
     asset = (await db.execute(stmt)).scalar_one_or_none()
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
     return asset
 
 
 @router.get("/")
 async def list_assets(
-    search: str | None = Query(None, description="Search by IP, hostname, or vendor"),
-    status: str | None = Query(None, description="Filter by status: online | offline"),
-    tag: str | None = Query(None, description="Filter by tag"),
+    search: AssetSearch = None,
+    status: AssetStatus = None,
+    tag: AssetTagFilter = None,
     skip: int = 0,
     limit: int = 100,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_user),
+    db: DBSession = None,
+    _: CurrentUser = None,
 ):
     """Return all discovered assets with optional filtering."""
     q = select(Asset).options(
@@ -251,7 +279,7 @@ async def list_assets(
 
 
 @router.get("/export.csv")
-async def export_assets_csv(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+async def export_assets_csv(db: DBSession, _: CurrentUser):
     result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
 
@@ -297,7 +325,7 @@ async def export_assets_csv(db: AsyncSession = Depends(get_db), _: User = Depend
 
 
 @router.get("/export.ansible.ini")
-async def export_assets_ansible(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+async def export_assets_ansible(db: DBSession, _: CurrentUser):
     result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
     return Response(
@@ -308,7 +336,7 @@ async def export_assets_ansible(db: AsyncSession = Depends(get_db), _: User = De
 
 
 @router.get("/export.terraform.tf.json")
-async def export_assets_terraform(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+async def export_assets_terraform(db: DBSession, _: CurrentUser):
     result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
     return Response(
@@ -319,14 +347,14 @@ async def export_assets_terraform(db: AsyncSession = Depends(get_db), _: User = 
 
 
 @router.get("/export.inventory.json")
-async def export_assets_inventory_json(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+async def export_assets_inventory_json(db: DBSession, _: CurrentUser):
     result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
     return build_inventory_snapshot(assets)
 
 
 @router.get("/report.json")
-async def export_assets_report_json(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+async def export_assets_report_json(db: DBSession, _: CurrentUser):
     result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
     assets = result.scalars().all()
     open_findings = await db.scalar(select(func.count()).select_from(Finding).where(Finding.status == "open")) or 0
@@ -364,7 +392,7 @@ async def export_assets_report_json(db: AsyncSession = Depends(get_db), _: User 
 
 
 @router.get("/report.html", response_class=HTMLResponse)
-async def export_assets_report_html(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+async def export_assets_report_html(db: DBSession, _: CurrentUser):
     result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
     assets = result.scalars().all()
 
@@ -417,8 +445,8 @@ async def export_assets_report_html(db: AsyncSession = Depends(get_db), _: User 
     )
 
 
-@router.get("/{asset_id}")
-async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+@router.get("/{asset_id}", responses=ASSET_NOT_FOUND_RESPONSE)
+async def get_asset(asset_id: UUID, db: DBSession, _: CurrentUser):
     stmt = (
         select(Asset)
         .options(
@@ -438,15 +466,15 @@ async def get_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User 
     )
     asset = (await db.execute(stmt)).scalar_one_or_none()
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
     return _serialize_asset(asset)
 
 
 @router.post("/{asset_id}/port-scan")
 async def run_asset_port_scan(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     asset = await _load_asset(db, asset_id)
     host = DiscoveredHost(
@@ -474,8 +502,8 @@ async def run_asset_port_scan(
 @router.post("/{asset_id}/ai-analysis/refresh")
 async def run_asset_ai_refresh(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     asset = await _load_asset(db, asset_id)
     host = DiscoveredHost(
@@ -490,6 +518,7 @@ async def run_asset_ai_refresh(
         ports=ports,
         os_fp=os_fp,
         nmap_hostname=host.nmap_hostname,
+        nmap_vendor=asset.vendor,
         profile=ScanProfile.BALANCED,
         analyst=get_analyst(),
         semaphore=asyncio.Semaphore(1),
@@ -504,17 +533,17 @@ async def run_asset_ai_refresh(
     return _serialize_asset(await _load_asset(db, asset_id))
 
 
-@router.patch("/{asset_id}")
+@router.patch("/{asset_id}", responses=ASSET_UPDATE_RESPONSES)
 async def update_asset(
     asset_id: UUID,
     payload: dict,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     """Update mutable fields: hostname, notes, tags, custom_fields."""
     asset = await db.get(Asset, asset_id)
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
     allowed = {"hostname", "notes", "custom_fields", "device_type"}
     for key, val in payload.items():
         if key not in allowed:
@@ -551,32 +580,32 @@ async def update_asset(
     return _serialize_asset(refreshed)
 
 
-@router.get("/{asset_id}/evidence")
-async def get_asset_evidence(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+@router.get("/{asset_id}/evidence", responses=ASSET_NOT_FOUND_RESPONSE)
+async def get_asset_evidence(asset_id: UUID, db: DBSession, _: CurrentUser):
     asset = await _load_asset(db, asset_id)
     return _serialize_asset(asset)["evidence"]
 
 
-@router.get("/{asset_id}/probe-runs")
-async def get_asset_probe_runs(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+@router.get("/{asset_id}/probe-runs", responses=ASSET_NOT_FOUND_RESPONSE)
+async def get_asset_probe_runs(asset_id: UUID, db: DBSession, _: CurrentUser):
     asset = await _load_asset(db, asset_id)
     return _serialize_asset(asset)["probe_runs"]
 
 
-@router.delete("/{asset_id}", status_code=204)
-async def delete_asset(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_admin)):
+@router.delete("/{asset_id}", status_code=204, responses=ASSET_NOT_FOUND_RESPONSE)
+async def delete_asset(asset_id: UUID, db: DBSession, _: AdminUser):
     asset = await db.get(Asset, asset_id)
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
     await db.delete(asset)
     await db.commit()
 
 
-@router.get("/{asset_id}/history")
-async def get_asset_history(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+@router.get("/{asset_id}/history", responses=ASSET_NOT_FOUND_RESPONSE)
+async def get_asset_history(asset_id: UUID, db: DBSession, _: CurrentUser):
     asset = await db.get(Asset, asset_id)
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
 
     result = await db.execute(
         select(AssetHistory)
@@ -586,11 +615,11 @@ async def get_asset_history(asset_id: UUID, db: AsyncSession = Depends(get_db), 
     return result.scalars().all()
 
 
-@router.get("/{asset_id}/ports")
-async def get_asset_ports(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+@router.get("/{asset_id}/ports", responses=ASSET_NOT_FOUND_RESPONSE)
+async def get_asset_ports(asset_id: UUID, db: DBSession, _: CurrentUser):
     asset = await db.get(Asset, asset_id)
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
 
     result = await db.execute(
         select(Port)
@@ -600,11 +629,11 @@ async def get_asset_ports(asset_id: UUID, db: AsyncSession = Depends(get_db), _:
     return result.scalars().all()
 
 
-@router.get("/{asset_id}/wireless-clients")
-async def get_wireless_clients(asset_id: UUID, db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+@router.get("/{asset_id}/wireless-clients", responses=ASSET_NOT_FOUND_RESPONSE)
+async def get_wireless_clients(asset_id: UUID, db: DBSession, _: CurrentUser):
     asset = await db.get(Asset, asset_id)
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
 
     result = await db.execute(
         select(WirelessAssociation)
@@ -633,16 +662,16 @@ async def get_wireless_clients(asset_id: UUID, db: AsyncSession = Depends(get_db
     ]
 
 
-@router.post("/{asset_id}/tags", status_code=201)
+@router.post("/{asset_id}/tags", status_code=201, responses=ASSET_TAG_RESPONSES)
 async def add_asset_tag(
     asset_id: UUID,
     payload: AssetTagRequest,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     asset = await db.get(Asset, asset_id)
     if not asset:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
 
     normalized = payload.tag.strip().lower()
     if not normalized:
@@ -665,8 +694,8 @@ async def add_asset_tag(
 async def delete_asset_tag(
     asset_id: UUID,
     tag: str,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     result = await db.execute(
         select(AssetTag).where(AssetTag.asset_id == asset_id, AssetTag.tag == tag.lower())
@@ -678,15 +707,15 @@ async def delete_asset_tag(
     await db.commit()
 
 
-@router.get("/{asset_id}/config-backup-target")
+@router.get("/{asset_id}/config-backup-target", responses=ASSET_NOT_FOUND_RESPONSE)
 async def read_config_backup_target(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     asset = await db.get(Asset, asset_id)
     if asset is None:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
 
     target = await get_backup_target(db, asset_id)
     if target is None:
@@ -706,16 +735,16 @@ async def read_config_backup_target(
     }
 
 
-@router.put("/{asset_id}/config-backup-target")
+@router.put("/{asset_id}/config-backup-target", responses=BACKUP_TARGET_RESPONSES)
 async def write_config_backup_target(
     asset_id: UUID,
     payload: ConfigBackupTargetRequest,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     asset = await db.get(Asset, asset_id)
     if asset is None:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
 
     try:
         target = await upsert_backup_target(
@@ -745,15 +774,15 @@ async def write_config_backup_target(
     }
 
 
-@router.get("/{asset_id}/config-backups")
+@router.get("/{asset_id}/config-backups", responses=ASSET_NOT_FOUND_RESPONSE)
 async def get_config_backups(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     asset = await db.get(Asset, asset_id)
     if asset is None:
-        raise HTTPException(status_code=404, detail="Asset not found")
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
 
     snapshots = await list_backup_snapshots(db, asset_id)
     return [
@@ -772,11 +801,11 @@ async def get_config_backups(
     ]
 
 
-@router.post("/{asset_id}/config-backups", status_code=201)
+@router.post("/{asset_id}/config-backups", status_code=201, responses=BACKUP_CAPTURE_RESPONSES)
 async def trigger_config_backup(
     asset_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     try:
         snapshot = await capture_backup_for_asset(db, asset_id)
@@ -798,12 +827,12 @@ async def trigger_config_backup(
     }
 
 
-@router.get("/{asset_id}/config-backups/{snapshot_id}/download")
+@router.get("/{asset_id}/config-backups/{snapshot_id}/download", responses=BACKUP_SNAPSHOT_RESPONSES)
 async def download_config_backup(
     asset_id: UUID,
     snapshot_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     snapshot = await get_backup_snapshot(db, asset_id, snapshot_id)
     if snapshot is None or not snapshot.content:
@@ -815,13 +844,13 @@ async def download_config_backup(
     )
 
 
-@router.get("/{asset_id}/config-backups/{snapshot_id}/diff")
+@router.get("/{asset_id}/config-backups/{snapshot_id}/diff", responses=BACKUP_SNAPSHOT_RESPONSES)
 async def diff_config_backup(
     asset_id: UUID,
     snapshot_id: int,
-    compare_to: int | None = Query(None),
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    compare_to: CompareToSnapshot = None,
+    db: DBSession = None,
+    _: AdminUser = None,
 ):
     try:
         diff = await generate_backup_diff(db, asset_id, snapshot_id, compare_to)
@@ -830,12 +859,12 @@ async def diff_config_backup(
     return Response(content=diff or "No diff\n", media_type="text/plain")
 
 
-@router.get("/{asset_id}/config-backups/{snapshot_id}/restore-assist")
+@router.get("/{asset_id}/config-backups/{snapshot_id}/restore-assist", responses=BACKUP_SNAPSHOT_RESPONSES)
 async def get_restore_assist(
     asset_id: UUID,
     snapshot_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     try:
         return await generate_restore_assist(db, asset_id, snapshot_id)

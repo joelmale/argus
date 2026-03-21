@@ -55,6 +55,10 @@ redis_data/
 htmlcov/
 coverage/
 
+# Local export tooling and generated reports
+scripts/export_sonar_findings.py
+sonar-findings.json
+
 # Build artifacts
 *.pyc
 dist/

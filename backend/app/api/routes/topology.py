@@ -1,4 +1,5 @@
 """Topology graph endpoints — returns nodes + edges for frontend rendering."""
+from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends
@@ -11,6 +12,9 @@ from app.db.models import Asset, TopologyLink, User
 from app.db.session import get_db
 
 router = APIRouter()
+DBSession = Annotated[AsyncSession, Depends(get_db)]
+AdminUser = Annotated[User, Depends(get_current_admin)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 
 
 class TopologyLinkCreateRequest(BaseModel):
@@ -21,7 +25,7 @@ class TopologyLinkCreateRequest(BaseModel):
 
 
 @router.get("/graph")
-async def get_topology_graph(db: AsyncSession = Depends(get_db), _: User = Depends(get_current_user)):
+async def get_topology_graph(db: DBSession, _: CurrentUser):
     """
     Returns a Cytoscape.js-compatible graph payload:
       { nodes: [{data: {id, label, ...}}], edges: [{data: {source, target, ...}}] }
@@ -66,8 +70,8 @@ async def get_topology_graph(db: AsyncSession = Depends(get_db), _: User = Depen
 @router.post("/links", status_code=201)
 async def create_topology_link(
     payload: TopologyLinkCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     link = TopologyLink(
         source_id=payload.source_id,
@@ -84,8 +88,8 @@ async def create_topology_link(
 @router.delete("/links/{link_id}", status_code=204)
 async def delete_topology_link(
     link_id: int,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     link = await db.get(TopologyLink, link_id)
     if link is None:

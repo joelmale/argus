@@ -11,6 +11,7 @@ module.exports = {
         'guides/backend-api-guide',
         'guides/frontend-dashboard-guide',
         'guides/ci-cd-security',
+        'guides/sonar-remediation-plan',
       ],
     },
     'troubleshooting',

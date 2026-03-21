@@ -62,29 +62,35 @@ def _get_active_scan_task_ids(job_id: str) -> list[str]:
         log.warning("Unable to inspect active Celery tasks for scan %s: %s", job_id, exc)
         return []
 
-    task_ids: list[str] = []
-    for worker_tasks in active.values():
-        for task in worker_tasks or []:
-            if task.get("name") != "app.workers.tasks.run_scan_job":
-                continue
-            args = task.get("args", [])
-            kwargs = task.get("kwargs", {})
-            task_job_id = None
-            if isinstance(args, (list, tuple)) and args:
-                task_job_id = str(args[0])
-            elif isinstance(kwargs, dict) and "job_id" in kwargs:
-                task_job_id = str(kwargs["job_id"])
-            elif isinstance(args, str) and job_id in args:
-                task_job_id = job_id
-            if task_job_id != job_id:
-                continue
+    return [
+        task_id
+        for worker_tasks in active.values()
+        for task in (worker_tasks or [])
+        for task_id in [_get_scan_task_id(task, job_id)]
+        if task_id is not None
+    ]
 
-            task_id = task.get("id")
-            if not task_id:
-                continue
-            task_ids.append(task_id)
 
-    return task_ids
+def _get_scan_task_id(task: dict, job_id: str) -> str | None:
+    if task.get("name") != "app.workers.tasks.run_scan_job":
+        return None
+    if _extract_scan_job_id(task, job_id) != job_id:
+        return None
+    task_id = task.get("id")
+    return str(task_id) if task_id else None
+
+
+def _extract_scan_job_id(task: dict, job_id: str) -> str | None:
+    args = task.get("args", [])
+    kwargs = task.get("kwargs", {})
+
+    if isinstance(args, (list, tuple)) and args:
+        return str(args[0])
+    if isinstance(kwargs, dict) and "job_id" in kwargs:
+        return str(kwargs["job_id"])
+    if isinstance(args, str) and job_id in args:
+        return job_id
+    return None
 
 
 def revoke_active_scan_job(job_id: str) -> bool:
@@ -142,85 +148,21 @@ async def _run_job_async(job_id: str) -> None:
     Session = async_sessionmaker(engine, expire_on_commit=False)
 
     async with Session() as db:
-        # Load the job
-        job = await db.get(ScanJob, job_id)
+        job = await _get_runnable_job(db, job_id)
         if job is None:
-            log.error("ScanJob %s not found", job_id)
-            return
-        if job.status == "cancelled":
-            log.info("Skipping cancelled scan job: %s", job_id)
-            return
-        if job.status == "paused":
-            log.info("Skipping paused scan job until resumed: %s", job_id)
             return
 
-        # Mark as running
         job.targets = materialize_scan_targets(job.targets)
         route_error = validate_scan_targets_routable(job.targets)
         if route_error:
-            job.status = "failed"
-            job.finished_at = datetime.now(timezone.utc)
-            job.control_action = None
-            job.control_mode = None
-            job.resume_after = None
-            job.result_summary = {
-                "stage": "failed",
-                "message": route_error,
-                "error": route_error,
-            }
-            await db.commit()
-            await _publish_event({
-                "event": "scan_complete",
-                "data": {
-                    "job_id": job_id,
-                    "status": "failed",
-                    "error": route_error,
-                },
-            })
-            await _dispatch_next_scan_if_idle(db)
+            await _fail_scan_job(db, job, job_id, route_error)
             return
-        job.status = "running"
-        job.queue_position = None
-        job.control_action = None
-        job.started_at = datetime.now(timezone.utc)
         config = await get_or_create_scanner_config(db)
-        await db.commit()
-
-        job.result_summary = {
-            "stage": "queued",
-            "progress": 0.0,
-            "message": f"Queued scan for {job.targets}",
-        }
-        await db.commit()
-
-        async def control_fn():
-            await db.refresh(job)
-            if job.control_action == "cancel":
-                return ScanControlDecision(
-                    action="cancel",
-                    mode=job.control_mode or "discard",
-                    message="Operator cancelled scan",
-                )
-            if job.control_action == "requeue":
-                return ScanControlDecision(
-                    action="pause",
-                    mode="requeue",
-                    message="Operator preempted scan and returned it to the queue",
-                )
-            if job.control_action == "pause":
-                return ScanControlDecision(
-                    action="pause",
-                    mode=job.control_mode or "preserve_discovery",
-                    resume_after=job.resume_after.isoformat() if job.resume_after else None,
-                    message="Operator paused scan",
-                )
-            return None
+        await _mark_job_running(db, job)
+        control_fn = _build_control_fn(db, job, ScanControlDecision)
 
         try:
-            try:
-                profile = ScanProfile(job.scan_type)
-            except ValueError:
-                profile = ScanProfile.BALANCED
+            profile = _resolve_scan_profile(job.scan_type, ScanProfile)
             summary = ScanSummary(job_id=job_id, targets=job.targets, profile=profile)
             enable_ai = settings.AI_ENABLE_PER_SCAN
 
@@ -235,81 +177,182 @@ async def _run_job_async(job_id: str) -> None:
                 control_fn=control_fn,
             )
 
-            job.status = "done"
-            job.finished_at = datetime.now(timezone.utc)
-            job.result_summary = summary.model_dump(mode="json")
-            await db.commit()
-
-            log.info("Scan job %s completed: %s", job_id, summary.model_dump(mode="json"))
+            await _complete_scan_job(db, job, job_id, summary)
 
         except ScanControlInterrupt as exc:
-            summary = exc.summary or summary
-            if exc.partial_results:
-                await _persist_results(
-                    db,
-                    exc.partial_results,
-                    exc.scanned_ips,
-                    summary,
-                    _get_job_broadcast_fn(db, job),
-                    job_id,
-                    mark_missing_offline=exc.mark_missing_offline,
-                    allow_discovery_only=True,
-                )
-            summary_payload = summary.model_dump(mode="json")
-            if exc.status == "paused" and job.control_mode == "requeue":
-                job.status = "pending"
-                job.started_at = None
-                job.finished_at = None
-            else:
-                job.status = exc.status
-                job.finished_at = datetime.now(timezone.utc) if exc.status == "cancelled" else None
-            job.result_summary = {
-                **summary_payload,
-                **(job.result_summary or {}),
-                "stage": "queued" if job.status == "pending" else ("paused" if exc.status == "paused" else "cancelled"),
-                "message": exc.message,
-                "resume_after": exc.resume_after,
-                "preserved_hosts": len(exc.scanned_ips),
-            }
-            if job.status == "pending":
-                job.resume_after = None
-                job.queue_position = await _next_queue_position(db)
-            elif exc.status == "paused":
-                job.resume_after = datetime.fromisoformat(exc.resume_after) if exc.resume_after else None
-            else:
-                job.resume_after = None
-            job.control_action = None
-            job.control_mode = None
-            await db.commit()
-            await _publish_event({
-                "event": "scan_complete",
-                "data": {
-                    "job_id": job_id,
-                    "status": exc.status,
-                    "message": exc.message,
-                    "resume_after": exc.resume_after,
-                    "preserved_hosts": len(exc.scanned_ips),
-                },
-            })
+            await _handle_scan_interrupt(db, job, job_id, exc, summary, _persist_results)
         except Exception as exc:
-            log.exception("Scan job %s failed: %s", job_id, exc)
-            job.status = "failed"
-            job.finished_at = datetime.now(timezone.utc)
-            job.result_summary = {"error": str(exc)}
-            await db.commit()
-            await _publish_event({
-                "event": "scan_complete",
-                "data": {
-                    "job_id": job_id,
-                    "status": "failed",
-                    "error": str(exc),
-                },
-            })
+            await _publish_scan_failure(db, job, job_id, exc)
             raise
 
         await _dispatch_next_scan_if_idle(db)
 
     await engine.dispose()
+
+
+async def _get_runnable_job(db, job_id: str):
+    job = await db.get(ScanJob, job_id)
+    if job is None:
+        log.error("ScanJob %s not found", job_id)
+        return None
+    if job.status == "cancelled":
+        log.info("Skipping cancelled scan job: %s", job_id)
+        return None
+    if job.status == "paused":
+        log.info("Skipping paused scan job until resumed: %s", job_id)
+        return None
+    return job
+
+
+async def _fail_scan_job(db, job: ScanJob, job_id: str, route_error: str) -> None:
+    job.status = "failed"
+    job.finished_at = datetime.now(timezone.utc)
+    job.control_action = None
+    job.control_mode = None
+    job.resume_after = None
+    job.result_summary = {
+        "stage": "failed",
+        "message": route_error,
+        "error": route_error,
+    }
+    await db.commit()
+    await _publish_event({
+        "event": "scan_complete",
+        "data": {
+            "job_id": job_id,
+            "status": "failed",
+            "error": route_error,
+        },
+    })
+    await _dispatch_next_scan_if_idle(db)
+
+
+async def _mark_job_running(db, job: ScanJob) -> None:
+    job.status = "running"
+    job.queue_position = None
+    job.control_action = None
+    job.started_at = datetime.now(timezone.utc)
+    await db.commit()
+    job.result_summary = {
+        "stage": "queued",
+        "progress": 0.0,
+        "message": f"Queued scan for {job.targets}",
+    }
+    await db.commit()
+
+
+def _build_control_fn(db, job, scan_control_decision):
+    async def control_fn():
+        await db.refresh(job)
+        if job.control_action == "cancel":
+            return scan_control_decision(
+                action="cancel",
+                mode=job.control_mode or "discard",
+                message="Operator cancelled scan",
+            )
+        if job.control_action == "requeue":
+            return scan_control_decision(
+                action="pause",
+                mode="requeue",
+                message="Operator preempted scan and returned it to the queue",
+            )
+        if job.control_action == "pause":
+            return scan_control_decision(
+                action="pause",
+                mode=job.control_mode or "preserve_discovery",
+                resume_after=job.resume_after.isoformat() if job.resume_after else None,
+                message="Operator paused scan",
+            )
+        return None
+
+    return control_fn
+
+
+def _resolve_scan_profile(scan_type: str, scan_profile_enum):
+    try:
+        return scan_profile_enum(scan_type)
+    except ValueError:
+        return scan_profile_enum.BALANCED
+
+
+async def _complete_scan_job(db, job: ScanJob, job_id: str, summary) -> None:
+    job.status = "done"
+    job.finished_at = datetime.now(timezone.utc)
+    job.result_summary = summary.model_dump(mode="json")
+    await db.commit()
+    log.info("Scan job %s completed: %s", job_id, summary.model_dump(mode="json"))
+
+
+async def _handle_scan_interrupt(db, job, job_id: str, exc, summary, persist_results) -> None:
+    summary = exc.summary or summary
+    if exc.partial_results:
+        await persist_results(
+            db,
+            exc.partial_results,
+            exc.scanned_ips,
+            summary,
+            _get_job_broadcast_fn(db, job),
+            job_id,
+            mark_missing_offline=exc.mark_missing_offline,
+            allow_discovery_only=True,
+        )
+
+    await _apply_interrupt_result(db, job, exc, summary)
+    await db.commit()
+    await _publish_event({
+        "event": "scan_complete",
+        "data": {
+            "job_id": job_id,
+            "status": exc.status,
+            "message": exc.message,
+            "resume_after": exc.resume_after,
+            "preserved_hosts": len(exc.scanned_ips),
+        },
+    })
+
+
+async def _apply_interrupt_result(db, job, exc, summary) -> None:
+    if exc.status == "paused" and job.control_mode == "requeue":
+        job.status = "pending"
+        job.started_at = None
+        job.finished_at = None
+    else:
+        job.status = exc.status
+        job.finished_at = datetime.now(timezone.utc) if exc.status == "cancelled" else None
+
+    job.result_summary = {
+        **summary.model_dump(mode="json"),
+        **(job.result_summary or {}),
+        "stage": "queued" if job.status == "pending" else ("paused" if exc.status == "paused" else "cancelled"),
+        "message": exc.message,
+        "resume_after": exc.resume_after,
+        "preserved_hosts": len(exc.scanned_ips),
+    }
+    if job.status == "pending":
+        job.resume_after = None
+        job.queue_position = await _next_queue_position(db)
+    elif exc.status == "paused":
+        job.resume_after = datetime.fromisoformat(exc.resume_after) if exc.resume_after else None
+    else:
+        job.resume_after = None
+    job.control_action = None
+    job.control_mode = None
+
+
+async def _publish_scan_failure(db, job: ScanJob, job_id: str, exc: Exception) -> None:
+    log.exception("Scan job %s failed: %s", job_id, exc)
+    job.status = "failed"
+    job.finished_at = datetime.now(timezone.utc)
+    job.result_summary = {"error": str(exc)}
+    await db.commit()
+    await _publish_event({
+        "event": "scan_complete",
+        "data": {
+            "job_id": job_id,
+            "status": "failed",
+            "error": str(exc),
+        },
+    })
 
 
 async def _enqueue_scheduled_scan() -> None:

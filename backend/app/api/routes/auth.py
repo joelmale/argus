@@ -1,6 +1,6 @@
 """Auth endpoints — login and token refresh."""
+from typing import Annotated, Literal
 from uuid import UUID
-from typing import Literal
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from fastapi.security import OAuth2PasswordRequestForm
@@ -23,6 +23,10 @@ from app.db.session import get_db
 from app.core.security import hash_password
 
 router = APIRouter()
+DBSession = Annotated[AsyncSession, Depends(get_db)]
+AdminUser = Annotated[User, Depends(get_current_admin)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
+LoginForm = Annotated[OAuth2PasswordRequestForm, Depends()]
 
 
 class UserCreateRequest(BaseModel):
@@ -109,7 +113,7 @@ def _serialize_alert_rule(rule) -> dict:
 
 
 @router.post("/token")
-async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = Depends(get_db)):
+async def login(form: LoginForm, db: DBSession):
     result = await db.execute(select(User).where(User.username == form.username))
     user = result.scalar_one_or_none()
     if not user or not verify_password(form.password, user.hashed_password):
@@ -121,7 +125,7 @@ async def login(form: OAuth2PasswordRequestForm = Depends(), db: AsyncSession = 
 
 
 @router.get("/setup/status", response_model=SetupStatusResponse)
-async def setup_status(db: AsyncSession = Depends(get_db)):
+async def setup_status(db: DBSession):
     user_count = await db.scalar(select(func.count()).select_from(User)) or 0
     return SetupStatusResponse(needs_setup=user_count == 0, user_count=user_count)
 
@@ -129,7 +133,7 @@ async def setup_status(db: AsyncSession = Depends(get_db)):
 @router.post("/setup/initialize", status_code=status.HTTP_201_CREATED)
 async def initialize_first_admin(
     payload: InitialAdminSetupRequest,
-    db: AsyncSession = Depends(get_db),
+    db: DBSession,
 ):
     user_count = await db.scalar(select(func.count()).select_from(User)) or 0
     if user_count > 0:
@@ -167,15 +171,15 @@ async def initialize_first_admin(
 
 
 @router.get("/me")
-async def me(current_user: User = Depends(get_current_user)):
+async def me(current_user: CurrentUser):
     return _serialize_user(current_user)
 
 
 @router.post("/users", status_code=status.HTTP_201_CREATED)
 async def create_user(
     payload: UserCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     existing = await db.execute(select(User).where(User.username == payload.username))
     if existing.scalar_one_or_none() is not None:
@@ -210,8 +214,8 @@ async def create_user(
 
 @router.get("/users")
 async def list_users(
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     result = await db.execute(select(User).order_by(User.created_at.asc()))
     return [_serialize_user(user) for user in result.scalars().all()]
@@ -221,8 +225,8 @@ async def list_users(
 async def update_user(
     user_id: UUID,
     payload: UserUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
+    db: DBSession,
+    current_user: AdminUser,
 ):
     user = await db.get(User, user_id)
     if user is None:
@@ -259,8 +263,8 @@ async def update_user(
 
 @router.get("/api-keys")
 async def list_api_keys(
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
+    db: DBSession,
+    current_user: AdminUser,
 ):
     result = await db.execute(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at.desc()))
     return [_serialize_api_key(api_key) for api_key in result.scalars().all()]
@@ -269,8 +273,8 @@ async def list_api_keys(
 @router.post("/api-keys", status_code=status.HTTP_201_CREATED)
 async def create_api_key(
     payload: ApiKeyCreateRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
+    db: DBSession,
+    current_user: AdminUser,
 ):
     raw_key = generate_api_key()
     api_key = ApiKey(
@@ -298,8 +302,8 @@ async def create_api_key(
 @router.delete("/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
 async def delete_api_key(
     api_key_id: UUID,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
+    db: DBSession,
+    current_user: AdminUser,
 ):
     api_key = await db.get(ApiKey, api_key_id)
     if api_key is None or api_key.user_id != current_user.id:
@@ -318,8 +322,8 @@ async def delete_api_key(
 
 @router.get("/alert-rules")
 async def get_alert_rules(
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
+    db: DBSession,
+    _: AdminUser,
 ):
     return [_serialize_alert_rule(rule) for rule in await list_alert_rules(db)]
 
@@ -328,8 +332,8 @@ async def get_alert_rules(
 async def update_alert_rule(
     rule_id: int,
     payload: AlertRuleUpdateRequest,
-    db: AsyncSession = Depends(get_db),
-    current_user: User = Depends(get_current_admin),
+    db: DBSession,
+    current_user: AdminUser,
 ):
     from app.db.models import AlertRule
 
@@ -364,9 +368,9 @@ async def update_alert_rule(
 
 @router.get("/audit-logs")
 async def list_audit_logs(
+    db: DBSession,
+    _: AdminUser,
     limit: int = 50,
-    db: AsyncSession = Depends(get_db),
-    _: User = Depends(get_current_admin),
 ):
     from sqlalchemy.orm import selectinload
 
