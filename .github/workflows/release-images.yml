@@ -32,7 +32,7 @@ jobs:
             dockerfile: ./frontend/Dockerfile
             target: runner
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
       - name: Set lowercase owner
         run: echo "OWNER_LC=${GITHUB_REPOSITORY_OWNER,,}" >> "$GITHUB_ENV"
       - uses: docker/setup-qemu-action@v3

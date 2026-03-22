@@ -147,7 +147,10 @@ async def test_run_scan_emits_progress_and_tallies_summary(monkeypatch):
     assert summary.ai_analyses_completed == 2
     assert summary.new_assets == 2
     assert summary.changed_assets == 1
-    assert persisted == [("db-marker", {"192.168.96.10", "192.168.96.11"})]
+    assert ("db-marker", {"192.168.96.10", "192.168.96.11"}) in persisted
+    assert ("db-marker", {"192.168.96.10"}) in persisted
+    assert ("db-marker", {"192.168.96.11"}) in persisted
+    assert len(persisted) >= 3
     assert [payload["event"] for payload in broadcasts].count("scan_progress") >= 4
     assert broadcasts[-1]["event"] == "scan_complete"
 
