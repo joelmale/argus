@@ -18,6 +18,7 @@ import asyncio
 import hashlib
 import logging
 import ssl
+import socket
 import time
 from datetime import datetime
 
@@ -32,13 +33,11 @@ async def probe(ip: str, port: int = 443, timeout: float = 5.0) -> ProbeResult:
 
     loop = asyncio.get_event_loop()
     try:
-        result = await asyncio.wait_for(
-            loop.run_in_executor(None, _get_cert_sync, ip, port),
-            timeout=timeout,
-        )
+        async with asyncio.timeout(timeout):
+            result = await loop.run_in_executor(None, _get_cert_sync, ip, port)
         if result is None:
             return ProbeResult(probe_type="tls", target_port=port, success=False, error="No certificate")
-    except asyncio.TimeoutError:
+    except TimeoutError:
         return ProbeResult(probe_type="tls", target_port=port, success=False, error="Timeout")
     except Exception as exc:
         return ProbeResult(probe_type="tls", target_port=port, success=False, error=str(exc)[:200])
@@ -55,13 +54,11 @@ async def probe(ip: str, port: int = 443, timeout: float = 5.0) -> ProbeResult:
 
 def _get_cert_sync(ip: str, port: int) -> TlsProbeData | None:
     """Synchronous TLS handshake — runs in thread executor."""
-    ctx = ssl.create_default_context()
-    ctx.check_hostname = False
-    ctx.verify_mode = ssl.CERT_NONE   # Accept self-signed certs — very common on LAN
+    context = _tls_client_context()
 
     try:
-        with ssl.create_default_context().wrap_socket(
-            __import__("socket").create_connection((ip, port), timeout=4),
+        with context.wrap_socket(
+            socket.create_connection((ip, port), timeout=4),
             server_hostname=ip,
         ) as ssock:
             cert = ssock.getpeercert()
@@ -70,28 +67,20 @@ def _get_cert_sync(ip: str, port: int) -> TlsProbeData | None:
             tls_ver = ssock.version()
             return _parse_cert(cert, cert_der, cipher, tls_ver)
     except ssl.SSLError:
-        # Retry without hostname verification (catches self-signed properly)
-        try:
-            import socket
-            raw_sock = socket.create_connection((ip, port), timeout=4)
-            ssock = ctx.wrap_socket(raw_sock, server_hostname=ip)
-            cert = ssock.getpeercert()
-            cert_der = ssock.getpeercert(binary_form=True)
-            cipher = ssock.cipher()
-            tls_ver = ssock.version()
-            ssock.close()
-            return _parse_cert(cert, cert_der, cipher, tls_ver)
-        except Exception:
-            return None
+        return None
     except Exception:
         return None
+
+
+def _tls_client_context() -> ssl.SSLContext:
+    return ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
 
 
 def _parse_cert(cert: dict, cert_der: bytes | None, cipher: tuple | None, tls_ver: str | None) -> TlsProbeData:
     data = TlsProbeData()
 
-    subject = dict(x[0] for x in cert.get("subject", []))
-    issuer  = dict(x[0] for x in cert.get("issuer", []))
+    subject = {key: value for entries in cert.get("subject", []) for key, value in entries}
+    issuer = {key: value for entries in cert.get("issuer", []) for key, value in entries}
 
     data.subject_cn = subject.get("commonName")
     data.cert_org   = subject.get("organizationName")

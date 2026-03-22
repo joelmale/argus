@@ -1,6 +1,6 @@
 'use client'
 
-import { useState } from 'react'
+import { useState, type ComponentProps } from 'react'
 import { ScanLine, ChevronDown } from 'lucide-react'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { useTriggerScan } from '@/hooks/useScans'
@@ -18,8 +18,21 @@ export function QuickScan() {
   const [profile, setProfile] = useState('quick')
   const { mutate: trigger, isPending } = useTriggerScan()
   const { activeScan } = useAppStore()
+  const stageText = activeScan?.stage ? `Stage: ${formatScanStage(activeScan.stage)}` : 'Scanning…'
+  const submitButtonClass = isPending || activeScan
+    ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
+    : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-sky-500/25'
+  let submitLabel = 'Start Scan'
+  if (isPending) {
+    submitLabel = 'Queuing…'
+  } else if (activeScan) {
+    submitLabel = 'Scan in progress…'
+  }
 
-  function handleScan(e: React.FormEvent) {
+  const targetInputId = 'quick-scan-target'
+  const profileInputId = 'quick-scan-profile'
+
+  const handleScan: NonNullable<ComponentProps<'form'>['onSubmit']> = (e) => {
     e.preventDefault()
     trigger({ targets: targets.trim() || undefined, scan_type: profile })
   }
@@ -31,15 +44,16 @@ export function QuickScan() {
         {activeScan && (
           <span className="flex items-center gap-1.5 text-xs text-yellow-500">
             <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
-            {activeScan.stage ? `Stage: ${formatScanStage(activeScan.stage)}` : 'Scanning…'}
+            {stageText}
           </span>
         )}
       </CardHeader>
       <CardBody>
         <form onSubmit={handleScan} className="space-y-3">
           <div>
-            <label className="text-xs text-zinc-500 mb-1 block">Target (CIDR or IP)</label>
+            <label htmlFor={targetInputId} className="text-xs text-zinc-500 mb-1 block">Target (CIDR or IP)</label>
             <input
+              id={targetInputId}
               type="text"
               value={targets}
               onChange={(e) => setTargets(e.target.value)}
@@ -55,9 +69,10 @@ export function QuickScan() {
           </div>
 
           <div>
-            <label className="text-xs text-zinc-500 mb-1 block">Profile</label>
+            <label htmlFor={profileInputId} className="text-xs text-zinc-500 mb-1 block">Profile</label>
             <div className="relative">
               <select
+                id={profileInputId}
                 value={profile}
                 onChange={(e) => setProfile(e.target.value)}
                 className={cn(
@@ -82,13 +97,11 @@ export function QuickScan() {
             className={cn(
               'w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-medium',
               'transition-all duration-150',
-              isPending || activeScan
-                ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
-                : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-sky-500/25',
+              submitButtonClass,
             )}
           >
             <ScanLine className="w-4 h-4" />
-            {isPending ? 'Queuing…' : activeScan ? 'Scan in progress…' : 'Start Scan'}
+            {submitLabel}
           </button>
         </form>
 
@@ -96,7 +109,7 @@ export function QuickScan() {
         {activeScan && (
           <div className="mt-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
             <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400 mb-1">
-              {activeScan.stage ? `Stage: ${activeScan.stage}` : 'Scanning…'}
+              {stageText}
             </p>
             {activeScan.current_host && (
               <p className="text-xs text-zinc-500 font-mono">{activeScan.current_host}</p>

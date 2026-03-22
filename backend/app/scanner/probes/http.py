@@ -14,6 +14,7 @@ import asyncio
 import hashlib
 import logging
 import re
+import ssl
 import time
 from urllib.parse import urlparse
 
@@ -22,6 +23,13 @@ import httpx
 from app.scanner.models import HttpProbeData, ProbeResult
 
 log = logging.getLogger(__name__)
+
+
+def _http_ssl_context() -> ssl.SSLContext:
+    context = ssl.create_default_context()
+    context.check_hostname = True
+    context.verify_mode = ssl.CERT_REQUIRED
+    return context
 
 # Common admin/login paths to check — each one may uniquely fingerprint an app
 INTERESTING_PATHS = [
@@ -50,59 +58,59 @@ async def probe(ip: str, port: int, use_https: bool = False, timeout: float = 5.
     data = HttpProbeData(url=base_url)
     raw_parts: list[str] = []
 
+    verify = _http_ssl_context() if use_https else True
+
     try:
-        async with httpx.AsyncClient(
-            verify=False,           # Self-signed certs are common on LAN devices
-            follow_redirects=True,
-            timeout=timeout,
-            headers={"User-Agent": "Mozilla/5.0 (compatible; Argus/1.0; network-scanner)"},
-        ) as client:
-            # ── Main request ──────────────────────────────────────────────
-            resp = await client.get(base_url + "/")
-            data.status_code = resp.status_code
-            data.content_type = resp.headers.get("content-type")
-            data.server = resp.headers.get("server")
-            data.powered_by = resp.headers.get("x-powered-by")
-            data.auth_header = resp.headers.get("www-authenticate")
-            data.auth_required = resp.status_code in (401, 403)
-            data.redirects = [str(r.url) for r in resp.history]
-            data.headers = dict(resp.headers)
-            if resp.history:
-                final_host = urlparse(str(resp.url)).hostname
-                if final_host and final_host != ip:
-                    data.redirect_host = final_host
+        async with asyncio.timeout(timeout):
+            async with httpx.AsyncClient(
+                verify=verify,
+                follow_redirects=True,
+                timeout=None,
+                headers={"User-Agent": "Mozilla/5.0 (compatible; Argus/1.0; network-scanner)"},
+            ) as client:
+                # ── Main request ──────────────────────────────────────────────
+                resp = await client.get(base_url + "/")
+                data.status_code = resp.status_code
+                data.content_type = resp.headers.get("content-type")
+                data.server = resp.headers.get("server")
+                data.powered_by = resp.headers.get("x-powered-by")
+                data.auth_header = resp.headers.get("www-authenticate")
+                data.auth_required = resp.status_code in (401, 403)
+                data.redirects = [str(r.url) for r in resp.history]
+                data.headers = dict(resp.headers)
+                if resp.history:
+                    final_host = urlparse(str(resp.url)).hostname
+                    if final_host and final_host != ip:
+                        data.redirect_host = final_host
 
-            body = resp.text[:2000]
-            raw_parts.append(f"GET / -> {resp.status_code}\n{resp.headers}\n\n{body[:500]}")
+                body = resp.text[:2000]
+                raw_parts.append(f"GET / -> {resp.status_code}\n{resp.headers}\n\n{body[:500]}")
 
-            # Extract title
-            m = TITLE_RE.search(body)
-            if m:
-                data.title = m.group(1).strip()[:200]
+                m = TITLE_RE.search(body)
+                if m:
+                    data.title = m.group(1).strip()[:200]
 
-            # Body snippet for AI
-            data.body_snippet = body[:500]
-            data.detected_app = _detect_app(data.server, data.powered_by, data.auth_header, data.title, body)
+                data.body_snippet = body[:500]
+                data.detected_app = _detect_app(data.server, data.powered_by, data.auth_header, data.title, body)
 
-            favicon_hash = await _fetch_favicon_hash(client, base_url)
-            if favicon_hash:
-                data.favicon_hash = favicon_hash
+                favicon_hash = await _fetch_favicon_hash(client, base_url)
+                if favicon_hash:
+                    data.favicon_hash = favicon_hash
 
-            # ── Probe interesting paths (non-root only) ───────────────────
-            found_paths: list[str] = []
-            path_tasks = [
-                _probe_path(client, base_url, path)
-                for path in INTERESTING_PATHS[1:]          # skip "/" already done
-            ]
-            path_results = await asyncio.gather(*path_tasks, return_exceptions=True)
-            for path, result in zip(INTERESTING_PATHS[1:], path_results):
-                if isinstance(result, int) and result not in (404, 400, 0):
-                    found_paths.append(f"{path} ({result})")
-            data.interesting_paths = found_paths
+                found_paths: list[str] = []
+                path_tasks = [
+                    _probe_path(client, base_url, path)
+                    for path in INTERESTING_PATHS[1:]
+                ]
+                path_results = await asyncio.gather(*path_tasks, return_exceptions=True)
+                for path, result in zip(INTERESTING_PATHS[1:], path_results):
+                    if isinstance(result, int) and result not in (404, 400, 0):
+                        found_paths.append(f"{path} ({result})")
+                data.interesting_paths = found_paths
 
     except httpx.ConnectError:
         return ProbeResult(probe_type="http", target_port=port, success=False, error="Connection refused")
-    except httpx.TimeoutException:
+    except (httpx.TimeoutException, TimeoutError):
         return ProbeResult(probe_type="http", target_port=port, success=False, error="Timeout")
     except Exception as exc:
         return ProbeResult(probe_type="http", target_port=port, success=False, error=str(exc)[:200])

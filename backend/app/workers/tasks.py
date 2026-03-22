@@ -145,9 +145,9 @@ async def _run_job_async(job_id: str) -> None:
     from app.scanner.pipeline import ScanControlDecision, ScanControlInterrupt, _persist_results, run_scan
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    Session = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    async with Session() as db:
+    async with session_factory() as db:
         job = await _get_runnable_job(db, job_id)
         if job is None:
             return
@@ -532,7 +532,7 @@ async def _apply_interrupt_result(db, job, exc, summary) -> None:
     job.result_summary = {
         **summary.model_dump(mode="json"),
         **(job.result_summary or {}),
-        "stage": "queued" if job.status == "pending" else ("paused" if exc.status == "paused" else "cancelled"),
+        "stage": _interrupt_stage(job.status, exc.status),
         "message": exc.message,
         "resume_after": exc.resume_after,
         "preserved_hosts": len(exc.scanned_ips),
@@ -546,6 +546,14 @@ async def _apply_interrupt_result(db, job, exc, summary) -> None:
         job.resume_after = None
     job.control_action = None
     job.control_mode = None
+
+
+def _interrupt_stage(job_status: str, interrupt_status: str) -> str:
+    if job_status == "pending":
+        return "queued"
+    if interrupt_status == "paused":
+        return "paused"
+    return "cancelled"
 
 
 async def _publish_scan_failure(db, job: ScanJob, job_id: str, exc: Exception) -> None:
@@ -571,9 +579,9 @@ async def _enqueue_scheduled_scan() -> None:
     from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets, should_enqueue_scheduled_scan, split_scan_targets
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    Session = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    async with Session() as db:
+    async with session_factory() as db:
         config = await get_or_create_scanner_config(db)
         if not should_enqueue_scheduled_scan(config):
             return
@@ -630,9 +638,9 @@ async def _run_scheduled_backups_async() -> None:
     from app.backups import run_scheduled_backups as execute_scheduled_backups
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    Session = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-    async with Session() as db:
+    async with session_factory() as db:
         result = await execute_scheduled_backups(db)
         log.info("Scheduled backups checked: %s", result)
 
@@ -645,10 +653,10 @@ async def _resume_paused_scans_async() -> None:
     from app.db.models import ScanJob
 
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    Session = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
     now = datetime.now(timezone.utc)
 
-    async with Session() as db:
+    async with session_factory() as db:
         result = await db.execute(
             select(ScanJob).where(
                 ScanJob.status == "paused",
@@ -814,11 +822,11 @@ async def _passive_arp_loop() -> None:
 
     listener = PassiveArpListener(interface=settings.SCANNER_PASSIVE_ARP_INTERFACE)
     engine = create_async_engine(settings.DATABASE_URL, echo=False)
-    Session = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     try:
         async for host in listener.listen():
-            async with Session() as db:
+            async with session_factory() as db:
                 asset, change_type = await upsert_scan_result(
                     db,
                     HostScanResult(host=host, scan_profile=ScanProfile.BALANCED),

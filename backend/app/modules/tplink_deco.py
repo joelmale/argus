@@ -53,20 +53,20 @@ def _rsa_public_key(modulus_hex: str, exponent_hex: str):
 
 def _rsa_encrypt_pkcs1_v15_hex(modulus_hex: str, exponent_hex: str, plaintext: str) -> str:
     key = _rsa_public_key(modulus_hex, exponent_hex)
-    ciphertext = key.encrypt(plaintext.encode("utf-8"), asym_padding.PKCS1v15())
+    ciphertext = key.encrypt(plaintext.encode("utf-8"), asym_padding.PKCS1v15())  # NOSONAR - TP-Link protocol requires PKCS#1 v1.5
     return ciphertext.hex().upper()
 
 
 def _aes_encrypt_base64(key: str, iv: str, plaintext: str) -> bytes:
     padder = sym_padding.PKCS7(128).padder()
     padded = padder.update(plaintext.encode("utf-8")) + padder.finalize()
-    cipher = Cipher(algorithms.AES(key.encode("utf-8")), modes.CBC(iv.encode("utf-8")))
+    cipher = Cipher(algorithms.AES(key.encode("utf-8")), modes.CBC(iv.encode("utf-8")))  # NOSONAR - TP-Link protocol requires AES-CBC framing
     encryptor = cipher.encryptor()
     return base64.b64encode(encryptor.update(padded) + encryptor.finalize())
 
 
 def _aes_decrypt_json(key: str, iv: str, payload: str) -> dict[str, Any]:
-    cipher = Cipher(algorithms.AES(key.encode("utf-8")), modes.CBC(iv.encode("utf-8")))
+    cipher = Cipher(algorithms.AES(key.encode("utf-8")), modes.CBC(iv.encode("utf-8")))  # NOSONAR - TP-Link protocol requires AES-CBC framing
     decryptor = cipher.decryptor()
     plaintext = decryptor.update(base64.b64decode(payload)) + decryptor.finalize()
     unpadder = sym_padding.PKCS7(128).unpadder()

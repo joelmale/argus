@@ -8,9 +8,20 @@ export const api = axios.create({
 
 export const TOKEN_STORAGE_KEY = "argus_token";
 
+function hasBrowserWindow() {
+  return typeof globalThis.window === "object";
+}
+
+function getBrowserStorageToken() {
+  if (!hasBrowserWindow()) {
+    return null;
+  }
+  return globalThis.localStorage.getItem(TOKEN_STORAGE_KEY);
+}
+
 // Attach JWT token from localStorage if present
 api.interceptors.request.use((config) => {
-  const token = typeof window !== "undefined" ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
+  const token = getBrowserStorageToken();
   if (token) config.headers.Authorization = `Bearer ${token}`;
   return config;
 });
@@ -85,8 +96,10 @@ export const assetsApi = {
   listConfigBackups: (id: string) => api.get(`/api/v1/assets/${id}/config-backups`),
   triggerConfigBackup: (id: string) => api.post(`/api/v1/assets/${id}/config-backups`),
   downloadConfigBackup: (id: string, snapshotId: number) => api.get(`/api/v1/assets/${id}/config-backups/${snapshotId}/download`, { responseType: "blob" }),
-  diffConfigBackup: (id: string, snapshotId: number, compareTo?: number) =>
-    api.get(`/api/v1/assets/${id}/config-backups/${snapshotId}/diff`, { params: compareTo ? { compare_to: compareTo } : undefined, responseType: "text" }),
+  diffConfigBackup: (id: string, snapshotId: number, compareTo?: number) => {
+    const params = compareTo === undefined ? undefined : { compare_to: compareTo };
+    return api.get(`/api/v1/assets/${id}/config-backups/${snapshotId}/diff`, { params, responseType: "text" });
+  },
   getRestoreAssist: (id: string, snapshotId: number) => api.get(`/api/v1/assets/${id}/config-backups/${snapshotId}/restore-assist`),
   listWirelessClients: (id: string) => api.get(`/api/v1/assets/${id}/wireless-clients`),
   listFindings: (id: string) => api.get(`/api/v1/assets/${id}/findings`),
@@ -121,8 +134,9 @@ export const topologyApi = {
 // ─── WebSocket helper ───────────────────────────────────────────
 export function createWsConnection(onMessage: (e: MessageEvent) => void): WebSocket {
   const baseWsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
-  const token = typeof window !== "undefined" ? localStorage.getItem(TOKEN_STORAGE_KEY) : null;
-  const wsUrl = `${baseWsUrl}/ws/events${token ? `?token=${encodeURIComponent(token)}` : ""}`;
+  const token = getBrowserStorageToken();
+  const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
+  const wsUrl = `${baseWsUrl}/ws/events${tokenQuery}`;
   const ws = new WebSocket(wsUrl);
   ws.onmessage = onMessage;
   return ws;

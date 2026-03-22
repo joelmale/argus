@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useState } from 'react'
+import { useState, type ComponentProps } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
@@ -10,7 +10,7 @@ import { useScans, useTriggerScan } from '@/hooks/useScans'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import {
-  ScanLine, ChevronDown, CheckCircle, XCircle,
+  ScanLine, CheckCircle, XCircle,
   Cpu, Loader2, Radio, Target, Layers,
 } from 'lucide-react'
 
@@ -47,7 +47,9 @@ export default function ScansPage() {
   const { data: currentUser } = useCurrentUser()
   const isViewer = currentUser?.role === 'viewer'
 
-  function handleScan(e: React.FormEvent) {
+  const targetInputId = 'new-scan-target'
+
+  const handleScan: NonNullable<ComponentProps<'form'>['onSubmit']> = (e) => {
     e.preventDefault()
     setError(null)
     setLastResult(null)
@@ -66,6 +68,35 @@ export default function ScansPage() {
     && (scan.scan_type === 'quick' || scan.scan_type === 'balanced')
   )
   const stageLabel = activeScan?.stage ? formatScanStage(activeScan.stage) : null
+  const inputBorderClass = error ? 'border-red-400' : 'border-gray-200 dark:border-zinc-700'
+  const queuedScanLabel = runningScans.length === 1 ? 'scan' : 'scans'
+  const followUpButtonClass = isPending || activeScan
+    ? 'bg-zinc-200 text-zinc-400 dark:bg-zinc-800'
+    : 'bg-red-500 text-white hover:bg-red-600'
+
+  const buttonStateClass = isViewer || isPending || !!activeScan
+    ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
+    : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md hover:shadow-sky-500/20'
+
+  function getProfileClass(profileValue: string) {
+    if (profile !== profileValue) {
+      return 'border-gray-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500'
+    }
+    if (profileValue === 'balanced') {
+      return 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300'
+    }
+    if (profileValue === 'quick') {
+      return 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+    }
+    return 'border-red-500 bg-red-500/10 text-red-700 dark:text-red-300'
+  }
+
+  function renderSubmitLabel() {
+    if (isPending) {
+      return <><Loader2 className="w-4 h-4 animate-spin" /> Queuing…</>
+    }
+    return <><ScanLine className="w-4 h-4" /> Start Scan</>
+  }
 
   return (
     <AppShell>
@@ -95,10 +126,11 @@ export default function ScansPage() {
                 <form onSubmit={handleScan} className="space-y-4">
                   {/* Targets */}
                   <div>
-                    <label className="text-xs font-medium text-zinc-500 mb-1.5 block">
+                    <label htmlFor={targetInputId} className="text-xs font-medium text-zinc-500 mb-1.5 block">
                       Target — IP address or CIDR range
                     </label>
                     <input
+                      id={targetInputId}
                       type="text"
                       value={targets}
                       onChange={(e) => { setTargets(e.target.value); setError(null) }}
@@ -109,7 +141,7 @@ export default function ScansPage() {
                         'border placeholder:text-zinc-400',
                         'text-zinc-900 dark:text-white',
                         'focus:outline-none focus:ring-2 focus:ring-sky-500/50 focus:border-sky-500',
-                        error ? 'border-red-400' : 'border-gray-200 dark:border-zinc-700',
+                        inputBorderClass,
                       )}
                     />
                     {error && <p className="text-xs text-red-500 mt-1">{error}</p>}
@@ -117,9 +149,9 @@ export default function ScansPage() {
 
                   {/* Profile selector */}
                   <div>
-                    <label className="text-xs font-medium text-zinc-500 mb-1.5 block flex items-center gap-1">
+                    <p className="text-xs font-medium text-zinc-500 mb-1.5 flex items-center gap-1">
                       <Layers className="w-3.5 h-3.5" /> Scan profile
-                    </label>
+                    </p>
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                       {PROFILES.map((p) => (
                         <button
@@ -128,13 +160,7 @@ export default function ScansPage() {
                           onClick={() => setProfile(p.value)}
                           className={cn(
                             'text-left px-3 py-2.5 rounded-lg border text-sm transition-all',
-                            profile === p.value
-                              ? p.value === 'balanced'
-                                ? 'border-sky-500 bg-sky-500/10 text-sky-700 dark:text-sky-300'
-                                : p.value === 'quick'
-                                ? 'border-emerald-500 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-                                : 'border-red-500 bg-red-500/10 text-red-700 dark:text-red-300'
-                              : 'border-gray-200 dark:border-zinc-700 text-zinc-700 dark:text-zinc-300 hover:border-zinc-400 dark:hover:border-zinc-500',
+                            getProfileClass(p.value),
                           )}
                         >
                           <p className="font-medium text-xs capitalize">{p.label}</p>
@@ -152,15 +178,10 @@ export default function ScansPage() {
                       className={cn(
                         'flex items-center gap-2 py-2.5 px-5 rounded-lg text-sm font-medium',
                         'transition-all duration-150',
-                        isViewer || isPending || activeScan
-                          ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
-                          : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md hover:shadow-sky-500/20',
+                        buttonStateClass,
                       )}
                     >
-                      {isPending
-                        ? <><Loader2 className="w-4 h-4 animate-spin" /> Queuing…</>
-                        : <><ScanLine className="w-4 h-4" /> Start Scan</>
-                      }
+                      {renderSubmitLabel()}
                     </button>
 
                     {lastResult === 'success' && (
@@ -235,7 +256,7 @@ export default function ScansPage() {
                   <div className="flex items-center gap-2">
                     <Cpu className="w-4 h-4 text-sky-500 animate-pulse" />
                     <span className="text-sm text-zinc-600 dark:text-zinc-300">
-                      {runningScans.length} scan{runningScans.length > 1 ? 's' : ''} in queue
+                      {runningScans.length} {queuedScanLabel} in queue
                     </span>
                   </div>
                 ) : (
@@ -278,9 +299,7 @@ export default function ScansPage() {
                 }}
                 className={cn(
                   'inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium',
-                  isPending || activeScan
-                    ? 'bg-zinc-200 text-zinc-400 dark:bg-zinc-800'
-                    : 'bg-red-500 text-white hover:bg-red-600',
+                  followUpButtonClass,
                 )}
               >
                 <Layers className="w-4 h-4" />

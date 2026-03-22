@@ -7,32 +7,47 @@ import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy
 
 const AUTH_EVENT = 'argus-auth-changed'
 
+function hasBrowserWindow() {
+  return typeof globalThis.window !== 'undefined'
+}
+
 function emitAuthChange() {
-  window.dispatchEvent(new Event(AUTH_EVENT))
+  if (hasBrowserWindow()) {
+    globalThis.dispatchEvent(new Event(AUTH_EVENT))
+  }
 }
 
 function getStoredToken() {
-  return typeof window === 'undefined' ? null : localStorage.getItem(TOKEN_STORAGE_KEY)
+  if (!hasBrowserWindow()) {
+    return null
+  }
+  return globalThis.localStorage.getItem(TOKEN_STORAGE_KEY)
 }
 
 export function setAuthToken(token: string) {
-  localStorage.setItem(TOKEN_STORAGE_KEY, token)
+  if (!hasBrowserWindow()) {
+    return
+  }
+  globalThis.localStorage.setItem(TOKEN_STORAGE_KEY, token)
   emitAuthChange()
 }
 
 export function clearAuthToken() {
-  localStorage.removeItem(TOKEN_STORAGE_KEY)
+  if (!hasBrowserWindow()) {
+    return
+  }
+  globalThis.localStorage.removeItem(TOKEN_STORAGE_KEY)
   emitAuthChange()
 }
 
 export function useAuthToken() {
   return useSyncExternalStore(
     (onStoreChange) => {
-      window.addEventListener(AUTH_EVENT, onStoreChange)
-      window.addEventListener('storage', onStoreChange)
+      globalThis.addEventListener(AUTH_EVENT, onStoreChange)
+      globalThis.addEventListener('storage', onStoreChange)
       return () => {
-        window.removeEventListener(AUTH_EVENT, onStoreChange)
-        window.removeEventListener('storage', onStoreChange)
+        globalThis.removeEventListener(AUTH_EVENT, onStoreChange)
+        globalThis.removeEventListener('storage', onStoreChange)
       }
     },
     getStoredToken,

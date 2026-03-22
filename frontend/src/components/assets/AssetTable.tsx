@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type Dispatch, type SetStateAction } from 'react'
+import { useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot, Check, ChevronDown, Loader2, Microscope } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useAuth'
@@ -43,8 +43,8 @@ interface ColumnFilterMenuProps {
   readonly column: ColumnDef
   readonly filters: Record<FilterKey, string>
   readonly openFilter: FilterKey | null
-  setOpenFilter: Dispatch<SetStateAction<FilterKey | null>>
-  setFilters: Dispatch<SetStateAction<Record<FilterKey, string>>>
+  readonly setOpenFilter: Dispatch<SetStateAction<FilterKey | null>>
+  readonly setFilters: Dispatch<SetStateAction<Record<FilterKey, string>>>
 }
 
 const EMPTY_VALUE = '__empty__'
@@ -54,13 +54,14 @@ function buildAssetView(asset: Asset): AssetView {
   const ai = (asset as any).ai_analysis
   const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open').length
   const confidence = ai?.confidence ?? -1
-  const confidenceText = ai
-    ? confidenceLabel(ai.confidence).label
-    : asset.device_type_source === 'manual'
-      ? 'Manual'
-      : asset.device_type
-        ? 'Stored'
-        : '—'
+  let confidenceText = '—'
+  if (ai) {
+    confidenceText = confidenceLabel(ai.confidence).label
+  } else if (asset.device_type_source === 'manual') {
+    confidenceText = 'Manual'
+  } else if (asset.device_type) {
+    confidenceText = 'Stored'
+  }
   return {
     asset,
     ai,
@@ -184,6 +185,11 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
     && filterValueMatches(normalizeFilterValue(view.statusLabel), filters.status)
     && filterValueMatches(normalizeFilterValue(view.lastSeenBucket), filters.last_seen)
   )
+  const loadingRows = Array.from({ length: 8 }, (_, index) => <SkeletonRow key={`asset-skeleton-${index}`} />)
+  const sortIconByDirection = {
+    asc: <ArrowUp className="w-3.5 h-3.5" />,
+    desc: <ArrowDown className="w-3.5 h-3.5" />,
+  } satisfies Record<SortDirection, ReactNode>
 
   const sortedViews = [...filteredViews].sort((left, right) => {
     const direction = sortDirection === 'asc' ? 1 : -1
@@ -206,6 +212,40 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
         return (new Date(left.asset.last_seen).getTime() - new Date(right.asset.last_seen).getTime()) * direction
     }
   })
+  let tableRows: ReactNode = sortedViews.map((view) => (
+    <AssetRow
+      key={view.asset.id}
+      asset={view.asset}
+      canEnrich={currentUser?.role === 'admin'}
+      isEnriching={isEnrichmentPending && queuedEnrichmentIp === view.asset.ip_address}
+      onRunEnrichment={() => {
+        setQueuedEnrichmentIp(view.asset.ip_address)
+        triggerEnrichment(
+          { targets: view.asset.ip_address, scan_type: 'deep_enrichment' },
+          {
+            onSettled: () => setQueuedEnrichmentIp((current) => {
+              if (current === view.asset.ip_address) {
+                return null
+              }
+              return current
+            }),
+          },
+        )
+      }}
+    />
+  ))
+
+  if (isLoading) {
+    tableRows = loadingRows
+  } else if (sortedViews.length === 0) {
+    tableRows = (
+      <tr>
+        <td colSpan={9} className="px-4 py-16 text-center text-zinc-400">
+          No assets match the current filters.
+        </td>
+      </tr>
+    )
+  }
 
   const hasColumnFilters = Object.values(filters).some(Boolean)
 
@@ -259,7 +299,7 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
                     >
                       {column.label}
                       {sortKey === column.key ? (
-                        sortDirection === 'asc' ? <ArrowUp className="w-3.5 h-3.5" /> : <ArrowDown className="w-3.5 h-3.5" />
+                        sortIconByDirection[sortDirection]
                       ) : (
                         <ArrowUpDown className="w-3.5 h-3.5 opacity-70" />
                       )}
@@ -282,36 +322,7 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
             </tr>
           </thead>
           <tbody className="divide-y divide-gray-100 dark:divide-zinc-800">
-            {isLoading
-              ? Array.from({ length: 8 }, (_, index) => <SkeletonRow key={`asset-skeleton-${index}`} />)
-              : sortedViews.length === 0
-                ? (
-                  <tr>
-                    <td colSpan={9} className="px-4 py-16 text-center text-zinc-400">
-                      No assets match the current filters.
-                    </td>
-                  </tr>
-                )
-                : sortedViews.map((view) => (
-                  <AssetRow
-                    key={view.asset.id}
-                    asset={view.asset}
-                    canEnrich={currentUser?.role === 'admin'}
-                    isEnriching={isEnrichmentPending && queuedEnrichmentIp === view.asset.ip_address}
-                    onRunEnrichment={() => {
-                      setQueuedEnrichmentIp(view.asset.ip_address)
-                      triggerEnrichment(
-                        { targets: view.asset.ip_address, scan_type: 'deep_enrichment' },
-                        {
-                          onSettled: () => setQueuedEnrichmentIp((current) => (
-                            current === view.asset.ip_address ? null : current
-                          )),
-                        },
-                      )
-                    }}
-                  />
-                ))
-            }
+            {tableRows}
           </tbody>
         </table>
       </div>
@@ -330,6 +341,10 @@ function ColumnFilterMenu({ column, filters, openFilter, setOpenFilter, setFilte
     setOpenFilter(null)
   }
 
+  const filterButtonClass = filters[filterKey]
+    ? 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400'
+    : 'border-gray-200 dark:border-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'
+
   return (
     <div className="relative">
       <button
@@ -337,9 +352,7 @@ function ColumnFilterMenu({ column, filters, openFilter, setOpenFilter, setFilte
         onClick={() => setOpenFilter((current) => (current === filterKey ? null : filterKey))}
         className={cn(
           'inline-flex items-center gap-1 rounded-md border px-1.5 py-1 normal-case',
-          filters[filterKey]
-            ? 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400'
-            : 'border-gray-200 dark:border-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200',
+          filterButtonClass,
         )}
       >
         <ChevronDown className="w-3.5 h-3.5" />
@@ -411,6 +424,9 @@ function AssetRow({
   const deviceClass = ai?.device_class ?? asset.device_type ?? 'unknown'
   const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open').length
   const hasSecurityFindings = (ai?.security_findings?.length ?? 0) > 0
+  const vendorText = ai?.vendor ?? asset.vendor
+  const osText = ai?.os_guess ?? asset.os_name
+  const deviceTypeSummary = asset.device_type ? `${asset.device_type_source} classification` : '—'
 
   return (
     <tr className="hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors group">
@@ -429,11 +445,11 @@ function AssetRow({
       </td>
       <td className="px-4 py-3">
         <span className="text-zinc-700 dark:text-zinc-300 block truncate max-w-36">
-          {ai?.vendor ?? asset.vendor ?? <span className="text-zinc-400">—</span>}
+          {vendorText || <span className="text-zinc-400">—</span>}
         </span>
-        {(ai?.os_guess ?? asset.os_name) && (
+        {osText && (
           <span className="text-xs text-zinc-400 truncate block max-w-36">
-            {ai?.os_guess ?? asset.os_name}
+            {osText}
           </span>
         )}
       </td>
@@ -452,7 +468,7 @@ function AssetRow({
             )}
           </div>
         ) : (
-          <span className="text-xs text-zinc-400">{asset.device_type ? `${asset.device_type_source} classification` : '—'}</span>
+          <span className="text-xs text-zinc-400">{deviceTypeSummary}</span>
         )}
       </td>
       <td className="px-4 py-3">

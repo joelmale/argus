@@ -4,13 +4,13 @@ import { useState, type ComponentProps, type ReactNode } from 'react'
 import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Brain, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig } from 'lucide-react'
+import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
 import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncTplinkDecoModule, useTestTplinkDecoModule, useTplinkDecoModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
 import type { FingerprintDataset, TplinkDecoConfig, TplinkDecoSyncRun } from '@/types'
 import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 
-type BackupPolicyFormProps = {
+type BackupPolicyFormProps = Readonly<{
   backupPolicy?: {
     enabled: boolean
     interval_minutes: number
@@ -25,9 +25,9 @@ type BackupPolicyFormProps = {
     tag_filter: string
     retention_count: number
   }) => void
-}
+}>
 
-type ScannerConfigCardProps = {
+type ScannerConfigCardProps = Readonly<{
   scannerConfig?: {
     enabled: boolean
     default_targets: string | null
@@ -73,7 +73,7 @@ type ScannerConfigCardProps = {
     internet_lookup_budget: number
     internet_lookup_timeout_seconds: number
   }) => void
-}
+}>
 
 type TplinkModulePayload = Omit<TplinkDecoConfig, 'id' | 'effective_owner_username' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>
 type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>
@@ -106,9 +106,10 @@ function describeTplinkActionError(error: unknown) {
   if (!error.response) {
     return 'Argus could not reach the backend while running the Deco action.'
   }
-  const detail = error.response.data && typeof error.response.data === 'object'
-    ? (error.response.data as { detail?: unknown }).detail
-    : undefined
+  let detail: unknown
+  if (error.response.data && typeof error.response.data === 'object') {
+    detail = (error.response.data as { detail?: unknown }).detail
+  }
   if (typeof detail === 'string' && detail.trim()) {
     return detail
   }
@@ -121,9 +122,11 @@ function buildTplinkTestMessage(
 ) {
   const clientCount = result?.client_count ?? saved?.last_client_count
   const deviceSummary = typeof result?.device_count === 'number' ? `, ${result.device_count} Deco nodes detected` : ''
-  const clientSummary = typeof clientCount === 'number'
-    ? `${typeof result?.device_count === 'number' ? ' and' : ','} ${clientCount} clients detected`
-    : ''
+  let clientSummary = ''
+  if (typeof clientCount === 'number') {
+    const connector = typeof result?.device_count === 'number' ? ' and' : ','
+    clientSummary = `${connector} ${clientCount} clients detected`
+  }
   const authSummary = result?.auth_username ? ` using hidden username ${result.auth_username}` : ''
   return `Connection test ${result?.status ?? 'completed'}${deviceSummary}${clientSummary}${authSummary}.`
 }
@@ -131,9 +134,22 @@ function buildTplinkTestMessage(
 function buildTplinkSyncMessage(result: { ingested_assets?: number; client_count?: number; device_count?: number } | undefined) {
   const assetSummary = typeof result?.ingested_assets === 'number' ? `, ${result.ingested_assets} assets updated` : ''
   const nodeSummary = typeof result?.device_count === 'number' ? ` from ${result.device_count} Deco nodes` : ''
-  const clientPrefix = typeof result?.device_count === 'number' ? ' and' : ' from'
-  const clientSummary = typeof result?.client_count === 'number' ? `${clientPrefix} ${result.client_count} Deco clients` : ''
+  let clientSummary = ''
+  if (typeof result?.client_count === 'number') {
+    const clientPrefix = typeof result?.device_count === 'number' ? ' and' : ' from'
+    clientSummary = `${clientPrefix} ${result.client_count} Deco clients`
+  }
   return `Sync completed${assetSummary}${nodeSummary}${clientSummary}.`
+}
+
+function getEnvVarLineClass(line: string) {
+  if (line.startsWith('#')) {
+    return 'text-zinc-500'
+  }
+  if (line === '') {
+    return ''
+  }
+  return 'text-emerald-400'
 }
 
 function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: BackupPolicyFormProps) {
@@ -716,6 +732,14 @@ function downloadTextFile(filename: string, content: string) {
   URL.revokeObjectURL(url)
 }
 
+
+async function openHtmlReport() {
+  const response = await assetsApi.exportHtmlReport()
+  const blob = new Blob([response.data], { type: 'text/html;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  globalThis.window.open(url, '_blank', 'noopener,noreferrer')
+}
+
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()
   const { data: users = [] } = useUsers(currentUser?.role === 'admin')
@@ -779,13 +803,6 @@ export default function SettingsPage() {
         },
       },
     )
-  }
-
-  async function handleOpenReport() {
-    const response = await assetsApi.exportHtmlReport()
-    const reportWindow = window.open('', '_blank')
-    reportWindow?.document.write(response.data)
-    reportWindow?.document.close()
   }
 
   return (
@@ -1033,7 +1050,7 @@ export default function SettingsPage() {
                     <CardBody className="flex flex-col md:flex-row gap-3">
                       <button
                         type="button"
-                        onClick={handleOpenReport}
+                        onClick={openHtmlReport}
                         className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white"
                       >
                         <FileText className="w-4 h-4" /> Open HTML inventory report
@@ -1338,7 +1355,7 @@ export default function SettingsPage() {
                 '# ANTHROPIC_API_KEY=sk-ant-...',
               ].map((line) => (
                 <div key={line || 'blank-line'}>
-                  <span className={line.startsWith('#') ? 'text-zinc-500' : line === '' ? '' : 'text-emerald-400'}>
+                  <span className={getEnvVarLineClass(line)}>
                     {line || '\u00a0'}
                   </span>
                 </div>

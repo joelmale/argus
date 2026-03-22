@@ -76,10 +76,13 @@ class Settings(BaseSettings):
         if self.DATABASE_URL_DOCKER:
             self.DATABASE_URL = self.DATABASE_URL_DOCKER
             return self
+        if not self.DATABASE_PASSWORD:
+            raise ValueError(
+                "DATABASE_PASSWORD is required when DATABASE_URL and DATABASE_URL_DOCKER are not provided."
+            )
 
         credentials = self.DATABASE_USER
-        if self.DATABASE_PASSWORD:
-            credentials = f"{credentials}:{self.DATABASE_PASSWORD}"
+        credentials = f"{credentials}:{self.DATABASE_PASSWORD}"
         self.DATABASE_URL = (
             f"postgresql+asyncpg://{credentials}@{self.DATABASE_HOST}:{self.DATABASE_PORT}/{self.DATABASE_NAME}"
         )
