@@ -173,6 +173,9 @@ async def _run_job_async(job_id: str) -> None:
             await _fail_scan_job(db, job, job_id, route_error)
             return
         config = await get_or_create_scanner_config(db)
+        host_chunk_size = getattr(config, "host_chunk_size", 64)
+        top_ports_count = getattr(config, "top_ports_count", 1000)
+        deep_probe_timeout_seconds = getattr(config, "deep_probe_timeout_seconds", 6)
         await _mark_job_running(db, job)
         control_fn = _build_control_fn(db, job, ScanControlDecision)
 
@@ -187,9 +190,9 @@ async def _run_job_async(job_id: str) -> None:
                 profile=profile,
                 enable_ai=enable_ai,
                 concurrent_hosts=config.concurrent_hosts,
-                host_chunk_size=config.host_chunk_size,
-                top_ports_count=config.top_ports_count,
-                deep_probe_timeout_seconds=config.deep_probe_timeout_seconds,
+                host_chunk_size=host_chunk_size,
+                top_ports_count=top_ports_count,
+                deep_probe_timeout_seconds=deep_probe_timeout_seconds,
                 db_session=db,
                 broadcast_fn=_get_job_broadcast_fn(db, job),
                 control_fn=control_fn,

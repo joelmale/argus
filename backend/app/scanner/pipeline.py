@@ -550,7 +550,8 @@ async def _run_port_scan_chunks(
     scanned_hosts = 0
     port_results = []
     for index, chunk in enumerate(chunks, start=1):
-        chunk_results = await portscan.scan_hosts(
+        chunk_results = await _call_scan_hosts(
+            portscan.scan_hosts,
             chunk,
             profile,
             top_ports_count=top_ports_count,
@@ -578,6 +579,19 @@ async def _run_port_scan_chunks(
         ip: (ports, os_fp, nmap_hostname, nmap_vendor)
         for ports, os_fp, ip, nmap_hostname, nmap_vendor in port_results
     }
+
+
+async def _call_scan_hosts(scan_hosts_fn, hosts, profile: ScanProfile, *, top_ports_count: int):
+    try:
+        return await scan_hosts_fn(
+            hosts,
+            profile,
+            top_ports_count=top_ports_count,
+        )
+    except TypeError as exc:
+        if "unexpected keyword argument 'top_ports_count'" not in str(exc):
+            raise
+        return await scan_hosts_fn(hosts, profile)
 
 
 async def _lookup_host_enrichment(mac_vendor, dns_lookup, host: DiscoveredHost, ip: str, nmap_vendor: str | None) -> tuple[str | None, str | None]:
