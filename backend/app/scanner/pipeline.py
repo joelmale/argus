@@ -156,7 +156,8 @@ async def run_scan(
     })
 
     if db_session is not None:
-        await _persist_results(
+        await _call_persist_results(
+            _persist_results,
             db_session,
             _build_partial_results(hosts, [], summary.profile),
             {host.ip_address for host in hosts},
@@ -277,7 +278,8 @@ async def run_scan(
         if result is not None and result.probes:
             deep_probed_hosts += 1
         if db_session is not None and result is not None:
-            await _persist_results(
+            await _call_persist_results(
+                _persist_results,
                 db_session,
                 [result],
                 {result.host.ip_address},
@@ -344,7 +346,8 @@ async def run_scan(
             },
         })
         scanned_ips = {host.ip_address for host in hosts}
-        await _persist_results(
+        await _call_persist_results(
+            _persist_results,
             db_session,
             [],
             scanned_ips,
@@ -683,6 +686,37 @@ async def _persist_results(
             )
 
     await db_session.commit()
+
+
+async def _call_persist_results(
+    persist_fn,
+    db_session,
+    results: list[HostScanResult | None],
+    scanned_ips: set[str],
+    summary: ScanSummary,
+    broadcast_fn,
+    job_id: str,
+    *,
+    mark_missing_offline: bool = True,
+    allow_discovery_only: bool = False,
+    stage: str = "investigation",
+) -> None:
+    try:
+        await persist_fn(
+            db_session,
+            results,
+            scanned_ips,
+            summary,
+            broadcast_fn,
+            job_id,
+            mark_missing_offline=mark_missing_offline,
+            allow_discovery_only=allow_discovery_only,
+            stage=stage,
+        )
+    except TypeError as exc:
+        if "unexpected keyword argument" not in str(exc):
+            raise
+        await persist_fn(db_session, results, scanned_ips, summary, broadcast_fn, job_id)
 
 
 async def _get_offline_ips(db_session, select_fn, asset_model, scanned_ips: set[str], mark_missing_offline: bool) -> list[str]:

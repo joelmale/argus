@@ -1,17 +1,25 @@
 import { cn } from '@/lib/utils'
 
+type StatusBadgeProps = Readonly<{ status: string }>
+type DeviceClassBadgeProps = Readonly<{ deviceClass: string | null | undefined }>
+type ConfidenceBadgeProps = Readonly<{ confidence: number }>
+
 /** Status badge: online / offline / unknown */
-export function StatusBadge({ status }: { status: string }) {
+export function StatusBadge({ status }: StatusBadgeProps) {
   const cfg: Record<string, string> = {
     online:  'bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/30',
     offline: 'bg-red-500/15 text-red-600 dark:text-red-400 border border-red-500/30',
     unknown: 'bg-zinc-500/15 text-zinc-500 border border-zinc-500/30',
   }
+  let statusDotClass = 'bg-zinc-400'
+  if (status === 'online') {
+    statusDotClass = 'bg-emerald-500'
+  } else if (status === 'offline') {
+    statusDotClass = 'bg-red-500'
+  }
   return (
     <span className={cn('inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs font-medium', cfg[status] ?? cfg.unknown)}>
-      <span className={cn('w-1.5 h-1.5 rounded-full',
-        status === 'online' ? 'bg-emerald-500' : status === 'offline' ? 'bg-red-500' : 'bg-zinc-400'
-      )} />
+      <span className={cn('w-1.5 h-1.5 rounded-full', statusDotClass)} />
       {status}
     </span>
   )
@@ -34,7 +42,7 @@ const DEVICE_COLORS: Record<string, string> = {
   unknown:      'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400 border-zinc-500/30',
 }
 
-export function DeviceClassBadge({ deviceClass }: { deviceClass: string | null | undefined }) {
+export function DeviceClassBadge({ deviceClass }: DeviceClassBadgeProps) {
   const cls = deviceClass || 'unknown'
   const label = cls.replace('_', ' ')
   return (
@@ -46,9 +54,14 @@ export function DeviceClassBadge({ deviceClass }: { deviceClass: string | null |
 }
 
 /** Confidence percentage pill */
-export function ConfidenceBadge({ confidence }: { confidence: number }) {
+export function ConfidenceBadge({ confidence }: ConfidenceBadgeProps) {
   const pct = Math.round(confidence * 100)
-  const color = pct >= 80 ? 'text-emerald-500' : pct >= 60 ? 'text-yellow-500' : 'text-orange-500'
+  let color = 'text-orange-500'
+  if (pct >= 80) {
+    color = 'text-emerald-500'
+  } else if (pct >= 60) {
+    color = 'text-yellow-500'
+  }
   return (
     <span className={cn('text-xs font-mono tabular', color)}>{pct}%</span>
   )

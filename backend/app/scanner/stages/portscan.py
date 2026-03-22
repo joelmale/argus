@@ -126,7 +126,7 @@ def _scan_sync(
     hosts: list[DiscoveredHost],
     profile: ScanProfile,
     custom_args: Optional[str],
-    top_ports_count: int | None,
+    top_ports_count: int | None = None,
 ) -> list[HostScanTuple]:
     """Synchronous nmap scan — runs in thread executor."""
     from app.scanner.enrichment.instant_win import fingerprint_from_nmap_host_data, merge_into_os_fingerprint

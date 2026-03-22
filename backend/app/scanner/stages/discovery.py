@@ -69,7 +69,8 @@ async def _arp_sweep(targets: str, timeout: int) -> list[DiscoveredHost]:
     Requires NET_RAW capability (granted in docker-compose.yml).
     """
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _arp_sweep_sync, targets, timeout)
+    async with asyncio.timeout(timeout):
+        return await loop.run_in_executor(None, _arp_sweep_sync, targets, timeout)
 
 
 def _arp_sweep_sync(targets: str, timeout: int) -> list[DiscoveredHost]:
@@ -115,7 +116,8 @@ async def _ping_sweep(targets: str, timeout: int) -> list[DiscoveredHost]:
     works across routed segments. Runs in executor to avoid blocking.
     """
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, _ping_sweep_sync, targets, timeout)
+    async with asyncio.timeout(timeout):
+        return await loop.run_in_executor(None, _ping_sweep_sync, targets, timeout)
 
 
 def _ping_sweep_sync(targets: str, timeout: int) -> list[DiscoveredHost]:
@@ -240,9 +242,10 @@ class PassiveArpListener:
 
         while self._running:
             try:
-                host = await asyncio.wait_for(queue.get(), timeout=1.0)
+                async with asyncio.timeout(1.0):
+                    host = await queue.get()
                 yield host
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 continue
 
     def stop(self):

@@ -64,14 +64,15 @@ SCAN_NOT_FOUND_RESPONSE = {404: {"description": SCAN_NOT_FOUND_DETAIL}}
 TRIGGER_SCAN_RESPONSES = {400: {"description": "Invalid or unroutable scan targets"}}
 SCAN_CONTROL_RESPONSES = {
     400: {"description": "Unsupported or invalid scan control request"},
-    404: {"description": "Scan not found"},
+    404: {"description": SCAN_NOT_FOUND_DETAIL},
     409: {"description": "Scan is not in a valid state for this action"},
 }
 SCAN_QUEUE_RESPONSES = {
     400: {"description": "Unsupported queue action"},
-    404: {"description": "Scan not found"},
+    404: {"description": SCAN_NOT_FOUND_DETAIL},
     409: {"description": "Scan cannot be reordered in its current state"},
 }
+SCAN_NOT_FOUND_ERROR = HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
 
 
 def _mark_job_cancelled(job: ScanJob, *, finished_at: datetime, message: str) -> None:
@@ -362,7 +363,7 @@ async def ingest_logs(
 async def get_scan(job_id: UUID, db: DBSession, _: CurrentUser):
     job = await db.get(ScanJob, job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
+        raise SCAN_NOT_FOUND_ERROR
     if job.parent_id is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Child scan chunks are controlled through the parent scan")
     if job.parent_id is None:
@@ -389,7 +390,7 @@ async def control_scan(
 ):
     job = await db.get(ScanJob, job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
+        raise SCAN_NOT_FOUND_ERROR
 
     action = payload.action.lower()
     mode = (payload.mode or "discard").lower()
@@ -436,7 +437,7 @@ async def reorder_scan_queue(
 
     job = await db.get(ScanJob, job_id)
     if job is None:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=SCAN_NOT_FOUND_DETAIL)
+        raise SCAN_NOT_FOUND_ERROR
     if job.parent_id is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Child scan chunks cannot be reordered directly")
     if job.status != "pending":

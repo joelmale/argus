@@ -34,6 +34,20 @@ type ScanRowProps = Readonly<{
   onToggle: () => void
 }>
 
+type ScanRowState = {
+  duration: number | null
+  targets: string
+  canExpand: boolean
+  details: string[]
+  hostsFound: string | number
+  hostsInvestigated?: number
+  newAssets: number
+  changedAssets: number
+  stageText: string | null
+  messageText: string | null
+  triggeredByClass: string
+}
+
 function buildScanTableHeaders(includeExpander: boolean) {
   const labels = includeExpander
     ? ['', 'ID', 'Targets', 'Profile', 'Status', 'Hosts', 'Duration', 'Triggered By', 'Started']
@@ -137,28 +151,15 @@ function ScanRow({
   isExpanded,
   onToggle,
 }: ScanRowProps) {
-  const summary = scan.result_summary as Record<string, unknown> | undefined ?? {}
-  const duration = getScanDurationSeconds(scan)
-  const targets = Array.isArray(scan.targets) ? scan.targets.join(', ') : scan.targets ?? '—'
-  const canExpand = canExpandScan(scan.status)
-  const details = buildScanDetails(scan)
+  const rowState = buildScanRowState(scan)
   const pauseOptions = [15, 30, 60, 240, 720]
-  const hostsFound = readSummaryValue(summary, 'hosts_found', '—')
-  const hostsInvestigated = typeof summary.hosts_investigated === 'number' ? summary.hosts_investigated : undefined
-  const newAssets = typeof summary.new_assets === 'number' ? summary.new_assets : 0
-  const changedAssets = typeof summary.changed_assets === 'number' ? summary.changed_assets : 0
-  const stageText = formatSummaryStage(summary)
-  const messageText = typeof summary.message === 'string' ? summary.message : null
-  const triggeredByClass = scan.triggered_by === 'schedule'
-    ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400'
-    : 'bg-sky-500/10 text-sky-600 dark:text-sky-400'
   const statusActions = !isViewer ? renderScanActions(scan, pauseOptions, isControlling, onControl, onQueueAction) : null
 
   return (
     <>
       <tr className="hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors">
         <td className="px-4 py-3">
-          {canExpand ? (
+          {rowState.canExpand ? (
             <button
               type="button"
               onClick={onToggle}
@@ -175,8 +176,8 @@ function ScanRow({
         </td>
 
         <td className="px-4 py-3">
-          <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300 max-w-[180px] block truncate" title={targets}>
-            {targets}
+          <span className="font-mono text-xs text-zinc-700 dark:text-zinc-300 max-w-[180px] block truncate" title={rowState.targets}>
+            {rowState.targets}
           </span>
         </td>
 
@@ -187,12 +188,12 @@ function ScanRow({
         <td className="px-4 py-3">
           <div className="space-y-1">
             <ScanStatusBadge status={scan.status} />
-            {stageText && (
-              <p className="text-[11px] text-zinc-500 capitalize">{stageText}</p>
+            {rowState.stageText && (
+              <p className="text-[11px] text-zinc-500 capitalize">{rowState.stageText}</p>
             )}
-            {messageText && (
-              <p className="text-[11px] text-zinc-400 max-w-[220px] truncate" title={messageText}>
-                {messageText}
+            {rowState.messageText && (
+              <p className="text-[11px] text-zinc-400 max-w-[220px] truncate" title={rowState.messageText}>
+                {rowState.messageText}
               </p>
             )}
             {scan.status === 'paused' && scan.resume_after && (
@@ -208,16 +209,16 @@ function ScanRow({
           {scan.result_summary ? (
             <div className="flex items-center gap-2 text-xs">
               <span className="text-zinc-700 dark:text-zinc-300 flex items-center gap-1">
-                <Server className="w-3 h-3" /> {hostsFound}
+                <Server className="w-3 h-3" /> {rowState.hostsFound}
               </span>
-              {scan.status === 'running' && hostsInvestigated !== undefined && (
-                <span className="text-sky-600 dark:text-sky-400">{hostsInvestigated} done</span>
+              {scan.status === 'running' && rowState.hostsInvestigated !== undefined && (
+                <span className="text-sky-600 dark:text-sky-400">{rowState.hostsInvestigated} done</span>
               )}
-              {newAssets > 0 && (
-                <span className="text-emerald-600 dark:text-emerald-400">+{newAssets} new</span>
+              {rowState.newAssets > 0 && (
+                <span className="text-emerald-600 dark:text-emerald-400">+{rowState.newAssets} new</span>
               )}
-              {changedAssets > 0 && (
-                <span className="text-yellow-600 dark:text-yellow-400">~{changedAssets} chg</span>
+              {rowState.changedAssets > 0 && (
+                <span className="text-yellow-600 dark:text-yellow-400">~{rowState.changedAssets} chg</span>
               )}
             </div>
           ) : (
@@ -226,10 +227,10 @@ function ScanRow({
         </td>
 
         <td className="px-4 py-3">
-          {duration !== null ? (
+          {rowState.duration !== null ? (
             <span className="text-xs text-zinc-500 flex items-center gap-1">
               <Clock className="w-3 h-3" />
-              {duration < 60 ? `${duration}s` : `${Math.floor(duration / 60)}m ${duration % 60}s`}
+              {rowState.duration < 60 ? `${rowState.duration}s` : `${Math.floor(rowState.duration / 60)}m ${rowState.duration % 60}s`}
             </span>
           ) : scan.status === 'running' ? (
             <span className="text-xs text-sky-500 animate-pulse flex items-center gap-1">
@@ -241,7 +242,7 @@ function ScanRow({
         </td>
 
         <td className="px-4 py-3">
-          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${triggeredByClass}`}>
+          <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${rowState.triggeredByClass}`}>
             {scan.triggered_by ?? 'manual'}
           </span>
         </td>
@@ -250,7 +251,7 @@ function ScanRow({
           {scan.started_at ? timeAgo(scan.started_at) : formatDate(scan.created_at)}
         </td>
       </tr>
-      {canExpand && isExpanded && (
+      {rowState.canExpand && isExpanded && (
         <tr className="bg-zinc-50/60 dark:bg-zinc-950/40">
           <td colSpan={9} className="px-4 py-3">
             <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 space-y-3">
@@ -259,7 +260,7 @@ function ScanRow({
               )}
               <p className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">Live Scan Detail</p>
               <div className="rounded-md bg-zinc-950 text-zinc-100 p-3 font-mono text-xs leading-5 overflow-x-auto">
-                {details.map((line) => (
+                {rowState.details.map((line) => (
                   <div key={`${scan.id}:${line}`}>{line}</div>
                 ))}
               </div>
@@ -269,6 +270,25 @@ function ScanRow({
       )}
     </>
   )
+}
+
+function buildScanRowState(scan: ScanJob): ScanRowState {
+  const summary = (scan.result_summary as Record<string, unknown> | undefined) ?? {}
+  return {
+    duration: getScanDurationSeconds(scan),
+    targets: Array.isArray(scan.targets) ? scan.targets.join(', ') : scan.targets ?? '—',
+    canExpand: canExpandScan(scan.status),
+    details: buildScanDetails(scan),
+    hostsFound: readSummaryValue(summary, 'hosts_found', '—'),
+    hostsInvestigated: typeof summary.hosts_investigated === 'number' ? summary.hosts_investigated : undefined,
+    newAssets: typeof summary.new_assets === 'number' ? summary.new_assets : 0,
+    changedAssets: typeof summary.changed_assets === 'number' ? summary.changed_assets : 0,
+    stageText: formatSummaryStage(summary),
+    messageText: typeof summary.message === 'string' ? summary.message : null,
+    triggeredByClass: scan.triggered_by === 'schedule'
+      ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400'
+      : 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
+  }
 }
 
 function buildScanDetails(scan: ScanJob): string[] {

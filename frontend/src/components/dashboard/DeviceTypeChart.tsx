@@ -1,6 +1,7 @@
 'use client'
 
-import { PieChart, Pie, Cell, Tooltip, ResponsiveContainer, Legend } from 'recharts'
+import { useMemo } from 'react'
+import { PieChart, Pie, Sector, Tooltip, ResponsiveContainer, Legend, type PieSectorDataItem } from 'recharts'
 import { useAssets } from '@/hooks/useAssets'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 
@@ -11,19 +12,30 @@ const COLORS: Record<string, string> = {
   iot_device: '#f59e0b', firewall: '#f97316', voip: '#84cc16', unknown: '#71717a',
 }
 
+function renderChartSector(props: PieSectorDataItem) {
+  const fill = typeof props.fill === 'string' ? props.fill : '#71717a'
+  return <Sector {...props} fill={fill} />
+}
+
+function renderLegendLabel(value: string) {
+  return <span className="text-xs text-zinc-600 dark:text-zinc-400">{value}</span>
+}
+
 export function DeviceTypeChart() {
   const { data: assets = [], isLoading } = useAssets()
 
-  const counts: Record<string, number> = {}
-  for (const a of assets) {
-    const cls = (a as any).ai_analysis?.device_class ?? 'unknown'
-    counts[cls] = (counts[cls] ?? 0) + 1
-  }
+  const chartData = useMemo(() => {
+    const counts: Record<string, number> = {}
+    for (const asset of assets) {
+      const deviceClass = (asset as any).ai_analysis?.device_class ?? 'unknown'
+      counts[deviceClass] = (counts[deviceClass] ?? 0) + 1
+    }
 
-  const chartData = Object.entries(counts)
-    .map(([name, value]) => ({ name: name.replace('_', ' '), value, key: name }))
-    .sort((a, b) => b.value - a.value)
-    .slice(0, 8)
+    return Object.entries(counts)
+      .map(([name, value]) => ({ name: name.replace('_', ' '), value, key: name, fill: COLORS[name] ?? '#71717a' }))
+      .sort((a, b) => b.value - a.value)
+      .slice(0, 8)
+  }, [assets])
 
   return (
     <Card>
@@ -43,12 +55,17 @@ export function DeviceTypeChart() {
         ) : (
           <ResponsiveContainer width="100%" height={200}>
             <PieChart>
-              <Pie data={chartData} cx="50%" cy="50%" innerRadius={50} outerRadius={80}
-                dataKey="value" nameKey="name" paddingAngle={2}>
-                {chartData.map((d) => (
-                  <Cell key={d.key} fill={COLORS[d.key] ?? '#71717a'} />
-                ))}
-              </Pie>
+              <Pie
+                data={chartData}
+                cx="50%"
+                cy="50%"
+                innerRadius={50}
+                outerRadius={80}
+                dataKey="value"
+                nameKey="name"
+                paddingAngle={2}
+                activeShape={renderChartSector}
+              />
               <Tooltip
                 contentStyle={{
                   background: 'rgb(24 24 27)',
@@ -60,7 +77,7 @@ export function DeviceTypeChart() {
               />
               <Legend
                 iconType="circle" iconSize={8}
-                formatter={(v) => <span className="text-xs text-zinc-600 dark:text-zinc-400">{v}</span>}
+                formatter={renderLegendLabel}
               />
             </PieChart>
           </ResponsiveContainer>

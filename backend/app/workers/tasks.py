@@ -179,7 +179,7 @@ async def _run_job_async(job_id: str) -> None:
         try:
             profile = _resolve_scan_profile(job.scan_type, ScanProfile)
             summary = ScanSummary(job_id=job_id, targets=job.targets, profile=profile)
-            enable_ai = config.ai_after_scan_enabled
+            enable_ai = getattr(config, "ai_after_scan_enabled", settings.AI_ENABLE_PER_SCAN)
 
             summary = await run_scan(
                 job_id=job_id,
