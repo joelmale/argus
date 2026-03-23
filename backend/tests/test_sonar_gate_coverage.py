@@ -52,7 +52,7 @@ from app.scanner.probes import mdns as mdns_probe
 from app.scanner.probes import tls as tls_probe
 from app.scanner.probes import upnp as upnp_probe
 from app.scanner.enrichment import dns_lookup
-from app.scanner.stages import deep_probe
+from app.scanner.stages import deep_probe, discovery
 from app.scanner.stages.discovery import _merge_discovered_host, _merge_discovery_results, _parse_ping_sweep_xml
 from app.workers.tasks import (
     _apply_interrupt_result,
@@ -483,6 +483,18 @@ async def test_dns_reverse_lookup_filters_placeholders_and_handles_errors(monkey
 
 
 @pytest.mark.asyncio
+async def test_dns_reverse_lookup_returns_none_on_timeout(monkeypatch):
+    @asynccontextmanager
+    async def fake_timeout(_seconds):
+        raise asyncio.TimeoutError()
+        yield
+
+    monkeypatch.setattr(dns_lookup.asyncio, "timeout", fake_timeout, raising=False)
+
+    assert await dns_lookup.reverse_lookup("10.0.0.8") is None
+
+
+@pytest.mark.asyncio
 async def test_dns_forward_lookup_deduplicates_addresses_and_handles_failures(monkeypatch):
     monkeypatch.setattr(
         socket,
@@ -502,6 +514,25 @@ async def test_dns_forward_lookup_deduplicates_addresses_and_handles_failures(mo
 
     monkeypatch.setattr(socket, "getaddrinfo", raise_error)
     assert await dns_lookup.forward_lookup("nas.local") == []
+
+
+@pytest.mark.asyncio
+async def test_discovery_sweep_merges_results_when_one_method_fails(monkeypatch):
+    async def fake_arp(_targets):
+        return [
+            DiscoveredHost(ip_address="10.0.0.8", mac_address=None, discovery_method="arp"),
+            DiscoveredHost(ip_address="10.0.0.9", mac_address="AA:BB:CC:DD:EE:FF", discovery_method="arp"),
+        ]
+
+    async def fake_ping(_targets):
+        raise RuntimeError("nmap missing")
+
+    monkeypatch.setattr(discovery, "_arp_sweep", fake_arp)
+    monkeypatch.setattr(discovery, "_ping_sweep", fake_ping)
+
+    hosts = await discovery.sweep("10.0.0.0/24")
+
+    assert sorted(host.ip_address for host in hosts) == ["10.0.0.8", "10.0.0.9"]
 
 
 def test_split_scan_targets_breaks_large_networks_and_groups_ips():
@@ -755,13 +786,13 @@ async def test_upnp_probe_uses_common_paths_when_ssdp_misses(monkeypatch):
     async def fake_timeout(_seconds):
         yield
 
-    async def fake_ssdp_discover(_ip, timeout):
+    async def fake_ssdp_discover(_ip):
         return None
 
     async def fake_try_common_paths(_ip):
         return "http://10.0.0.15:5000/rootDesc.xml"
 
-    async def fake_fetch_description(_location, timeout):
+    async def fake_fetch_description(_location):
         return upnp_probe.UpnpProbeData(friendly_name="Media Server", manufacturer="MiniDLNA")
 
     monkeypatch.setattr(upnp_probe, "_ssdp_discover", fake_ssdp_discover)
@@ -789,7 +820,23 @@ async def test_upnp_fetch_description_returns_none_on_non_200(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: FakeClient())
 
-    assert await upnp_probe._fetch_description("http://10.0.0.15:5000/rootDesc.xml", timeout=1.0) is None
+    assert await upnp_probe._fetch_description("http://10.0.0.15:5000/rootDesc.xml") is None
+
+
+@pytest.mark.asyncio
+async def test_upnp_probe_returns_timeout_when_deadline_expires(monkeypatch):
+    async def fake_await_with_deadline(awaitable, _seconds):
+        close = getattr(awaitable, "close", None)
+        if close is not None:
+            close()
+        raise TimeoutError()
+
+    monkeypatch.setattr(upnp_probe, "_await_with_deadline", fake_await_with_deadline)
+
+    result = await upnp_probe.probe("10.0.0.15")
+
+    assert result.success is False
+    assert result.error == "Timeout"
 
 
 def test_tls_parse_cert_handles_invalid_dates_and_populates_fields():

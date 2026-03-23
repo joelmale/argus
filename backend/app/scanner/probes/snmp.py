@@ -25,6 +25,16 @@ from app.scanner.models import ProbeResult, SnmpProbeData
 
 log = logging.getLogger(__name__)
 
+SNMP_POLL_TIMEOUT_SECONDS = 5.0
+
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
 # Core OIDs we want to query
 OIDS = {
     "sys_descr":     "1.3.6.1.2.1.1.1.0",
@@ -40,7 +50,6 @@ async def probe(
     ip: str,
     community: str = "public",
     port: int = 161,
-    timeout: float = 5.0,
     version: str = "2c",
     v3_username: str | None = None,
     v3_auth_key: str | None = None,
@@ -55,14 +64,14 @@ async def probe(
         poller = SnmpPoller(
             community=community,
             version=version,
-            timeout=int(timeout),
+            timeout=int(SNMP_POLL_TIMEOUT_SECONDS),
             v3_username=v3_username,
             v3_auth_key=v3_auth_key,
             v3_priv_key=v3_priv_key,
             v3_auth_protocol=v3_auth_protocol,
             v3_priv_protocol=v3_priv_protocol,
         )
-        system_info, interfaces, arp_table, neighbors, wireless_clients = await asyncio.wait_for(
+        system_info, interfaces, arp_table, neighbors, wireless_clients = await _await_with_deadline(
             asyncio.gather(
                 poller.get_system_info(ip),
                 poller.get_interfaces(ip),
@@ -70,7 +79,7 @@ async def probe(
                 poller.get_neighbors(ip),
                 poller.get_wireless_clients(ip),
             ),
-            timeout=timeout,
+            SNMP_POLL_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
         return ProbeResult(probe_type="snmp", success=False, error="Timeout")

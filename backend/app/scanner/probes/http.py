@@ -24,6 +24,16 @@ from app.scanner.models import HttpProbeData, ProbeResult
 
 log = logging.getLogger(__name__)
 
+HTTP_PROBE_TIMEOUT_SECONDS = 5.0
+
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
 
 def _http_ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
@@ -50,7 +60,7 @@ INTERESTING_PATHS = [
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 
 
-async def probe(ip: str, port: int, use_https: bool = False, timeout: float = 5.0) -> ProbeResult:
+async def probe(ip: str, port: int, use_https: bool = False) -> ProbeResult:
     """Run HTTP probe against ip:port. Returns ProbeResult with HttpProbeData in .data."""
     scheme = "https" if use_https else "http"
     base_url = f"{scheme}://{ip}:{port}"
@@ -62,14 +72,16 @@ async def probe(ip: str, port: int, use_https: bool = False, timeout: float = 5.
     verify = _http_ssl_context() if use_https else True
 
     try:
-        async with asyncio.timeout(timeout):
-            async with httpx.AsyncClient(
-                verify=verify,
-                follow_redirects=True,
-                timeout=None,
-                headers={"User-Agent": "Mozilla/5.0 (compatible; Argus/1.0; network-scanner)"},
-            ) as client:
-                await _populate_probe_data(client, base_url, ip, data, raw_parts)
+        async with httpx.AsyncClient(
+            verify=verify,
+            follow_redirects=True,
+            timeout=None,
+            headers={"User-Agent": "Mozilla/5.0 (compatible; Argus/1.0; network-scanner)"},
+        ) as client:
+            await _await_with_deadline(
+                _populate_probe_data(client, base_url, ip, data, raw_parts),
+                HTTP_PROBE_TIMEOUT_SECONDS,
+            )
     except httpx.ConnectError:
         return ProbeResult(probe_type="http", target_port=port, success=False, error="Connection refused")
     except (httpx.TimeoutException, TimeoutError):

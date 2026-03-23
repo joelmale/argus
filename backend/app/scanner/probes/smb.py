@@ -25,16 +25,26 @@ from app.scanner.models import ProbeResult, SmbProbeData
 
 log = logging.getLogger(__name__)
 
+SMB_PROBE_TIMEOUT_SECONDS = 8.0
 
-async def probe(ip: str, port: int = 445, timeout: float = 8.0) -> ProbeResult:
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
+
+async def probe(ip: str, port: int = 445) -> ProbeResult:
     """Probe SMB/NetBIOS on ip:port."""
     t0 = time.monotonic()
 
     loop = asyncio.get_event_loop()
     try:
-        data = await asyncio.wait_for(
+        data = await _await_with_deadline(
             loop.run_in_executor(None, _smb_probe_sync, ip, port),
-            timeout=timeout,
+            SMB_PROBE_TIMEOUT_SECONDS,
         )
     except asyncio.TimeoutError:
         return ProbeResult(probe_type="smb", target_port=port, success=False, error="Timeout")

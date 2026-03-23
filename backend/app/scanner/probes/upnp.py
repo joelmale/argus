@@ -28,6 +28,19 @@ from app.scanner.models import ProbeResult, UpnpProbeData
 
 log = logging.getLogger(__name__)
 
+UPNP_PROBE_TIMEOUT_SECONDS = 6.0
+SSDP_DISCOVERY_TIMEOUT_SECONDS = 3.0
+UPNP_DESCRIPTION_TIMEOUT_SECONDS = 4.0
+UPNP_COMMON_PATH_TIMEOUT_SECONDS = 2.0
+
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
 
 def _upnp_ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
@@ -53,7 +66,7 @@ NS = {
 }
 
 
-async def probe(ip: str, port: int = 1900, timeout: float = 6.0) -> ProbeResult:
+async def probe(ip: str, port: int = 1900) -> ProbeResult:
     """
     Probe a device for UPnP device description.
     First tries direct SSDP query, then falls back to common description URLs.
@@ -62,28 +75,19 @@ async def probe(ip: str, port: int = 1900, timeout: float = 6.0) -> ProbeResult:
 
     # Strategy 1: SSDP discovery — find the description URL
     try:
-        async with asyncio.timeout(timeout):
-            location = await _ssdp_discover(ip, timeout=min(timeout / 2, 3.0))
-
-            # Strategy 2: Try common description paths if SSDP didn't respond
-            if not location:
-                location = await _try_common_paths(ip)
-
-            if not location:
-                return ProbeResult(
-                    probe_type="upnp", success=False,
-                    duration_ms=round((time.monotonic() - t0) * 1000, 1),
-                    error="No UPnP device description found",
-                )
-
-            # Fetch and parse the description XML
-            data = await _fetch_description(location, timeout=4.0)
-            if data is None:
-                return ProbeResult(
-                    probe_type="upnp", success=False,
-                    duration_ms=round((time.monotonic() - t0) * 1000, 1),
-                    error=f"Failed to parse device description at {location}",
-                )
+        location, data = await _await_with_deadline(_probe_description(ip), UPNP_PROBE_TIMEOUT_SECONDS)
+        if not location:
+            return ProbeResult(
+                probe_type="upnp", success=False,
+                duration_ms=round((time.monotonic() - t0) * 1000, 1),
+                error="No UPnP device description found",
+            )
+        if data is None:
+            return ProbeResult(
+                probe_type="upnp", success=False,
+                duration_ms=round((time.monotonic() - t0) * 1000, 1),
+                error=f"Failed to parse device description at {location}",
+            )
     except TimeoutError:
         return ProbeResult(
             probe_type="upnp", success=False,
@@ -110,7 +114,16 @@ async def probe(ip: str, port: int = 1900, timeout: float = 6.0) -> ProbeResult:
     )
 
 
-async def _ssdp_discover(target_ip: str, timeout: float) -> str | None:
+async def _probe_description(ip: str) -> tuple[str | None, UpnpProbeData | None]:
+    location = await _ssdp_discover(ip)
+    if not location:
+        location = await _try_common_paths(ip)
+    if not location:
+        return None, None
+    return location, await _fetch_description(location)
+
+
+async def _ssdp_discover(target_ip: str) -> str | None:
     """Send SSDP M-SEARCH and wait for a response from target_ip."""
     loop = asyncio.get_event_loop()
 
@@ -141,8 +154,7 @@ async def _ssdp_discover(target_ip: str, timeout: float) -> str | None:
             family=socket.AF_INET,
         )
         transport.sendto(SSDP_SEARCH)
-        async with asyncio.timeout(timeout):
-            await proto.event.wait()
+        await _await_with_deadline(proto.event.wait(), SSDP_DISCOVERY_TIMEOUT_SECONDS)
         transport.close()
         return proto.location
     except Exception:
@@ -158,7 +170,7 @@ async def _try_common_paths(ip: str) -> str | None:
         f"http://{ip}:5000/rootDesc.xml",
         f"http://{ip}:52235/dmr/SamsungMRDesc.xml",        # Samsung TV
     ]
-    async with httpx.AsyncClient(timeout=2.0, verify=_upnp_ssl_context()) as client:
+    async with httpx.AsyncClient(timeout=UPNP_COMMON_PATH_TIMEOUT_SECONDS, verify=_upnp_ssl_context()) as client:
         for url in candidates:
             try:
                 r = await client.get(url)
@@ -169,15 +181,14 @@ async def _try_common_paths(ip: str) -> str | None:
     return None
 
 
-async def _fetch_description(location: str, timeout: float) -> UpnpProbeData | None:
+async def _fetch_description(location: str) -> UpnpProbeData | None:
     """Fetch and parse UPnP device description XML."""
     try:
-        async with asyncio.timeout(timeout):
-            async with httpx.AsyncClient(timeout=None, verify=_upnp_ssl_context()) as client:
-                resp = await client.get(location)
-                if resp.status_code != 200:
-                    return None
-                return _parse_xml(resp.text)
+        async with httpx.AsyncClient(timeout=None, verify=_upnp_ssl_context()) as client:
+            resp = await _await_with_deadline(client.get(location), UPNP_DESCRIPTION_TIMEOUT_SECONDS)
+            if resp.status_code != 200:
+                return None
+            return _parse_xml(resp.text)
     except Exception:
         return None
 

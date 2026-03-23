@@ -26,15 +26,27 @@ from app.scanner.models import ProbeResult, TlsProbeData
 
 log = logging.getLogger(__name__)
 
+TLS_PROBE_TIMEOUT_SECONDS = 5.0
 
-async def probe(ip: str, port: int = 443, timeout: float = 5.0) -> ProbeResult:
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
+
+async def probe(ip: str, port: int = 443) -> ProbeResult:
     """Extract TLS certificate information from an SSL/TLS service."""
     t0 = time.monotonic()
 
     loop = asyncio.get_event_loop()
     try:
-        async with asyncio.timeout(timeout):
-            result = await loop.run_in_executor(None, _get_cert_sync, ip, port)
+        result = await _await_with_deadline(
+            loop.run_in_executor(None, _get_cert_sync, ip, port),
+            TLS_PROBE_TIMEOUT_SECONDS,
+        )
         if result is None:
             return ProbeResult(probe_type="tls", target_port=port, success=False, error="No certificate")
     except TimeoutError:

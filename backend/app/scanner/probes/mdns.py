@@ -25,6 +25,16 @@ from app.scanner.models import MdnsProbeData, ProbeResult
 
 log = logging.getLogger(__name__)
 
+MDNS_QUERY_TIMEOUT_SECONDS = 6.0
+
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
 # Service types to query — each one maps to a class of devices
 QUERY_SERVICES = [
     "_http._tcp.local.",            # Web UIs
@@ -52,12 +62,12 @@ QUERY_SERVICES = [
 ]
 
 
-async def probe(ip: str, timeout: float = 6.0) -> ProbeResult:
+async def probe(ip: str) -> ProbeResult:
     """Query mDNS for service announcements from a specific IP."""
     t0 = time.monotonic()
 
     try:
-        data = await asyncio.wait_for(_query_mdns(ip), timeout=timeout)
+        data = await _await_with_deadline(_query_mdns(ip), MDNS_QUERY_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         data = MdnsProbeData()
     except ImportError:

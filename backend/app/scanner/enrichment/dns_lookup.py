@@ -15,14 +15,23 @@ import socket
 
 log = logging.getLogger(__name__)
 
+DNS_LOOKUP_TIMEOUT_SECONDS = 3.0
 
-async def reverse_lookup(ip: str, timeout: float = 3.0) -> str | None:
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
+async def reverse_lookup(ip: str) -> str | None:
     """Return PTR hostname for an IP, or None if not found."""
     loop = asyncio.get_event_loop()
     try:
-        result = await asyncio.wait_for(
+        result = await _await_with_deadline(
             loop.run_in_executor(None, socket.gethostbyaddr, ip),
-            timeout=timeout,
+            DNS_LOOKUP_TIMEOUT_SECONDS,
         )
         hostname = result[0]
         # Filter out meaningless results like the IP itself or generic placeholders
@@ -38,13 +47,13 @@ async def reverse_lookup(ip: str, timeout: float = 3.0) -> str | None:
         return None
 
 
-async def forward_lookup(hostname: str, timeout: float = 3.0) -> list[str]:
+async def forward_lookup(hostname: str) -> list[str]:
     """Return list of IPs for a hostname."""
     loop = asyncio.get_event_loop()
     try:
-        results = await asyncio.wait_for(
+        results = await _await_with_deadline(
             loop.run_in_executor(None, socket.getaddrinfo, hostname, None),
-            timeout=timeout,
+            DNS_LOOKUP_TIMEOUT_SECONDS,
         )
         return list({r[4][0] for r in results})
     except Exception:

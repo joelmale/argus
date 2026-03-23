@@ -22,13 +22,23 @@ from app.scanner.models import ProbeResult, SshProbeData
 
 log = logging.getLogger(__name__)
 
+SSH_PROBE_TIMEOUT_SECONDS = 5.0
 
-async def probe(ip: str, port: int = 22, timeout: float = 5.0) -> ProbeResult:
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
+
+async def probe(ip: str, port: int = 22) -> ProbeResult:
     """Connect to SSH port, grab banner and algorithm negotiation."""
     t0 = time.monotonic()
 
     try:
-        data = await asyncio.wait_for(_grab_ssh_info(ip, port), timeout=timeout)
+        data = await _await_with_deadline(_grab_ssh_info(ip, port), SSH_PROBE_TIMEOUT_SECONDS)
     except asyncio.TimeoutError:
         return ProbeResult(probe_type="ssh", target_port=port, success=False, error="Timeout")
     except Exception as exc:

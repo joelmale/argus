@@ -27,18 +27,28 @@ from app.scanner.models import DiscoveredHost
 
 log = logging.getLogger(__name__)
 
+DISCOVERY_SWEEP_TIMEOUT_SECONDS = 30
+
+
+async def _await_with_deadline(awaitable, deadline_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(deadline_seconds):
+            return await awaitable
+    return await asyncio.wait_for(awaitable, timeout=deadline_seconds)
+
 
 # ─── Active ARP + Ping sweep ────────────────────────────────────────────────
 
-async def sweep(targets: str, timeout: int = 30) -> list[DiscoveredHost]:
+async def sweep(targets: str) -> list[DiscoveredHost]:
     """
     Discover live hosts in `targets` (CIDR or space-separated IPs).
     Runs ARP sweep and ping sweep in parallel, merges results.
     """
     log.info("Discovery sweep started: %s", targets)
 
-    arp_task  = asyncio.create_task(_arp_sweep(targets, timeout))
-    ping_task = asyncio.create_task(_ping_sweep(targets, timeout))
+    arp_task = asyncio.create_task(_arp_sweep(targets))
+    ping_task = asyncio.create_task(_ping_sweep(targets))
 
     arp_results, ping_results = await asyncio.gather(arp_task, ping_task, return_exceptions=True)
 
@@ -70,7 +80,7 @@ def _merge_discovered_host(merged: dict[str, DiscoveredHost], host: DiscoveredHo
         merged[host.ip_address] = host
 
 
-async def _arp_sweep(targets: str, timeout: int) -> list[DiscoveredHost]:
+async def _arp_sweep(targets: str) -> list[DiscoveredHost]:
     """
     Use scapy to send ARP requests. Runs in a thread executor since scapy
     is synchronous and uses raw sockets.
@@ -78,11 +88,13 @@ async def _arp_sweep(targets: str, timeout: int) -> list[DiscoveredHost]:
     Requires NET_RAW capability (granted in docker-compose.yml).
     """
     loop = asyncio.get_event_loop()
-    async with asyncio.timeout(timeout):
-        return await loop.run_in_executor(None, _arp_sweep_sync, targets, timeout)
+    return await _await_with_deadline(
+        loop.run_in_executor(None, _arp_sweep_sync, targets),
+        DISCOVERY_SWEEP_TIMEOUT_SECONDS,
+    )
 
 
-def _arp_sweep_sync(targets: str, timeout: int) -> list[DiscoveredHost]:
+def _arp_sweep_sync(targets: str) -> list[DiscoveredHost]:
     """Synchronous ARP sweep implementation using scapy."""
     results: list[DiscoveredHost] = []
     try:
@@ -119,17 +131,19 @@ def _arp_sweep_sync(targets: str, timeout: int) -> list[DiscoveredHost]:
     return results
 
 
-async def _ping_sweep(targets: str, timeout: int) -> list[DiscoveredHost]:
+async def _ping_sweep(targets: str) -> list[DiscoveredHost]:
     """
     Use nmap's -sn (ping-only) scan. Fast, handles multiple CIDRs,
     works across routed segments. Runs in executor to avoid blocking.
     """
     loop = asyncio.get_event_loop()
-    async with asyncio.timeout(timeout):
-        return await loop.run_in_executor(None, _ping_sweep_sync, targets, timeout)
+    return await _await_with_deadline(
+        loop.run_in_executor(None, _ping_sweep_sync, targets),
+        DISCOVERY_SWEEP_TIMEOUT_SECONDS,
+    )
 
 
-def _ping_sweep_sync(targets: str, timeout: int) -> list[DiscoveredHost]:
+def _ping_sweep_sync(targets: str) -> list[DiscoveredHost]:
     results: list[DiscoveredHost] = []
     try:
         completed = subprocess.run(
@@ -138,7 +152,7 @@ def _ping_sweep_sync(targets: str, timeout: int) -> list[DiscoveredHost]:
                 "-sn",
                 "-T4",
                 "--host-timeout",
-                f"{timeout}s",
+                f"{DISCOVERY_SWEEP_TIMEOUT_SECONDS}s",
                 "-oX",
                 "-",
                 *targets.replace(",", " ").split(),
