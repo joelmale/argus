@@ -231,8 +231,11 @@ def _resolve_probe_timeout(probe_type: str, timeout_seconds: float | None) -> fl
 
 async def _with_timeout(coro, timeout: float, probe_type: str, port: int | None = None) -> ProbeResult:
     try:
-        async with asyncio.timeout(timeout):
-            return await coro
+        timeout_context = getattr(asyncio, "timeout", None)
+        if timeout_context is not None:
+            async with timeout_context(timeout):
+                return await coro
+        return await asyncio.wait_for(coro, timeout=timeout)
     except asyncio.TimeoutError:
         return ProbeResult(probe_type=probe_type, target_port=port, success=False, error=f"Timeout after {timeout}s")
 
