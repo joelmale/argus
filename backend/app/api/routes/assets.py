@@ -471,7 +471,7 @@ async def get_asset(asset_id: UUID, db: DBSession, _: CurrentUser):
     return _serialize_asset(asset)
 
 
-@router.post("/{asset_id}/port-scan")
+@router.post("/{asset_id}/port-scan", responses=ASSET_NOT_FOUND_RESPONSE)
 async def run_asset_port_scan(
     asset_id: UUID,
     db: DBSession,
@@ -500,7 +500,7 @@ async def run_asset_port_scan(
     return _serialize_asset(await _load_asset(db, asset_id))
 
 
-@router.post("/{asset_id}/ai-analysis/refresh")
+@router.post("/{asset_id}/ai-analysis/refresh", responses=ASSET_NOT_FOUND_RESPONSE)
 async def run_asset_ai_refresh(
     asset_id: UUID,
     db: DBSession,

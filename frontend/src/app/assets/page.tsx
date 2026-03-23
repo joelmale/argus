@@ -22,6 +22,34 @@ function downloadBlob(data: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+async function exportAssetFile(
+  exporter: () => Promise<{ data: Blob }>,
+  filename: string,
+) {
+  const response = await exporter()
+  downloadBlob(response.data, filename)
+}
+
+async function handleExportCsv() {
+  await exportAssetFile(() => assetsApi.exportCsv(), 'argus-assets.csv')
+}
+
+async function handleExportAnsible() {
+  await exportAssetFile(() => assetsApi.exportAnsible(), 'argus-inventory.ini')
+}
+
+async function handleExportTerraform() {
+  await exportAssetFile(() => assetsApi.exportTerraform(), 'argus-assets.tf.json')
+}
+
+async function handleExportInventoryJson() {
+  await exportAssetFile(() => assetsApi.exportInventoryJson(), 'argus-inventory.json')
+}
+
+async function handleExportReportJson() {
+  await exportAssetFile(() => assetsApi.exportJsonReport(), 'argus-report.json')
+}
+
 export default function AssetsPage() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
@@ -52,31 +80,6 @@ export default function AssetsPage() {
       return deviceClass === 'unknown'
     })
     .map((asset) => asset.ip_address)
-
-  async function handleExportCsv() {
-    const response = await assetsApi.exportCsv()
-    downloadBlob(response.data, 'argus-assets.csv')
-  }
-
-  async function handleExportAnsible() {
-    const response = await assetsApi.exportAnsible()
-    downloadBlob(response.data, 'argus-inventory.ini')
-  }
-
-  async function handleExportTerraform() {
-    const response = await assetsApi.exportTerraform()
-    downloadBlob(response.data, 'argus-assets.tf.json')
-  }
-
-  async function handleExportInventoryJson() {
-    const response = await assetsApi.exportInventoryJson()
-    downloadBlob(response.data, 'argus-inventory.json')
-  }
-
-  async function handleExportReportJson() {
-    const response = await assetsApi.exportJsonReport()
-    downloadBlob(response.data, 'argus-report.json')
-  }
 
   return (
     <AppShell>

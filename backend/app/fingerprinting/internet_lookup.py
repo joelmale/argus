@@ -11,9 +11,15 @@ RESULT_LINK_RE = re.compile(
     r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="(?P<url>[^"]+)"[^>]*>(?P<title>.*?)</a>',
     re.IGNORECASE | re.DOTALL,
 )
-RESULT_SNIPPET_RE = re.compile(
-    r'(?:<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>|<div[^>]+class="[^"]*result__snippet[^"]*"[^>]*>)(?P<snippet>.*?)</(?:a|div)>',
-    re.IGNORECASE | re.DOTALL,
+SNIPPET_PATTERNS = (
+    re.compile(
+        r'<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(?P<snippet>.*?)</a>',
+        re.IGNORECASE | re.DOTALL,
+    ),
+    re.compile(
+        r'<div[^>]+class="[^"]*result__snippet[^"]*"[^>]*>(?P<snippet>.*?)</div>',
+        re.IGNORECASE | re.DOTALL,
+    ),
 )
 TAG_RE = re.compile(r"<[^>]+>")
 
@@ -70,10 +76,11 @@ def parse_search_results(html: str, allowed_domains: list[str]) -> list[dict]:
 
 def _extract_result_snippet(html: str, anchor_end: int) -> str:
     window = html[anchor_end: anchor_end + 3000]
-    snippet_match = RESULT_SNIPPET_RE.search(window)
-    if not snippet_match:
-        return ""
-    return TAG_RE.sub("", snippet_match.group("snippet")).strip()[:1000]
+    for pattern in SNIPPET_PATTERNS:
+        snippet_match = pattern.search(window)
+        if snippet_match:
+            return TAG_RE.sub("", snippet_match.group("snippet")).strip()[:1000]
+    return ""
 
 
 async def search_lookup(query: str, *, allowed_domains: list[str], timeout_seconds: int, budget: int) -> list[dict]:

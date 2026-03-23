@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 
 from app.scanner.models import DiscoveredHost, PortResult, ProbeResult, ScanProfile
 
@@ -229,15 +230,49 @@ def _resolve_probe_timeout(probe_type: str, timeout_seconds: float | None) -> fl
 
 # ── Probe wrappers ────────────────────────────────────────────────────────────
 
-async def _with_timeout(coro, timeout: float, probe_type: str, port: int | None = None) -> ProbeResult:
+@asynccontextmanager
+async def _probe_timeout_context(timeout_seconds: float):
+    timeout_context = getattr(asyncio, "timeout", None)
+    if timeout_context is not None:
+        async with timeout_context(timeout_seconds):
+            yield
+        return
+
+    task = asyncio.current_task()
+    if task is None:
+        yield
+        return
+
+    loop = asyncio.get_running_loop()
+    timed_out = False
+
+    def _cancel_current_task() -> None:
+        nonlocal timed_out
+        timed_out = True
+        task.cancel()
+
+    timeout_handle = loop.call_later(timeout_seconds, _cancel_current_task)
     try:
-        timeout_context = getattr(asyncio, "timeout", None)
-        if timeout_context is not None:
-            async with timeout_context(timeout):
-                return await coro
-        return await asyncio.wait_for(coro, timeout=timeout)
+        yield
+    except asyncio.CancelledError as exc:
+        if timed_out:
+            raise asyncio.TimeoutError from exc
+        raise
+    finally:
+        timeout_handle.cancel()
+
+
+async def _with_timeout(coro, timeout_seconds: float, probe_type: str, port: int | None = None) -> ProbeResult:
+    try:
+        async with _probe_timeout_context(timeout_seconds):
+            return await coro
     except asyncio.TimeoutError:
-        return ProbeResult(probe_type=probe_type, target_port=port, success=False, error=f"Timeout after {timeout}s")
+        return ProbeResult(
+            probe_type=probe_type,
+            target_port=port,
+            success=False,
+            error=f"Timeout after {timeout_seconds}s",
+        )
 
 
 async def _dns_probe(ip: str) -> ProbeResult:

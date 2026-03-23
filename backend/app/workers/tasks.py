@@ -167,7 +167,7 @@ async def _run_job_async(job_id: str) -> None:
             )
             return
 
-        route_error = await _prepare_scan_job_targets(
+        route_error = _prepare_scan_job_targets(
             job,
             materialize_scan_targets,
             validate_scan_targets_routable,
@@ -222,7 +222,7 @@ async def _should_run_parent_job(db, job: ScanJob) -> bool:
     return job.parent_id is None and await _has_child_jobs(db, job.id)
 
 
-async def _prepare_scan_job_targets(
+def _prepare_scan_job_targets(
     job: ScanJob,
     materialize_scan_targets,
     validate_scan_targets_routable,
@@ -873,7 +873,7 @@ async def _record_job_progress(db, job, payload: dict, progress_state: dict) -> 
         await db.commit()
 
 
-async def _publish_event(payload: dict) -> None:
+def _publish_event_sync(payload: dict) -> None:
     import redis
 
     r = redis.from_url(settings.REDIS_URL)
@@ -883,6 +883,10 @@ async def _publish_event(payload: dict) -> None:
         log.debug("Redis publish error: %s", exc)
     finally:
         r.close()
+
+
+async def _publish_event(payload: dict) -> None:
+    await asyncio.to_thread(_publish_event_sync, payload)
 
 
 @worker_ready.connect

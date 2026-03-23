@@ -665,7 +665,6 @@ async def _investigate_host(
             host,
             ports,
             priority_probes,
-            profile,
             deep_probe_timeout_seconds,
         )
         result.probes = probe_results

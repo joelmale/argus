@@ -617,7 +617,7 @@ function TplinkDecoModuleCard({
               <p className="text-xs text-zinc-500">
                 Started {new Date(run.started_at).toLocaleString()}
                 {run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ''}
-                {run.client_count !== null ? ` · clients ${run.client_count}` : ''}
+                {run.client_count === null ? '' : ` · clients ${run.client_count}`}
               </p>
               {run.error && <p className="text-xs text-rose-500">{run.error}</p>}
               {run.log_analysis && (

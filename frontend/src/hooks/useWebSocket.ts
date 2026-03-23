@@ -8,6 +8,13 @@ import type { WsEvent } from '@/types'
 const RECONNECT_DELAY_MS = 3000
 const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
 
+function getStoredToken() {
+  if (typeof globalThis.window === 'undefined') {
+    return null
+  }
+  return globalThis.localStorage.getItem('argus_token')
+}
+
 export function useWebSocket(enabled = true) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null)
@@ -15,13 +22,6 @@ export function useWebSocket(enabled = true) {
   const queryClient = useQueryClient()
 
   const { setWsConnected } = useAppStore()
-
-  function getStoredToken() {
-    if (globalThis.window === undefined) {
-      return null
-    }
-    return globalThis.localStorage.getItem('argus_token')
-  }
 
   function connect() {
     if (!enabled) return
