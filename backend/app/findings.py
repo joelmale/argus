@@ -27,53 +27,79 @@ async def ingest_findings(db: AsyncSession, findings: list[dict], *, source_defa
             skipped += 1
             continue
 
-        stmt = select(Finding).where(
-            Finding.asset_id == asset.id,
-            Finding.source_tool == source_tool,
-            Finding.title == title,
-        )
-        if external_id:
-            stmt = stmt.where(Finding.external_id == external_id)
-        elif item.get("cve"):
-            stmt = stmt.where(Finding.cve == item["cve"])
-
-        finding = (await db.execute(stmt)).scalar_one_or_none()
+        finding = await _resolve_existing_finding(db, asset, item, source_tool, title, external_id)
         now = datetime.now(timezone.utc)
         if finding is None:
-            finding = Finding(
-                asset_id=asset.id,
-                port_id=port.id if port else None,
-                source_tool=source_tool,
-                external_id=external_id,
-                title=title,
-                description=item.get("description"),
-                severity=(item.get("severity") or "info").lower(),
-                status=(item.get("status") or "open").lower(),
-                cve=item.get("cve"),
-                service=item.get("service"),
-                port_number=item.get("port_number"),
-                protocol=item.get("protocol"),
-                finding_metadata=item.get("metadata") or {},
-                first_seen=now,
-                last_seen=now,
-            )
+            finding = _build_finding(asset, port, item, source_tool, external_id, title, now)
             db.add(finding)
             created += 1
         else:
-            finding.port_id = port.id if port else finding.port_id
-            finding.description = item.get("description") or finding.description
-            finding.severity = (item.get("severity") or finding.severity).lower()
-            finding.status = (item.get("status") or finding.status).lower()
-            finding.cve = item.get("cve") or finding.cve
-            finding.service = item.get("service") or finding.service
-            finding.port_number = item.get("port_number") or finding.port_number
-            finding.protocol = item.get("protocol") or finding.protocol
-            finding.finding_metadata = {**(finding.finding_metadata or {}), **(item.get("metadata") or {})}
-            finding.last_seen = now
+            _update_finding(finding, port, item, now)
             updated += 1
 
     await db.commit()
     return {"created": created, "updated": updated, "skipped": skipped}
+
+
+async def _resolve_existing_finding(
+    db: AsyncSession,
+    asset: Asset,
+    item: dict,
+    source_tool: str,
+    title: str,
+    external_id: str | None,
+) -> Finding | None:
+    stmt = select(Finding).where(
+        Finding.asset_id == asset.id,
+        Finding.source_tool == source_tool,
+        Finding.title == title,
+    )
+    if external_id:
+        stmt = stmt.where(Finding.external_id == external_id)
+    elif item.get("cve"):
+        stmt = stmt.where(Finding.cve == item["cve"])
+    return (await db.execute(stmt)).scalar_one_or_none()
+
+
+def _build_finding(
+    asset: Asset,
+    port: Port | None,
+    item: dict,
+    source_tool: str,
+    external_id: str | None,
+    title: str,
+    now: datetime,
+) -> Finding:
+    return Finding(
+        asset_id=asset.id,
+        port_id=port.id if port else None,
+        source_tool=source_tool,
+        external_id=external_id,
+        title=title,
+        description=item.get("description"),
+        severity=(item.get("severity") or "info").lower(),
+        status=(item.get("status") or "open").lower(),
+        cve=item.get("cve"),
+        service=item.get("service"),
+        port_number=item.get("port_number"),
+        protocol=item.get("protocol"),
+        finding_metadata=item.get("metadata") or {},
+        first_seen=now,
+        last_seen=now,
+    )
+
+
+def _update_finding(finding: Finding, port: Port | None, item: dict, now: datetime) -> None:
+    finding.port_id = port.id if port else finding.port_id
+    finding.description = item.get("description") or finding.description
+    finding.severity = (item.get("severity") or finding.severity).lower()
+    finding.status = (item.get("status") or finding.status).lower()
+    finding.cve = item.get("cve") or finding.cve
+    finding.service = item.get("service") or finding.service
+    finding.port_number = item.get("port_number") or finding.port_number
+    finding.protocol = item.get("protocol") or finding.protocol
+    finding.finding_metadata = {**(finding.finding_metadata or {}), **(item.get("metadata") or {})}
+    finding.last_seen = now
 
 
 async def summarize_findings(db: AsyncSession) -> dict:

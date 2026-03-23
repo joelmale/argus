@@ -31,6 +31,7 @@ log = logging.getLogger(__name__)
 
 def _upnp_ssl_context() -> ssl.SSLContext:
     context = ssl.create_default_context()
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
     context.check_hostname = True
     context.verify_mode = ssl.CERT_REQUIRED
     return context

@@ -102,12 +102,8 @@ function filterValueMatches(current: string, selected: string) {
   return selected === '' || current === selected
 }
 
-export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
-  const [sortKey, setSortKey] = useState<SortKey>('ip')
-  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
-  const [openFilter, setOpenFilter] = useState<FilterKey | null>(null)
-  const [queuedEnrichmentIp, setQueuedEnrichmentIp] = useState<string | null>(null)
-  const [filters, setFilters] = useState<Record<FilterKey, string>>({
+function emptyFilters(): Record<FilterKey, string> {
+  return {
     hostname: '',
     vendor: '',
     type: '',
@@ -115,7 +111,31 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
     ports: '',
     status: '',
     last_seen: '',
-  })
+  }
+}
+
+function buildEnrichmentHandler(
+  assetIp: string,
+  triggerEnrichment: ReturnType<typeof useTriggerScan>['mutate'],
+  setQueuedEnrichmentIp: Dispatch<SetStateAction<string | null>>,
+) {
+  return () => {
+    setQueuedEnrichmentIp(assetIp)
+    triggerEnrichment(
+      { targets: assetIp, scan_type: 'deep_enrichment' },
+      {
+        onSettled: () => setQueuedEnrichmentIp((current) => (current === assetIp ? null : current)),
+      },
+    )
+  }
+}
+
+export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
+  const [sortKey, setSortKey] = useState<SortKey>('ip')
+  const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
+  const [openFilter, setOpenFilter] = useState<FilterKey | null>(null)
+  const [queuedEnrichmentIp, setQueuedEnrichmentIp] = useState<string | null>(null)
+  const [filters, setFilters] = useState<Record<FilterKey, string>>(emptyFilters)
   const { data: currentUser } = useCurrentUser()
   const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
 
@@ -218,20 +238,7 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
       asset={view.asset}
       canEnrich={currentUser?.role === 'admin'}
       isEnriching={isEnrichmentPending && queuedEnrichmentIp === view.asset.ip_address}
-      onRunEnrichment={() => {
-        setQueuedEnrichmentIp(view.asset.ip_address)
-        triggerEnrichment(
-          { targets: view.asset.ip_address, scan_type: 'deep_enrichment' },
-          {
-            onSettled: () => setQueuedEnrichmentIp((current) => {
-              if (current === view.asset.ip_address) {
-                return null
-              }
-              return current
-            }),
-          },
-        )
-      }}
+      onRunEnrichment={buildEnrichmentHandler(view.asset.ip_address, triggerEnrichment, setQueuedEnrichmentIp)}
     />
   ))
 
@@ -259,15 +266,7 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
   }
 
   function clearColumnFilters() {
-    setFilters({
-      hostname: '',
-      vendor: '',
-      type: '',
-      confidence: '',
-      ports: '',
-      status: '',
-      last_seen: '',
-    })
+    setFilters(emptyFilters())
     setOpenFilter(null)
   }
 

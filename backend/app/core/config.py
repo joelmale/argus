@@ -1,21 +1,22 @@
-from pydantic import model_validator
+from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+from sqlalchemy.engine import URL
 
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
 
     APP_ENV: str = "development"
-    APP_SECRET_KEY: str = "change-me"
+    APP_SECRET_KEY: str = ""
     APP_DEBUG: bool = True
 
-    DATABASE_URL: str = ""
-    DATABASE_URL_DOCKER: str = ""
+    DATABASE_URL: SecretStr | None = None
+    DATABASE_URL_DOCKER: SecretStr | None = None
     DATABASE_HOST: str = "db"
     DATABASE_PORT: int = 5432
     DATABASE_NAME: str = "argus"
     DATABASE_USER: str = "argus"
-    DATABASE_PASSWORD: str = ""
+    DATABASE_PASSWORD: SecretStr | None = None
     REDIS_URL: str = "redis://redis:6379/0"
 
     SCANNER_DEFAULT_TARGETS: str = "192.168.1.0/24"
@@ -35,8 +36,8 @@ class Settings(BaseSettings):
     JWT_ALGORITHM: str = "HS256"
     JWT_EXPIRE_MINUTES: int = 1440
 
-    ADMIN_USERNAME: str = "admin"
-    ADMIN_PASSWORD: str = "changeme"
+    ADMIN_USERNAME: str = ""
+    ADMIN_PASSWORD: SecretStr | None = None
 
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
@@ -72,19 +73,25 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _populate_database_url(self) -> "Settings":
         if self.DATABASE_URL:
+            self.DATABASE_URL = SecretStr(self.DATABASE_URL.get_secret_value())
             return self
         if self.DATABASE_URL_DOCKER:
-            self.DATABASE_URL = self.DATABASE_URL_DOCKER
+            self.DATABASE_URL = SecretStr(self.DATABASE_URL_DOCKER.get_secret_value())
             return self
-        if not self.DATABASE_PASSWORD:
+        password = self.DATABASE_PASSWORD.get_secret_value() if self.DATABASE_PASSWORD else ""
+        if not password:
             raise ValueError(
                 "DATABASE_PASSWORD is required when DATABASE_URL and DATABASE_URL_DOCKER are not provided."
             )
-
-        credentials = self.DATABASE_USER
-        credentials = f"{credentials}:{self.DATABASE_PASSWORD}"
-        self.DATABASE_URL = (
-            f"postgresql+asyncpg://{credentials}@{self.DATABASE_HOST}:{self.DATABASE_PORT}/{self.DATABASE_NAME}"
+        self.DATABASE_URL = SecretStr(
+            URL.create(
+                "postgresql+asyncpg",
+                username=self.DATABASE_USER,
+                password=password,
+                host=self.DATABASE_HOST,
+                port=self.DATABASE_PORT,
+                database=self.DATABASE_NAME,
+            ).render_as_string(hide_password=False)
         )
         return self
 

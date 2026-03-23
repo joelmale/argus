@@ -20,15 +20,7 @@ class InstantWinFingerprint:
 
 def fingerprint_from_nmap_xml(xml_output: str, target_ip: str | None = None) -> InstantWinFingerprint | None:
     root = ET.fromstring(xml_output)
-    host_nodes = root.findall("host")
-    if target_ip:
-        filtered: list[ET.Element] = []
-        for host in host_nodes:
-            for address in host.findall("address"):
-                if address.get("addrtype") == "ipv4" and address.get("addr") == target_ip:
-                    filtered.append(host)
-                    break
-        host_nodes = filtered
+    host_nodes = _select_host_nodes(root.findall("host"), target_ip)
     if not host_nodes:
         return None
     return fingerprint_from_nmap_host_data(_host_xml_to_dict(host_nodes[0]))
@@ -56,48 +48,15 @@ def fingerprint_from_signals(
 ) -> InstantWinFingerprint | None:
     vendor_lower = (mac_vendor or "").lower()
     hostname_lower = (hostname or "").lower()
-    service_map = {port.port: ((port.service or "").lower(), (port.version or "").lower(), (port.product or "").lower()) for port in ports}
+    service_map = _build_service_map(ports)
     cpes = " ".join(os_fingerprint.cpe).lower()
     os_name_lower = (os_fingerprint.os_name or "").lower()
 
-    if "firewalla" in vendor_lower or "firewalla" in hostname_lower:
-        ssh_version = service_map.get(22, ("", "", ""))[1]
-        os_version = "22.04" if "3ubuntu0." in ssh_version else (os_fingerprint.os_version or None)
-        return InstantWinFingerprint(
-            vendor="Firewalla",
-            device_type="firewall",
-            os_name="Ubuntu Linux" if "ubuntu" in ssh_version or "linux" in os_name_lower else (os_fingerprint.os_name or "Linux"),
-            os_family="Linux",
-            os_version=os_version,
-            confidence=0.99,
-            reason="Matched Firewalla MAC/hostname with router/firewall service pattern",
-        )
-
-    if 53 in service_map:
-        service, version, product = service_map[53]
-        if service == "domain" and "dnsmasq" in f"{version} {product}" and ("netgate" in vendor_lower or "pfsense" in hostname_lower):
-            return InstantWinFingerprint(
-                vendor=mac_vendor,
-                device_type="firewall",
-                os_name=os_fingerprint.os_name or "FreeBSD/pfSense appliance",
-                os_family=os_fingerprint.os_family or "BSD",
-                os_version=os_fingerprint.os_version,
-                confidence=0.92,
-                reason="dnsmasq + Netgate/pfSense identity",
-            )
-
-    if "mikrotik" in vendor_lower or "mikrotik" in cpes:
-        return InstantWinFingerprint(
-            vendor="MikroTik",
-            device_type="router",
-            os_name="MikroTik RouterOS",
-            os_family="Linux",
-            os_version=os_fingerprint.os_version,
-            confidence=0.94,
-            reason="Matched MikroTik vendor/CPE",
-        )
-
-    return None
+    return (
+        _match_firewalla(vendor_lower, hostname_lower, service_map, os_fingerprint, os_name_lower)
+        or _match_pfsense(vendor_lower, hostname_lower, service_map, mac_vendor, os_fingerprint)
+        or _match_mikrotik(vendor_lower, cpes, os_fingerprint)
+    )
 
 
 def merge_into_os_fingerprint(os_fingerprint: OSFingerprint, instant: InstantWinFingerprint | None) -> OSFingerprint:
@@ -177,20 +136,114 @@ def _extract_os(host_data: dict[str, Any]) -> OSFingerprint:
 
 def _host_xml_to_dict(host_node: ET.Element) -> dict[str, Any]:
     host_data: dict[str, Any] = {"tcp": {}, "udp": {}, "hostnames": [], "vendor": {}}
-    addresses = host_node.findall("address")
-    for address in addresses:
-        addr = address.get("addr")
-        addr_type = address.get("addrtype")
-        vendor = address.get("vendor")
-        if addr_type == "mac" and addr:
-            if vendor:
-                host_data["vendor"][addr] = vendor
+    host_data["vendor"] = _extract_vendor_map(host_node)
+    host_data["hostnames"] = _extract_hostname_entries(host_node)
+    _populate_port_entries(host_node, host_data)
+    host_data["osmatch"] = _extract_osmatch_entries(host_node)
+    return host_data
 
+
+def _select_host_nodes(host_nodes: list[ET.Element], target_ip: str | None) -> list[ET.Element]:
+    if not target_ip:
+        return host_nodes
+    return [host for host in host_nodes if _host_matches_ip(host, target_ip)]
+
+
+def _host_matches_ip(host_node: ET.Element, target_ip: str) -> bool:
+    for address in host_node.findall("address"):
+        if address.get("addrtype") == "ipv4" and address.get("addr") == target_ip:
+            return True
+    return False
+
+
+def _build_service_map(ports: list[PortResult]) -> dict[int, tuple[str, str, str]]:
+    return {
+        port.port: ((port.service or "").lower(), (port.version or "").lower(), (port.product or "").lower())
+        for port in ports
+    }
+
+
+def _match_firewalla(
+    vendor_lower: str,
+    hostname_lower: str,
+    service_map: dict[int, tuple[str, str, str]],
+    os_fingerprint: OSFingerprint,
+    os_name_lower: str,
+) -> InstantWinFingerprint | None:
+    if "firewalla" not in vendor_lower and "firewalla" not in hostname_lower:
+        return None
+    ssh_version = service_map.get(22, ("", "", ""))[1]
+    os_version = "22.04" if "3ubuntu0." in ssh_version else (os_fingerprint.os_version or None)
+    return InstantWinFingerprint(
+        vendor="Firewalla",
+        device_type="firewall",
+        os_name="Ubuntu Linux" if "ubuntu" in ssh_version or "linux" in os_name_lower else (os_fingerprint.os_name or "Linux"),
+        os_family="Linux",
+        os_version=os_version,
+        confidence=0.99,
+        reason="Matched Firewalla MAC/hostname with router/firewall service pattern",
+    )
+
+
+def _match_pfsense(
+    vendor_lower: str,
+    hostname_lower: str,
+    service_map: dict[int, tuple[str, str, str]],
+    mac_vendor: str | None,
+    os_fingerprint: OSFingerprint,
+) -> InstantWinFingerprint | None:
+    if 53 not in service_map:
+        return None
+    service, version, product = service_map[53]
+    if service != "domain" or "dnsmasq" not in f"{version} {product}":
+        return None
+    if "netgate" not in vendor_lower and "pfsense" not in hostname_lower:
+        return None
+    return InstantWinFingerprint(
+        vendor=mac_vendor,
+        device_type="firewall",
+        os_name=os_fingerprint.os_name or "FreeBSD/pfSense appliance",
+        os_family=os_fingerprint.os_family or "BSD",
+        os_version=os_fingerprint.os_version,
+        confidence=0.92,
+        reason="dnsmasq + Netgate/pfSense identity",
+    )
+
+
+def _match_mikrotik(vendor_lower: str, cpes: str, os_fingerprint: OSFingerprint) -> InstantWinFingerprint | None:
+    if "mikrotik" not in vendor_lower and "mikrotik" not in cpes:
+        return None
+    return InstantWinFingerprint(
+        vendor="MikroTik",
+        device_type="router",
+        os_name="MikroTik RouterOS",
+        os_family="Linux",
+        os_version=os_fingerprint.os_version,
+        confidence=0.94,
+        reason="Matched MikroTik vendor/CPE",
+    )
+
+
+def _extract_vendor_map(host_node: ET.Element) -> dict[str, str]:
+    vendor_map: dict[str, str] = {}
+    for address in host_node.findall("address"):
+        addr = address.get("addr")
+        vendor = address.get("vendor")
+        if address.get("addrtype") == "mac" and addr and vendor:
+            vendor_map[addr] = vendor
+    return vendor_map
+
+
+def _extract_hostname_entries(host_node: ET.Element) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
     for hostname in host_node.findall("./hostnames/hostname"):
         name = hostname.get("name")
         if name:
-            host_data["hostnames"].append({"name": name, "type": hostname.get("type") or ""})
+            entries.append({"name": name, "type": hostname.get("type") or ""})
+    return entries
 
+
+def _populate_port_entries(host_node: ET.Element, host_data: dict[str, Any]) -> None:
     for port in host_node.findall("./ports/port"):
         proto = port.get("protocol", "tcp")
         portid = int(port.get("portid", "0"))
@@ -204,24 +257,24 @@ def _host_xml_to_dict(host_node: ET.Element) -> dict[str, Any]:
             "extrainfo": service.get("extrainfo") if service is not None else None,
         }
 
-    host_data["osmatch"] = []
-    for match in host_node.findall("./os/osmatch"):
-        osclass_entries: list[dict[str, Any]] = []
-        for osclass in match.findall("osclass"):
-            cpe_values = [cpe.text for cpe in osclass.findall("cpe") if cpe.text]
-            osclass_entries.append(
-                {
-                    "osfamily": osclass.get("osfamily"),
-                    "osgen": osclass.get("osgen"),
-                    "type": osclass.get("type"),
-                    "cpe": cpe_values,
-                }
-            )
-        host_data["osmatch"].append(
-            {
-                "name": match.get("name"),
-                "accuracy": match.get("accuracy", "0"),
-                "osclass": osclass_entries,
-            }
-        )
-    return host_data
+
+def _extract_osmatch_entries(host_node: ET.Element) -> list[dict[str, Any]]:
+    return [_build_osmatch_entry(match) for match in host_node.findall("./os/osmatch")]
+
+
+def _build_osmatch_entry(match: ET.Element) -> dict[str, Any]:
+    return {
+        "name": match.get("name"),
+        "accuracy": match.get("accuracy", "0"),
+        "osclass": [_build_osclass_entry(osclass) for osclass in match.findall("osclass")],
+    }
+
+
+def _build_osclass_entry(osclass: ET.Element) -> dict[str, Any]:
+    cpe_values = [cpe.text for cpe in osclass.findall("cpe") if cpe.text]
+    return {
+        "osfamily": osclass.get("osfamily"),
+        "osgen": osclass.get("osgen"),
+        "type": osclass.get("type"),
+        "cpe": cpe_values,
+    }

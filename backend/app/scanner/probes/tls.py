@@ -73,7 +73,9 @@ def _get_cert_sync(ip: str, port: int) -> TlsProbeData | None:
 
 
 def _tls_client_context() -> ssl.SSLContext:
-    return ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    context = ssl.create_default_context(ssl.Purpose.SERVER_AUTH)
+    context.minimum_version = ssl.TLSVersion.TLSv1_2
+    return context
 
 
 def _parse_cert(cert: dict, cert_der: bytes | None, cipher: tuple | None, tls_ver: str | None) -> TlsProbeData:

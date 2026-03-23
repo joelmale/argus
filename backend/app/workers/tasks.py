@@ -144,7 +144,7 @@ async def _run_job_async(job_id: str) -> None:
     from app.scanner.models import ScanProfile, ScanSummary
     from app.scanner.pipeline import ScanControlDecision, ScanControlInterrupt, _persist_results, run_scan
 
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with session_factory() as db:
@@ -235,79 +235,25 @@ async def _run_parent_job_async(
     for child in children:
         if child.status == "done":
             continue
-
-        child.status = "running"
-        child.started_at = datetime.now(timezone.utc)
-        child.finished_at = None
-        await db.commit()
-
-        child_broadcast = _build_parent_chunk_broadcast_fn(
+        child_summary = await _run_parent_child_scan(
             db,
             job,
+            child,
+            job_id,
+            children,
+            profile,
+            config,
+            scanned_ips,
             progress_state,
-            chunk_index=child.chunk_index or 1,
-            chunk_count=child.chunk_count or len(children) or 1,
+            run_scan_fn=run_scan_fn,
+            scan_control_decision=scan_control_decision,
+            scan_control_interrupt=scan_control_interrupt,
+            summary=summary,
         )
-        control_fn = _build_control_fn(db, job, scan_control_decision)
-
-        try:
-            child_summary = await run_scan_fn(
-                job_id=job_id,
-                targets=child.targets,
-                profile=profile,
-                enable_ai=config.ai_after_scan_enabled,
-                concurrent_hosts=config.concurrent_hosts,
-                host_chunk_size=config.host_chunk_size,
-                top_ports_count=config.top_ports_count,
-                deep_probe_timeout_seconds=config.deep_probe_timeout_seconds,
-                db_session=db,
-                broadcast_fn=child_broadcast,
-                control_fn=control_fn,
-                mark_missing_offline=False,
-                scanned_ips_buffer=scanned_ips,
-            )
-        except scan_control_interrupt as exc:
-            child.status = exc.status
-            child.finished_at = datetime.now(timezone.utc) if exc.status == "cancelled" else None
-            child.result_summary = {
-                **(child.result_summary or {}),
-                **summary.model_dump(mode="json"),
-                "stage": exc.status,
-                "message": exc.message,
-            }
-            if exc.status == "cancelled":
-                await _cancel_remaining_child_jobs(db, job.id, message=exc.message)
-            await _apply_interrupt_result(db, job, exc, summary)
-            await db.commit()
-            await _publish_event({
-                "event": "scan_complete",
-                "data": {
-                    "job_id": job_id,
-                    "status": exc.status,
-                    "message": exc.message,
-                    "resume_after": exc.resume_after,
-                },
-            })
+        if child_summary is None:
             return
-        except Exception as exc:
-            child.status = "failed"
-            child.finished_at = datetime.now(timezone.utc)
-            child.result_summary = {"error": str(exc)}
-            await db.commit()
-            await _publish_scan_failure(db, job, job_id, exc)
-            raise
-
-        child.status = "done"
-        child.finished_at = datetime.now(timezone.utc)
-        child.result_summary = child_summary.model_dump(mode="json")
         _merge_scan_summary(summary, child_summary)
-        job.result_summary = {
-            **summary.model_dump(mode="json"),
-            "stage": "investigation",
-            "chunk_index": child.chunk_index,
-            "chunk_count": child.chunk_count,
-            "message": f"Completed chunk {child.chunk_index}/{child.chunk_count}",
-        }
+        _record_parent_chunk_progress(job, child, summary)
         await db.commit()
 
     if scanned_ips:
@@ -327,6 +273,112 @@ async def _run_parent_job_async(
         "event": "scan_complete",
         "data": summary.model_dump(mode="json"),
     })
+
+
+async def _run_parent_child_scan(
+    db,
+    job: ScanJob,
+    child: ScanJob,
+    job_id: str,
+    children: list[ScanJob],
+    profile,
+    config,
+    scanned_ips: set[str],
+    progress_state: dict,
+    *,
+    run_scan_fn,
+    scan_control_decision,
+    scan_control_interrupt,
+    summary,
+):
+    _mark_child_running(child)
+    await db.commit()
+    child_broadcast = _build_parent_chunk_broadcast_fn(
+        db,
+        job,
+        progress_state,
+        chunk_index=child.chunk_index or 1,
+        chunk_count=child.chunk_count or len(children) or 1,
+    )
+    control_fn = _build_control_fn(db, job, scan_control_decision)
+    try:
+        child_summary = await run_scan_fn(
+            job_id=job_id,
+            targets=child.targets,
+            profile=profile,
+            enable_ai=config.ai_after_scan_enabled,
+            concurrent_hosts=config.concurrent_hosts,
+            host_chunk_size=config.host_chunk_size,
+            top_ports_count=config.top_ports_count,
+            deep_probe_timeout_seconds=config.deep_probe_timeout_seconds,
+            db_session=db,
+            broadcast_fn=child_broadcast,
+            control_fn=control_fn,
+            mark_missing_offline=False,
+            scanned_ips_buffer=scanned_ips,
+        )
+    except scan_control_interrupt as exc:
+        await _handle_parent_child_interrupt(db, job, child, job_id, exc, summary)
+        return None
+    except Exception as exc:
+        await _handle_parent_child_failure(db, job, child, job_id, exc)
+        raise
+    _mark_child_done(child, child_summary)
+    return child_summary
+
+
+def _mark_child_running(child: ScanJob) -> None:
+    child.status = "running"
+    child.started_at = datetime.now(timezone.utc)
+    child.finished_at = None
+
+
+def _mark_child_done(child: ScanJob, child_summary) -> None:
+    child.status = "done"
+    child.finished_at = datetime.now(timezone.utc)
+    child.result_summary = child_summary.model_dump(mode="json")
+
+
+def _record_parent_chunk_progress(job: ScanJob, child: ScanJob, summary) -> None:
+    job.result_summary = {
+        **summary.model_dump(mode="json"),
+        "stage": "investigation",
+        "chunk_index": child.chunk_index,
+        "chunk_count": child.chunk_count,
+        "message": f"Completed chunk {child.chunk_index}/{child.chunk_count}",
+    }
+
+
+async def _handle_parent_child_interrupt(db, job: ScanJob, child: ScanJob, job_id: str, exc, summary) -> None:
+    child.status = exc.status
+    child.finished_at = datetime.now(timezone.utc) if exc.status == "cancelled" else None
+    child.result_summary = {
+        **(child.result_summary or {}),
+        **summary.model_dump(mode="json"),
+        "stage": exc.status,
+        "message": exc.message,
+    }
+    if exc.status == "cancelled":
+        await _cancel_remaining_child_jobs(db, job.id, message=exc.message)
+    await _apply_interrupt_result(db, job, exc, summary)
+    await db.commit()
+    await _publish_event({
+        "event": "scan_complete",
+        "data": {
+            "job_id": job_id,
+            "status": exc.status,
+            "message": exc.message,
+            "resume_after": exc.resume_after,
+        },
+    })
+
+
+async def _handle_parent_child_failure(db, job: ScanJob, child: ScanJob, job_id: str, exc: Exception) -> None:
+    child.status = "failed"
+    child.finished_at = datetime.now(timezone.utc)
+    child.result_summary = {"error": str(exc)}
+    await db.commit()
+    await _publish_scan_failure(db, job, job_id, exc)
 
 
 def _build_parent_chunk_broadcast_fn(db, job, progress_state: dict, *, chunk_index: int, chunk_count: int):
@@ -581,7 +633,7 @@ async def _enqueue_scheduled_scan() -> None:
     from app.db.models import ScanJob
     from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets, should_enqueue_scheduled_scan, split_scan_targets
 
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with session_factory() as db:
@@ -640,7 +692,7 @@ async def _run_scheduled_backups_async() -> None:
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.backups import run_scheduled_backups as execute_scheduled_backups
 
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     async with session_factory() as db:
@@ -655,7 +707,7 @@ async def _resume_paused_scans_async() -> None:
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.db.models import ScanJob
 
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     now = datetime.now(timezone.utc)
 
@@ -824,7 +876,7 @@ async def _passive_arp_loop() -> None:
     from app.scanner.stages.discovery import PassiveArpListener
 
     listener = PassiveArpListener(interface=settings.SCANNER_PASSIVE_ARP_INTERFACE)
-    engine = create_async_engine(settings.DATABASE_URL, echo=False)
+    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
     try:

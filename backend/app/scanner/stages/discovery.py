@@ -42,23 +42,32 @@ async def sweep(targets: str, timeout: int = 30) -> list[DiscoveredHost]:
 
     arp_results, ping_results = await asyncio.gather(arp_task, ping_task, return_exceptions=True)
 
-    merged: dict[str, DiscoveredHost] = {}
+    hosts = list(_merge_discovery_results(arp_results, ping_results).values())
+    log.info("Discovery complete: %d hosts found", len(hosts))
+    return hosts
 
-    for result_set, method in [(arp_results, "arp"), (ping_results, "ping")]:
+
+def _merge_discovery_results(
+    arp_results: list[DiscoveredHost] | Exception,
+    ping_results: list[DiscoveredHost] | Exception,
+) -> dict[str, DiscoveredHost]:
+    merged: dict[str, DiscoveredHost] = {}
+    for result_set, method in ((arp_results, "arp"), (ping_results, "ping")):
         if isinstance(result_set, Exception):
             log.warning("Discovery method %s failed: %s", method, result_set)
             continue
         for host in result_set:
-            if host.ip_address not in merged:
-                merged[host.ip_address] = host
-            else:
-                # ARP result wins because it has MAC address
-                if host.mac_address and not merged[host.ip_address].mac_address:
-                    merged[host.ip_address] = host
+            _merge_discovered_host(merged, host)
+    return merged
 
-    hosts = list(merged.values())
-    log.info("Discovery complete: %d hosts found", len(hosts))
-    return hosts
+
+def _merge_discovered_host(merged: dict[str, DiscoveredHost], host: DiscoveredHost) -> None:
+    current = merged.get(host.ip_address)
+    if current is None:
+        merged[host.ip_address] = host
+        return
+    if host.mac_address and not current.mac_address:
+        merged[host.ip_address] = host
 
 
 async def _arp_sweep(targets: str, timeout: int) -> list[DiscoveredHost]:

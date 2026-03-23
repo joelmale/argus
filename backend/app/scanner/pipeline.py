@@ -107,76 +107,24 @@ async def run_scan(
     t0 = time.monotonic()
     summary = ScanSummary(job_id=job_id, targets=targets, profile=profile)
     mode_behavior = get_scan_mode_behavior(profile, top_ports_count=top_ports_count)
+    hosts: list[DiscoveredHost]
 
     log.info("=== Scan started: job=%s targets=%s profile=%s ai=%s ===",
              job_id, targets, profile.value, enable_ai)
 
-    await _broadcast(broadcast_fn, {
-        "event": "scan_progress",
-        "data": {
-            "job_id": job_id,
-            "stage": "discovery",
-            "progress": 0.05,
-            "hosts_port_scanned": 0,
-            "hosts_fingerprinted": 0,
-            "hosts_deep_probed": 0,
-            "assets_created": summary.new_assets,
-            "assets_updated": summary.changed_assets,
-            "message": f"Starting host discovery for {targets}",
-        },
-    })
-
-    # ── Stage 1: Discovery ────────────────────────────────────────────────────
-    from app.scanner.stages import discovery
-    hosts = await discovery.sweep(targets)
-    summary.hosts_scanned = len(hosts)
-    summary.hosts_up = len(hosts)
-    if scanned_ips_buffer is not None:
-        scanned_ips_buffer.update(host.ip_address for host in hosts)
-
+    hosts = await _run_discovery_stage(
+        targets,
+        job_id,
+        summary,
+        db_session=db_session,
+        broadcast_fn=broadcast_fn,
+        control_fn=control_fn,
+        scanned_ips_buffer=scanned_ips_buffer,
+    )
     if not hosts:
         log.info("No hosts discovered in %s", targets)
         summary.duration_seconds = time.monotonic() - t0
         return summary
-
-    await _broadcast(broadcast_fn, {
-        "event": "scan_progress",
-        "data": {
-            "job_id": job_id,
-            "stage": "discovery",
-            "progress": 0.15,
-            "hosts_found": len(hosts),
-            "hosts_port_scanned": 0,
-            "hosts_fingerprinted": 0,
-            "hosts_deep_probed": 0,
-            "assets_created": summary.new_assets,
-            "assets_updated": summary.changed_assets,
-            "message": f"Discovered {len(hosts)} live hosts",
-        },
-    })
-
-    if db_session is not None:
-        await _call_persist_results(
-            _persist_results,
-            db_session,
-            _build_partial_results(hosts, [], summary.profile),
-            {host.ip_address for host in hosts},
-            summary,
-            broadcast_fn,
-            job_id,
-            mark_missing_offline=False,
-            allow_discovery_only=True,
-            stage="discovery",
-        )
-
-    await _check_control(
-        control_fn,
-        stage="post_discovery",
-        summary=summary,
-        hosts=hosts,
-        completed_results=[],
-        total_hosts=len(hosts),
-    )
 
     # ── Stage 2: Port scan all hosts together (nmap batch) ───────────────────
     await _broadcast(broadcast_fn, {
@@ -375,6 +323,95 @@ async def run_scan(
     })
 
     return summary
+
+
+async def _run_discovery_stage(
+    targets: str,
+    job_id: str,
+    summary: ScanSummary,
+    *,
+    db_session,
+    broadcast_fn,
+    control_fn,
+    scanned_ips_buffer: set[str] | None,
+) -> list[DiscoveredHost]:
+    await _broadcast(
+        broadcast_fn,
+        _progress_payload(
+            job_id,
+            "discovery",
+            0.05,
+            summary,
+            message=f"Starting host discovery for {targets}",
+        ),
+    )
+    from app.scanner.stages import discovery
+
+    hosts = await discovery.sweep(targets)
+    summary.hosts_scanned = len(hosts)
+    summary.hosts_up = len(hosts)
+    if scanned_ips_buffer is not None:
+        scanned_ips_buffer.update(host.ip_address for host in hosts)
+    if not hosts:
+        return []
+
+    await _broadcast(
+        broadcast_fn,
+        _progress_payload(
+            job_id,
+            "discovery",
+            0.15,
+            summary,
+            hosts_found=len(hosts),
+            message=f"Discovered {len(hosts)} live hosts",
+        ),
+    )
+    if db_session is not None:
+        await _call_persist_results(
+            _persist_results,
+            db_session,
+            _build_partial_results(hosts, [], summary.profile),
+            {host.ip_address for host in hosts},
+            summary,
+            broadcast_fn,
+            job_id,
+            mark_missing_offline=False,
+            allow_discovery_only=True,
+            stage="discovery",
+        )
+    await _check_control(
+        control_fn,
+        stage="post_discovery",
+        summary=summary,
+        hosts=hosts,
+        completed_results=[],
+        total_hosts=len(hosts),
+    )
+    return hosts
+
+
+def _progress_payload(
+    job_id: str,
+    stage: str,
+    progress: float,
+    summary: ScanSummary,
+    **data,
+) -> dict:
+    payload = {
+        "event": "scan_progress",
+        "data": {
+            "job_id": job_id,
+            "stage": stage,
+            "progress": progress,
+            "hosts_port_scanned": 0,
+            "hosts_fingerprinted": 0,
+            "hosts_deep_probed": 0,
+            "assets_created": summary.new_assets,
+            "assets_updated": summary.changed_assets,
+        },
+    }
+    payload["data"].update(data)
+    return payload
 
 
 async def _check_control(

@@ -111,20 +111,7 @@ def detect_local_ipv4_cidr() -> str | None:
         with open("/proc/net/route", "r", encoding="utf-8") as handle:
             next(handle, None)
             for line in handle:
-                fields = line.strip().split()
-                if len(fields) < 11:
-                    continue
-                iface, destination, _, flags = fields[:4]
-                if destination != "00000000":
-                    continue
-                try:
-                    if not int(flags, 16) & 0x2:
-                        continue
-                except ValueError:
-                    continue
-                if iface.startswith(_IGNORED_INTERFACE_PREFIXES):
-                    continue
-                network = _get_ipv4_network(iface)
+                network = _default_route_network(line)
                 if network:
                     return network
     except OSError:
@@ -177,24 +164,7 @@ def validate_scan_targets_routable(targets: str) -> str | None:
     if not route_networks:
         return None
 
-    unresolved: list[str] = []
-    for token in targets.replace(",", " ").split():
-        candidate = token.strip()
-        if not candidate:
-            continue
-        try:
-            target_network = ipaddress.ip_network(candidate, strict=False)
-        except ValueError:
-            unresolved.append(candidate)
-            continue
-
-        if any(
-            route.prefixlen == 0
-            or target_network.subnet_of(route)
-            for route in route_networks
-        ):
-            continue
-        unresolved.append(candidate)
+    unresolved = [candidate for candidate in _iter_target_tokens(targets) if not _target_is_routable(candidate, route_networks)]
 
     if not unresolved:
         return None
@@ -224,30 +194,72 @@ def split_scan_targets(
     chunks: list[str] = []
     ip_group: list[str] = []
     for token in _iter_target_tokens(targets):
-        try:
-            network = ipaddress.ip_network(token, strict=False)
-        except ValueError:
-            ip_group.append(token)
-            if len(ip_group) >= max_ip_group_size:
-                chunks.append(" ".join(ip_group))
-                ip_group = []
-            continue
-
-        if isinstance(network, ipaddress.IPv4Network) and network.prefixlen < max_network_prefix:
-            if ip_group:
-                chunks.append(" ".join(ip_group))
-                ip_group = []
-            chunks.extend(str(subnet) for subnet in network.subnets(new_prefix=max_network_prefix))
-            continue
-
-        ip_group.append(str(network))
-        if len(ip_group) >= max_ip_group_size:
-            chunks.append(" ".join(ip_group))
-            ip_group = []
+        ip_group = _append_split_target(
+            chunks,
+            ip_group,
+            token,
+            max_network_prefix=max_network_prefix,
+            max_ip_group_size=max_ip_group_size,
+        )
 
     if ip_group:
         chunks.append(" ".join(ip_group))
     return chunks or [targets]
+
+
+def _default_route_network(route_line: str) -> str | None:
+    fields = route_line.strip().split()
+    if len(fields) < 11:
+        return None
+    iface, destination, _, flags = fields[:4]
+    if destination != "00000000":
+        return None
+    try:
+        if not int(flags, 16) & 0x2:
+            return None
+    except ValueError:
+        return None
+    if iface.startswith(_IGNORED_INTERFACE_PREFIXES):
+        return None
+    return _get_ipv4_network(iface)
+
+
+def _target_is_routable(candidate: str, route_networks: list[ipaddress.IPv4Network]) -> bool:
+    try:
+        target_network = ipaddress.ip_network(candidate, strict=False)
+    except ValueError:
+        return False
+    return any(route.prefixlen == 0 or target_network.subnet_of(route) for route in route_networks)
+
+
+def _append_split_target(
+    chunks: list[str],
+    ip_group: list[str],
+    token: str,
+    *,
+    max_network_prefix: int,
+    max_ip_group_size: int,
+) -> list[str]:
+    try:
+        network = ipaddress.ip_network(token, strict=False)
+    except ValueError:
+        return _append_ip_group(chunks, ip_group, token, max_ip_group_size)
+
+    if isinstance(network, ipaddress.IPv4Network) and network.prefixlen < max_network_prefix:
+        if ip_group:
+            chunks.append(" ".join(ip_group))
+        chunks.extend(str(subnet) for subnet in network.subnets(new_prefix=max_network_prefix))
+        return []
+
+    return _append_ip_group(chunks, ip_group, str(network), max_ip_group_size)
+
+
+def _append_ip_group(chunks: list[str], ip_group: list[str], value: str, max_ip_group_size: int) -> list[str]:
+    ip_group.append(value)
+    if len(ip_group) < max_ip_group_size:
+        return ip_group
+    chunks.append(" ".join(ip_group))
+    return []
 
 
 def _iter_target_tokens(targets: str) -> Iterable[str]:

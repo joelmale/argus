@@ -522,6 +522,8 @@ async def run_asset_ai_refresh(
         nmap_vendor=asset.vendor,
         profile=ScanProfile.BALANCED,
         analyst=get_analyst(),
+        run_deep_probes=True,
+        deep_probe_timeout_seconds=6,
         semaphore=asyncio.Semaphore(1),
         broadcast_fn=None,
         job_id=f"asset-{asset.id}",
