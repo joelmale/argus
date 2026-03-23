@@ -33,7 +33,7 @@ interface StatCardProps {
   loading?: boolean
 }
 
-function StatCard({ icon: Icon, label, value, sub, color = 'sky', loading }: StatCardProps) {
+function StatCard({ icon: Icon, label, value, sub, color = 'sky', loading }: Readonly<StatCardProps>) {
   const { text, bg } = STAT_COLORS[color]
   return (
     <div className="rounded-xl border border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-5 flex items-start gap-4">

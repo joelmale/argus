@@ -19,8 +19,6 @@ import json
 import logging
 from typing import Any
 
-from app.scanner.models import PortResult
-
 log = logging.getLogger(__name__)
 
 # ─── Tool schemas (OpenAI format — compatible with Ollama tool calling) ──────
@@ -214,7 +212,7 @@ TOOL_SCHEMAS: list[dict] = [
 
 # ─── Tool executor ────────────────────────────────────────────────────────────
 
-async def execute(tool_name: str, args: dict[str, Any], ip: str, ports: list[PortResult]) -> str:
+async def execute(tool_name: str, args: dict[str, Any], ip: str) -> str:
     """
     Execute a probe tool and return its result as a string for the agent.
     Errors are returned as descriptive strings — the agent should handle them.
@@ -222,50 +220,64 @@ async def execute(tool_name: str, args: dict[str, Any], ip: str, ports: list[Por
     log.debug("Agent executing tool: %s(%s)", tool_name, args)
 
     try:
-        if tool_name == "probe_http":
-            from app.scanner.probes import http
-            port = args.get("port", 80)
-            use_https = args.get("use_https", False)
-            result = await http.probe(ip, port, use_https)
-            return result.raw or json.dumps(result.data, indent=2)
-
-        elif tool_name == "probe_tls":
-            from app.scanner.probes import tls
-            port = args.get("port", 443)
-            result = await tls.probe(ip, port)
-            return result.raw or json.dumps(result.data, indent=2)
-
-        elif tool_name == "probe_ssh":
-            from app.scanner.probes import ssh
-            port = args.get("port", 22)
-            result = await ssh.probe(ip, port)
-            return result.raw or json.dumps(result.data, indent=2)
-
-        elif tool_name == "probe_snmp":
-            from app.scanner.probes import snmp
-            community = args.get("community", "public")
-            result = await snmp.probe(ip, community=community)
-            return result.raw or json.dumps(result.data, indent=2)
-
-        elif tool_name == "probe_mdns":
-            from app.scanner.probes import mdns
-            result = await mdns.probe(ip)
-            return result.raw or json.dumps(result.data, indent=2)
-
-        elif tool_name == "probe_upnp":
-            from app.scanner.probes import upnp
-            result = await upnp.probe(ip)
-            return result.raw or json.dumps(result.data, indent=2)
-
-        elif tool_name == "probe_smb":
-            from app.scanner.probes import smb
-            port = args.get("port", 445)
-            result = await smb.probe(ip, port)
-            return result.raw or json.dumps(result.data, indent=2)
-
-        else:
+        handler = _TOOL_EXECUTORS.get(tool_name)
+        if handler is None:
             return f"Unknown tool: {tool_name}"
-
+        result = await handler(ip, args)
+        return result.raw or json.dumps(result.data, indent=2)
     except Exception as exc:
         log.warning("Tool %s failed: %s", tool_name, exc)
         return f"Tool execution error: {exc}"
+
+
+async def _run_http_probe(ip: str, args: dict[str, Any]):
+    from app.scanner.probes import http
+
+    return await http.probe(ip, args.get("port", 80), args.get("use_https", False))
+
+
+async def _run_tls_probe(ip: str, args: dict[str, Any]):
+    from app.scanner.probes import tls
+
+    return await tls.probe(ip, args.get("port", 443))
+
+
+async def _run_ssh_probe(ip: str, args: dict[str, Any]):
+    from app.scanner.probes import ssh
+
+    return await ssh.probe(ip, args.get("port", 22))
+
+
+async def _run_snmp_probe(ip: str, args: dict[str, Any]):
+    from app.scanner.probes import snmp
+
+    return await snmp.probe(ip, community=args.get("community", "public"))
+
+
+async def _run_mdns_probe(ip: str, args: dict[str, Any]):
+    from app.scanner.probes import mdns
+
+    return await mdns.probe(ip)
+
+
+async def _run_upnp_probe(ip: str, args: dict[str, Any]):
+    from app.scanner.probes import upnp
+
+    return await upnp.probe(ip)
+
+
+async def _run_smb_probe(ip: str, args: dict[str, Any]):
+    from app.scanner.probes import smb
+
+    return await smb.probe(ip, args.get("port", 445))
+
+
+_TOOL_EXECUTORS = {
+    "probe_http": _run_http_probe,
+    "probe_tls": _run_tls_probe,
+    "probe_ssh": _run_ssh_probe,
+    "probe_snmp": _run_snmp_probe,
+    "probe_mdns": _run_mdns_probe,
+    "probe_upnp": _run_upnp_probe,
+    "probe_smb": _run_smb_probe,
+}

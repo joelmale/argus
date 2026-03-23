@@ -13,9 +13,19 @@ import { cn } from '@/lib/utils'
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
 const TYPE_OPTIONS = ['', 'router', 'switch', 'server', 'workstation', 'nas', 'printer', 'ip_camera', 'iot_device', 'unknown']
 
+function downloadBlob(data: Blob, filename: string) {
+  const url = URL.createObjectURL(data)
+  const link = document.createElement('a')
+  link.href = url
+  link.download = filename
+  link.click()
+  URL.revokeObjectURL(url)
+}
+
 export default function AssetsPage() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
+  const [recentCutoff] = useState(() => Date.now() - 24 * 60 * 60 * 1000)
 
   const { data: assets = [], isLoading, isError } = useAssets({
     search: search || undefined,
@@ -27,7 +37,7 @@ export default function AssetsPage() {
   const clearFilters = () => { setSearch(''); setStatus('') }
   const hasFilters = search || status
   const recentDiscoveryTargets = assets
-    .filter((asset) => Date.now() - new Date(asset.first_seen).getTime() <= 24 * 60 * 60 * 1000)
+    .filter((asset) => new Date(asset.first_seen).getTime() >= recentCutoff)
     .map((asset) => asset.ip_address)
   const unresolvedTargets = assets
     .filter((asset) => {
@@ -66,15 +76,6 @@ export default function AssetsPage() {
   async function handleExportReportJson() {
     const response = await assetsApi.exportJsonReport()
     downloadBlob(response.data, 'argus-report.json')
-  }
-
-  function downloadBlob(data: Blob, filename: string) {
-    const url = URL.createObjectURL(data)
-    const link = document.createElement('a')
-    link.href = url
-    link.download = filename
-    link.click()
-    URL.revokeObjectURL(url)
   }
 
   return (

@@ -16,6 +16,7 @@ from app.fingerprinting.evidence import EvidenceItem
 from app.fingerprinting.risk import extract_normalized_products
 from app.scanner.config import (
     AUTO_TARGET_SENTINEL,
+    ScannerConfigUpdateInput,
     build_effective_scanner_config,
     materialize_scan_targets,
     split_scan_targets,
@@ -55,7 +56,11 @@ from app.scanner.probes import upnp as upnp_probe
 from app.scanner.enrichment import dns_lookup
 from app.scanner.stages import deep_probe, discovery
 from app.scanner.stages import fingerprint, portscan
-from app.scanner.stages.discovery import _merge_discovered_host, _merge_discovery_results, _parse_ping_sweep_xml
+from app.scanner.stages.discovery import (
+    _merge_discovered_host,
+    _merge_discovery_results,
+    _parse_ping_sweep_xml,
+)
 from app.workers.tasks import (
     _apply_interrupt_result,
     _build_control_fn,
@@ -66,6 +71,30 @@ from app.workers.tasks import (
     _merge_scan_summary,
     _record_job_progress,
 )
+
+from app.scanner.probes import ssh as ssh_probe
+
+
+@pytest.mark.asyncio
+async def test_ssh_probe_returns_success_when_banner_is_collected(monkeypatch):
+    async def fake_grab_ssh_info(_ip, _port):
+        return ssh_probe.SshProbeData(
+            banner="SSH-2.0-OpenSSH_9.3p2 Ubuntu-1ubuntu3.6",
+            server_version="OpenSSH_9.3p2 Ubuntu-1ubuntu3.6",
+            kex_algorithms=["curve25519-sha256", "ecdh-sha2-nistp256"],
+            host_key_algorithms=["ssh-ed25519"],
+            encryption_algorithms=["chacha20-poly1305@openssh.com"],
+        )
+
+    monkeypatch.setattr(ssh_probe, "_grab_ssh_info", fake_grab_ssh_info)
+
+    result = await ssh_probe.probe("10.0.0.25", 22)
+
+    assert result.success is True
+    assert result.probe_type == "ssh"
+    assert result.target_port == 22
+    assert result.data["server_version"] == "OpenSSH_9.3p2 Ubuntu-1ubuntu3.6"
+    assert "Banner: SSH-2.0-OpenSSH_9.3p2" in (result.raw or "")
 
 
 class _FakeDb:
@@ -117,7 +146,9 @@ async def test_call_scan_hosts_falls_back_when_old_signature_rejects_top_ports_c
         assert profile is ScanProfile.BALANCED
         return ["ok"]
 
-    result = await _call_scan_hosts(old_signature, ["host"], ScanProfile.BALANCED, top_ports_count=250)
+    result = await _call_scan_hosts(
+        old_signature, ["host"], ScanProfile.BALANCED, top_ports_count=250
+    )
 
     assert result == ["ok"]
 
@@ -126,10 +157,14 @@ async def test_call_scan_hosts_falls_back_when_old_signature_rejects_top_ports_c
 async def test_call_persist_results_falls_back_when_old_signature_rejects_kwargs():
     called = []
 
-    async def old_persist(db_session, results, scanned_ips, summary, broadcast_fn, job_id):
+    async def old_persist(
+        db_session, results, scanned_ips, summary, broadcast_fn, job_id
+    ):
         called.append((db_session, results, scanned_ips, summary, broadcast_fn, job_id))
 
-    summary = ScanSummary(job_id="job-1", targets="10.0.0.0/24", profile=ScanProfile.BALANCED)
+    summary = ScanSummary(
+        job_id="job-1", targets="10.0.0.0/24", profile=ScanProfile.BALANCED
+    )
     await _call_persist_results(
         old_persist,
         "db",
@@ -152,7 +187,11 @@ def test_build_partial_results_preserves_completed_results_and_backfills_remaini
         DiscoveredHost(ip_address="10.0.0.11", discovery_method="ping"),
     ]
     completed = [
-        HostScanResult(host=hosts[0], ports=[PortResult(port=22, protocol="tcp", state="open", service="ssh")], scan_profile=ScanProfile.BALANCED)
+        HostScanResult(
+            host=hosts[0],
+            ports=[PortResult(port=22, protocol="tcp", state="open", service="ssh")],
+            scan_profile=ScanProfile.BALANCED,
+        )
     ]
 
     partial = _build_partial_results(hosts, completed, ScanProfile.BALANCED)
@@ -163,7 +202,9 @@ def test_build_partial_results_preserves_completed_results_and_backfills_remaini
 
 
 def test_build_control_interrupt_preserves_partial_results_when_requested():
-    summary = ScanSummary(job_id="job-2", targets="10.0.0.0/24", profile=ScanProfile.BALANCED)
+    summary = ScanSummary(
+        job_id="job-2", targets="10.0.0.0/24", profile=ScanProfile.BALANCED
+    )
     hosts = [
         DiscoveredHost(ip_address="10.0.0.10", discovery_method="arp"),
         DiscoveredHost(ip_address="10.0.0.11", discovery_method="ping"),
@@ -172,7 +213,11 @@ def test_build_control_interrupt_preserves_partial_results_when_requested():
     partial = _build_partial_results(hosts, completed, ScanProfile.BALANCED)
 
     interrupt = _build_control_interrupt(
-        ScanControlDecision(action="pause", mode="preserve_discovery", resume_after="2026-03-23T16:00:00+00:00"),
+        ScanControlDecision(
+            action="pause",
+            mode="preserve_discovery",
+            resume_after="2026-03-23T16:00:00+00:00",
+        ),
         "post_discovery",
         summary,
         partial,
@@ -180,16 +225,23 @@ def test_build_control_interrupt_preserves_partial_results_when_requested():
     )
 
     assert interrupt.status == "paused"
-    assert {result.host.ip_address for result in interrupt.partial_results} == {"10.0.0.10", "10.0.0.11"}
+    assert {result.host.ip_address for result in interrupt.partial_results} == {
+        "10.0.0.10",
+        "10.0.0.11",
+    }
     assert interrupt.scanned_ips == {"10.0.0.10", "10.0.0.11"}
 
 
 def test_progress_payload_includes_summary_counters_and_extra_fields():
-    summary = ScanSummary(job_id="job-3", targets="10.0.0.0/24", profile=ScanProfile.BALANCED)
+    summary = ScanSummary(
+        job_id="job-3", targets="10.0.0.0/24", profile=ScanProfile.BALANCED
+    )
     summary.new_assets = 2
     summary.changed_assets = 1
 
-    payload = _progress_payload("job-3", "discovery", 0.15, summary, message="hello", hosts_found=4)
+    payload = _progress_payload(
+        "job-3", "discovery", 0.15, summary, message="hello", hosts_found=4
+    )
 
     assert payload["event"] == "scan_progress"
     assert payload["data"]["assets_created"] == 2
@@ -208,10 +260,18 @@ def test_port_details_for_host_returns_empty_defaults_when_missing():
 
 
 def test_extract_probe_hostname_supports_dns_mdns_and_snmp():
-    dns_probe = SimpleNamespace(success=True, probe_type="dns", data={"hostname": "switch.lan"})
-    mdns_probe = SimpleNamespace(success=True, probe_type="mdns", data={"services": [{"host": "printer.local"}]})
-    snmp_probe = SimpleNamespace(success=True, probe_type="snmp", data={"sys_name": "router-core"})
-    failed_probe = SimpleNamespace(success=False, probe_type="dns", data={"hostname": "ignored"})
+    dns_probe = SimpleNamespace(
+        success=True, probe_type="dns", data={"hostname": "switch.lan"}
+    )
+    mdns_probe = SimpleNamespace(
+        success=True, probe_type="mdns", data={"services": [{"host": "printer.local"}]}
+    )
+    snmp_probe = SimpleNamespace(
+        success=True, probe_type="snmp", data={"sys_name": "router-core"}
+    )
+    failed_probe = SimpleNamespace(
+        success=False, probe_type="dns", data={"hostname": "ignored"}
+    )
 
     assert _extract_probe_hostname(dns_probe) == "switch.lan"
     assert _extract_probe_hostname(mdns_probe) == "printer.local"
@@ -222,8 +282,14 @@ def test_extract_probe_hostname_supports_dns_mdns_and_snmp():
 def test_resolve_hostname_from_probes_returns_first_available_hostname():
     probes = [
         SimpleNamespace(success=True, probe_type="http", data={}),
-        SimpleNamespace(success=True, probe_type="mdns", data={"services": [{"host": "speaker.local"}]}),
-        SimpleNamespace(success=True, probe_type="dns", data={"hostname": "later.example"}),
+        SimpleNamespace(
+            success=True,
+            probe_type="mdns",
+            data={"services": [{"host": "speaker.local"}]},
+        ),
+        SimpleNamespace(
+            success=True, probe_type="dns", data={"hostname": "later.example"}
+        ),
     ]
 
     assert _resolve_hostname_from_probes(probes) == "speaker.local"
@@ -239,7 +305,9 @@ async def test_run_ai_investigation_sets_analysis_and_broadcasts_event():
 
     class Analyst:
         async def investigate(self, _result):
-            return AIAnalysis(device_class=DeviceClass.ROUTER, confidence=0.91, vendor="Ubiquiti")
+            return AIAnalysis(
+                device_class=DeviceClass.ROUTER, confidence=0.91, vendor="Ubiquiti"
+            )
 
     async def broadcast(payload):
         payloads.append(payload)
@@ -247,16 +315,18 @@ async def test_run_ai_investigation_sets_analysis_and_broadcasts_event():
     await _run_ai_investigation(Analyst(), result, broadcast, "job-4", "10.0.0.20")
 
     assert result.ai_analysis is not None
-    assert payloads == [{
-        "event": "device_investigated",
-        "data": {
-            "job_id": "job-4",
-            "ip": "10.0.0.20",
-            "device_class": "router",
-            "vendor": "Ubiquiti",
-            "confidence": 0.91,
-        },
-    }]
+    assert payloads == [
+        {
+            "event": "device_investigated",
+            "data": {
+                "job_id": "job-4",
+                "ip": "10.0.0.20",
+                "device_class": "router",
+                "vendor": "Ubiquiti",
+                "confidence": 0.91,
+            },
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -298,29 +368,52 @@ async def test_build_investigation_tasks_uses_port_map_details(monkeypatch):
 async def test_get_offline_ips_respects_mark_missing_offline_flag():
     db = _FakeOfflineDb([("10.0.0.10",), ("10.0.0.11",)])
 
-    skipped = await _get_offline_ips(db, lambda *_args, **_kwargs: object(), SimpleNamespace(ip_address="ip_address", status="status"), {"10.0.0.10"}, False)
+    skipped = await _get_offline_ips(
+        db,
+        lambda *_args, **_kwargs: object(),
+        SimpleNamespace(ip_address="ip_address", status="status"),
+        {"10.0.0.10"},
+        False,
+    )
     assert skipped == []
 
 
 def test_merge_discovery_results_ignores_failed_method_and_prefers_mac_addresses():
-    arp_results = [DiscoveredHost(ip_address="10.0.0.5", mac_address="AA:BB:CC:DD:EE:FF", discovery_method="arp")]
+    arp_results = [
+        DiscoveredHost(
+            ip_address="10.0.0.5",
+            mac_address="AA:BB:CC:DD:EE:FF",
+            discovery_method="arp",
+        )
+    ]
     ping_results = [
         DiscoveredHost(ip_address="10.0.0.5", discovery_method="ping"),
         DiscoveredHost(ip_address="10.0.0.6", discovery_method="ping"),
     ]
 
     merged = _merge_discovery_results(arp_results, ping_results)
-    merged_from_exception = _merge_discovery_results(RuntimeError("arp failed"), ping_results)
+    merged_from_exception = _merge_discovery_results(
+        RuntimeError("arp failed"), ping_results
+    )
 
     assert merged["10.0.0.5"].mac_address == "AA:BB:CC:DD:EE:FF"
     assert set(merged_from_exception) == {"10.0.0.5", "10.0.0.6"}
 
 
 def test_merge_discovered_host_only_replaces_when_mac_is_better():
-    merged = {"10.0.0.5": DiscoveredHost(ip_address="10.0.0.5", discovery_method="ping")}
+    merged = {
+        "10.0.0.5": DiscoveredHost(ip_address="10.0.0.5", discovery_method="ping")
+    }
 
-    _merge_discovered_host(merged, DiscoveredHost(ip_address="10.0.0.5", discovery_method="arp", mac_address="AA:BB"))
-    _merge_discovered_host(merged, DiscoveredHost(ip_address="10.0.0.5", discovery_method="ping"))
+    _merge_discovered_host(
+        merged,
+        DiscoveredHost(
+            ip_address="10.0.0.5", discovery_method="arp", mac_address="AA:BB"
+        ),
+    )
+    _merge_discovered_host(
+        merged, DiscoveredHost(ip_address="10.0.0.5", discovery_method="ping")
+    )
 
     assert merged["10.0.0.5"].mac_address == "AA:BB"
 
@@ -352,7 +445,9 @@ async def test_deep_probe_run_builds_expected_probe_mix(monkeypatch):
         return ProbeResult(probe_type="dns", success=True)
 
     async def fake_http_probe(_ip, port, use_https):
-        return ProbeResult(probe_type="https" if use_https else "http", target_port=port, success=True)
+        return ProbeResult(
+            probe_type="https" if use_https else "http", target_port=port, success=True
+        )
 
     async def fake_tls_probe(_ip, port):
         return ProbeResult(probe_type="tls", target_port=port, success=True)
@@ -389,7 +484,9 @@ async def test_deep_probe_run_builds_expected_probe_mix(monkeypatch):
         PortResult(port=445, protocol="tcp", state="open", service="microsoft-ds"),
     ]
 
-    results = await deep_probe.run(host, ports, ["snmp", "mdns", "upnp"], timeout_seconds=4)
+    results = await deep_probe.run(
+        host, ports, ["snmp", "mdns", "upnp"], timeout_seconds=4
+    )
 
     probe_types = [result.probe_type for result in results]
     assert probe_types.count("tls") == 1
@@ -407,7 +504,10 @@ def test_deep_probe_timeout_helpers_normalize_and_default():
     assert deep_probe._normalize_probe_timeout(None) is None
     assert deep_probe._normalize_probe_timeout(0.2) == 1.0
     assert deep_probe._normalize_probe_timeout(99) == 30.0
-    assert deep_probe._resolve_probe_timeout("tls", None) == deep_probe.PROBE_TIMEOUTS["tls"]
+    assert (
+        deep_probe._resolve_probe_timeout("tls", None)
+        == deep_probe.PROBE_TIMEOUTS["tls"]
+    )
     assert deep_probe._resolve_probe_timeout("http", 4.5) == 4.5
 
 
@@ -415,7 +515,15 @@ def test_deep_probe_timeout_helpers_normalize_and_default():
 async def test_mdns_probe_returns_success_when_services_found(monkeypatch):
     async def fake_query(_ip):
         return mdns_probe.MdnsProbeData(
-            services=[{"type": "_googlecast._tcp.local", "name": "Living Room", "host": "tv.local", "port": 8009, "properties": {"fn": "TV"}}]
+            services=[
+                {
+                    "type": "_googlecast._tcp.local",
+                    "name": "Living Room",
+                    "host": "tv.local",
+                    "port": 8009,
+                    "properties": {"fn": "TV"},
+                }
+            ]
         )
 
     monkeypatch.setattr(mdns_probe, "_query_mdns", fake_query)
@@ -497,7 +605,9 @@ async def test_dns_reverse_lookup_returns_none_on_timeout(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_dns_forward_lookup_deduplicates_addresses_and_handles_failures(monkeypatch):
+async def test_dns_forward_lookup_deduplicates_addresses_and_handles_failures(
+    monkeypatch,
+):
     monkeypatch.setattr(
         socket,
         "getaddrinfo",
@@ -522,8 +632,14 @@ async def test_dns_forward_lookup_deduplicates_addresses_and_handles_failures(mo
 async def test_discovery_sweep_merges_results_when_one_method_fails(monkeypatch):
     async def fake_arp(_targets):
         return [
-            DiscoveredHost(ip_address="10.0.0.8", mac_address=None, discovery_method="arp"),
-            DiscoveredHost(ip_address="10.0.0.9", mac_address="AA:BB:CC:DD:EE:FF", discovery_method="arp"),
+            DiscoveredHost(
+                ip_address="10.0.0.8", mac_address=None, discovery_method="arp"
+            ),
+            DiscoveredHost(
+                ip_address="10.0.0.9",
+                mac_address="AA:BB:CC:DD:EE:FF",
+                discovery_method="arp",
+            ),
         ]
 
     async def fake_ping(_targets):
@@ -541,11 +657,15 @@ def test_fingerprint_classify_prefers_vendor_and_dnsmasq_gateway_pattern():
     host = DiscoveredHost(ip_address="10.0.0.1", nmap_hostname="fw-core")
     ports = [
         PortResult(port=22, protocol="tcp", state="open", service="ssh"),
-        PortResult(port=53, protocol="tcp", state="open", service="domain", product="dnsmasq"),
+        PortResult(
+            port=53, protocol="tcp", state="open", service="domain", product="dnsmasq"
+        ),
         PortResult(port=443, protocol="tcp", state="open", service="https"),
     ]
 
-    hint = fingerprint.classify(host, ports, OSFingerprint(os_name="Linux"), mac_vendor="Firewalla Inc.")
+    hint = fingerprint.classify(
+        host, ports, OSFingerprint(os_name="Linux"), mac_vendor="Firewalla Inc."
+    )
 
     assert hint.device_class is DeviceClass.FIREWALL
     assert hint.confidence >= 0.95
@@ -589,7 +709,9 @@ def test_portscan_service_scripts_match_web_ports_without_service_names():
 
 
 def test_split_scan_targets_breaks_large_networks_and_groups_ips():
-    chunks = split_scan_targets("10.0.0.0/22 10.0.5.1 10.0.5.2", max_network_prefix=24, max_ip_group_size=2)
+    chunks = split_scan_targets(
+        "10.0.0.0/22 10.0.5.1 10.0.5.2", max_network_prefix=24, max_ip_group_size=2
+    )
 
     assert "10.0.0.0/24" in chunks
     assert "10.0.1.0/24" in chunks
@@ -599,7 +721,9 @@ def test_split_scan_targets_breaks_large_networks_and_groups_ips():
 
 
 def test_materialize_scan_targets_uses_detected_network(monkeypatch):
-    monkeypatch.setattr("app.scanner.config.detect_local_ipv4_cidr", lambda: "10.23.0.0/24")
+    monkeypatch.setattr(
+        "app.scanner.config.detect_local_ipv4_cidr", lambda: "10.23.0.0/24"
+    )
 
     assert materialize_scan_targets(AUTO_TARGET_SENTINEL) == "10.23.0.0/24"
     assert materialize_scan_targets("10.24.0.0/24") == "10.24.0.0/24"
@@ -649,41 +773,48 @@ async def test_update_scanner_config_normalizes_and_clamps_values(monkeypatch):
     async def fake_get_or_create_scanner_config(_db):
         return config
 
-    monkeypatch.setattr("app.scanner.config.get_or_create_scanner_config", fake_get_or_create_scanner_config)
-    monkeypatch.setattr("app.scanner.config.detect_local_ipv4_cidr", lambda: "10.99.0.0/24")
+    monkeypatch.setattr(
+        "app.scanner.config.get_or_create_scanner_config",
+        fake_get_or_create_scanner_config,
+    )
+    monkeypatch.setattr(
+        "app.scanner.config.detect_local_ipv4_cidr", lambda: "10.99.0.0/24"
+    )
 
     db = _FakeDb()
     updated, effective = await update_scanner_config(
         db,
-        enabled=False,
-        default_targets="  ",
-        auto_detect_targets=True,
-        default_profile="deep",
-        interval_minutes=15,
-        concurrent_hosts=9,
-        host_chunk_size=999,
-        top_ports_count=5,
-        deep_probe_timeout_seconds=999,
-        ai_after_scan_enabled=False,
-        passive_arp_enabled=True,
-        passive_arp_interface=" ",
-        snmp_enabled=True,
-        snmp_version="3",
-        snmp_community=" ",
-        snmp_timeout=0,
-        snmp_v3_username=" user ",
-        snmp_v3_auth_key=" auth ",
-        snmp_v3_priv_key=" priv ",
-        snmp_v3_auth_protocol="SHA256",
-        snmp_v3_priv_protocol="AES256",
-        fingerprint_ai_enabled=True,
-        fingerprint_ai_model=" ",
-        fingerprint_ai_min_confidence=2.0,
-        fingerprint_ai_prompt_suffix="  prefer serial numbers  ",
-        internet_lookup_enabled=True,
-        internet_lookup_allowed_domains=" example.com, docs.local ",
-        internet_lookup_budget=0,
-        internet_lookup_timeout_seconds=0,
+        ScannerConfigUpdateInput(
+            enabled=False,
+            default_targets="  ",
+            auto_detect_targets=True,
+            default_profile="deep",
+            interval_minutes=15,
+            concurrent_hosts=9,
+            host_chunk_size=999,
+            top_ports_count=5,
+            deep_probe_timeout_seconds=999,
+            ai_after_scan_enabled=False,
+            passive_arp_enabled=True,
+            passive_arp_interface=" ",
+            snmp_enabled=True,
+            snmp_version="3",
+            snmp_community=" ",
+            snmp_timeout=0,
+            snmp_v3_username=" user ",
+            snmp_v3_auth_key=" auth ",
+            snmp_v3_priv_key=" priv ",
+            snmp_v3_auth_protocol="SHA256",
+            snmp_v3_priv_protocol="AES256",
+            fingerprint_ai_enabled=True,
+            fingerprint_ai_model=" ",
+            fingerprint_ai_min_confidence=2.0,
+            fingerprint_ai_prompt_suffix="  prefer serial numbers  ",
+            internet_lookup_enabled=True,
+            internet_lookup_allowed_domains=" example.com, docs.local ",
+            internet_lookup_budget=0,
+            internet_lookup_timeout_seconds=0,
+        ),
     )
 
     assert updated is config
@@ -710,7 +841,9 @@ async def test_update_scanner_config_normalizes_and_clamps_values(monkeypatch):
 
 
 def test_build_effective_scanner_config_prefers_explicit_targets(monkeypatch):
-    monkeypatch.setattr("app.scanner.config.detect_local_ipv4_cidr", lambda: "10.88.0.0/24")
+    monkeypatch.setattr(
+        "app.scanner.config.detect_local_ipv4_cidr", lambda: "10.88.0.0/24"
+    )
     config = ScannerConfig(
         enabled=True,
         default_targets="10.55.0.0/24",
@@ -752,7 +885,11 @@ def test_extract_normalized_products_deduplicates_product_cpe_and_detected_app()
             key="443/tcp",
             value="https",
             confidence=0.9,
-            details={"product": "OpenSSL", "version": "1.0.1f", "cpe": "cpe:/a:openssl:openssl:1.0.1f"},
+            details={
+                "product": "OpenSSL",
+                "version": "1.0.1f",
+                "cpe": "cpe:/a:openssl:openssl:1.0.1f",
+            },
         ),
         EvidenceItem(
             source="nmap_service",
@@ -760,7 +897,11 @@ def test_extract_normalized_products_deduplicates_product_cpe_and_detected_app()
             key="443/tcp",
             value="https",
             confidence=0.9,
-            details={"product": " OpenSSL ", "version": "1.0.1f", "cpe": "cpe:/a:openssl:openssl:1.0.1f"},
+            details={
+                "product": " OpenSSL ",
+                "version": "1.0.1f",
+                "cpe": "cpe:/a:openssl:openssl:1.0.1f",
+            },
         ),
         EvidenceItem(
             source="probe_http",
@@ -774,7 +915,9 @@ def test_extract_normalized_products_deduplicates_product_cpe_and_detected_app()
 
     products = extract_normalized_products(evidence)
 
-    assert [(product.product, product.version, product.source) for product in products] == [
+    assert [
+        (product.product, product.version, product.source) for product in products
+    ] == [
         ("openssl", "1.0.1f", "nmap_service"),
         ("proxmox virtual environment", None, "probe_http"),
     ]
@@ -783,11 +926,17 @@ def test_extract_normalized_products_deduplicates_product_cpe_and_detected_app()
 def test_http_apply_main_response_sets_redirect_host_only_for_external_host():
     data = HttpProbeData(url="http://10.0.0.10:80")
     request = httpx.Request("GET", "http://10.0.0.10:80/")
-    redirect = httpx.Response(301, request=request, headers={"location": "https://console.local/"})
+    redirect = httpx.Response(
+        301, request=request, headers={"location": "https://console.local/"}
+    )
     final = httpx.Response(
         200,
         request=httpx.Request("GET", "https://console.local/"),
-        headers={"server": "nginx", "content-type": "text/html", "x-powered-by": "Express"},
+        headers={
+            "server": "nginx",
+            "content-type": "text/html",
+            "x-powered-by": "Express",
+        },
         history=[redirect],
     )
 
@@ -806,7 +955,11 @@ async def test_http_fetch_favicon_hash_requires_expected_content_type():
 
     class Client:
         async def get(self, _url, follow_redirects=True):
-            return SimpleNamespace(status_code=200, content=content, headers={"content-type": "image/x-icon"})
+            return SimpleNamespace(
+                status_code=200,
+                content=content,
+                headers={"content-type": "image/x-icon"},
+            )
 
     result = await http_probe._fetch_favicon_hash(Client(), "http://10.0.0.10:80")
 
@@ -846,7 +999,9 @@ async def test_upnp_probe_uses_common_paths_when_ssdp_misses(monkeypatch):
         return "http://10.0.0.15:5000/rootDesc.xml"
 
     async def fake_fetch_description(_location):
-        return upnp_probe.UpnpProbeData(friendly_name="Media Server", manufacturer="MiniDLNA")
+        return upnp_probe.UpnpProbeData(
+            friendly_name="Media Server", manufacturer="MiniDLNA"
+        )
 
     monkeypatch.setattr(upnp_probe, "_ssdp_discover", fake_ssdp_discover)
     monkeypatch.setattr(upnp_probe, "_try_common_paths", fake_try_common_paths)
@@ -873,7 +1028,10 @@ async def test_upnp_fetch_description_returns_none_on_non_200(monkeypatch):
 
     monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: FakeClient())
 
-    assert await upnp_probe._fetch_description("http://10.0.0.15:5000/rootDesc.xml") is None
+    assert (
+        await upnp_probe._fetch_description("http://10.0.0.15:5000/rootDesc.xml")
+        is None
+    )
 
 
 @pytest.mark.asyncio
@@ -894,14 +1052,19 @@ async def test_upnp_probe_returns_timeout_when_deadline_expires(monkeypatch):
 
 def test_tls_parse_cert_handles_invalid_dates_and_populates_fields():
     cert = {
-        "subject": ((("commonName", "switch.local"),), (("organizationName", "Lab Inc"),)),
+        "subject": (
+            (("commonName", "switch.local"),),
+            (("organizationName", "Lab Inc"),),
+        ),
         "issuer": ((("commonName", "switch.local"),),),
         "subjectAltName": [("DNS", "switch.local"), ("DNS", "switch")],
         "notBefore": "bad-date",
         "notAfter": "Mar 23 15:44:00 2026 GMT",
     }
 
-    data = tls_probe._parse_cert(cert, b"cert-bytes", ("TLS_AES_256_GCM_SHA384", "TLSv1.3", 256), "TLSv1.3")
+    data = tls_probe._parse_cert(
+        cert, b"cert-bytes", ("TLS_AES_256_GCM_SHA384", "TLSv1.3", 256), "TLSv1.3"
+    )
 
     assert data.subject_cn == "switch.local"
     assert data.cert_org == "Lab Inc"
@@ -941,7 +1104,11 @@ def test_upnp_parse_xml_supports_namespaced_description_documents():
 @pytest.mark.asyncio
 async def test_build_control_fn_maps_job_actions_to_control_decisions():
     db = _FakeDb()
-    job = SimpleNamespace(control_action="pause", control_mode="preserve_discovery", resume_after=datetime(2026, 3, 23, 16, 0, tzinfo=timezone.utc))
+    job = SimpleNamespace(
+        control_action="pause",
+        control_mode="preserve_discovery",
+        resume_after=datetime(2026, 3, 23, 16, 0, tzinfo=timezone.utc),
+    )
 
     control = _build_control_fn(db, job, ScanControlDecision)
     decision = await control()
@@ -960,7 +1127,9 @@ async def test_apply_interrupt_result_requeues_pending_jobs(monkeypatch):
     async def fake_next_queue_position(_db):
         return 7
 
-    monkeypatch.setattr("app.workers.tasks._next_queue_position", fake_next_queue_position)
+    monkeypatch.setattr(
+        "app.workers.tasks._next_queue_position", fake_next_queue_position
+    )
     job = ScanJob(
         targets="10.0.0.0/24",
         scan_type="balanced",
@@ -968,7 +1137,9 @@ async def test_apply_interrupt_result_requeues_pending_jobs(monkeypatch):
         status="running",
         control_mode="requeue",
     )
-    summary = ScanSummary(job_id="job-5", targets="10.0.0.0/24", profile=ScanProfile.BALANCED)
+    summary = ScanSummary(
+        job_id="job-5", targets="10.0.0.0/24", profile=ScanProfile.BALANCED
+    )
     exc = SimpleNamespace(
         status="paused",
         message="Preempted",
@@ -986,7 +1157,9 @@ async def test_apply_interrupt_result_requeues_pending_jobs(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_record_job_progress_commits_only_on_stage_change_or_flush_interval(monkeypatch):
+async def test_record_job_progress_commits_only_on_stage_change_or_flush_interval(
+    monkeypatch,
+):
     db = _FakeDb()
     job = SimpleNamespace(result_summary={})
     progress_state = {"last_flush": 10.0, "last_stage": "discovery"}
@@ -1012,7 +1185,9 @@ async def test_record_job_progress_commits_only_on_stage_change_or_flush_interva
 
 
 @pytest.mark.asyncio
-async def test_parent_chunk_broadcast_scales_progress_and_records_chunk_metadata(monkeypatch):
+async def test_parent_chunk_broadcast_scales_progress_and_records_chunk_metadata(
+    monkeypatch,
+):
     published = []
     recorded = []
 
@@ -1022,12 +1197,25 @@ async def test_parent_chunk_broadcast_scales_progress_and_records_chunk_metadata
     async def fake_publish_event(payload):
         published.append(payload)
 
-    monkeypatch.setattr("app.workers.tasks._record_job_progress", fake_record_job_progress)
+    monkeypatch.setattr(
+        "app.workers.tasks._record_job_progress", fake_record_job_progress
+    )
     monkeypatch.setattr("app.workers.tasks._publish_event", fake_publish_event)
 
     job = SimpleNamespace(id="parent-1")
-    broadcast = _build_parent_chunk_broadcast_fn(object(), job, {"last_flush": 0.0, "last_stage": None}, chunk_index=2, chunk_count=4)
-    await broadcast({"event": "scan_progress", "data": {"job_id": "child-2", "progress": 0.5, "message": "Scanning"}})
+    broadcast = _build_parent_chunk_broadcast_fn(
+        object(),
+        job,
+        {"last_flush": 0.0, "last_stage": None},
+        chunk_index=2,
+        chunk_count=4,
+    )
+    await broadcast(
+        {
+            "event": "scan_progress",
+            "data": {"job_id": "child-2", "progress": 0.5, "message": "Scanning"},
+        }
+    )
 
     assert recorded[0]["data"]["job_id"] == "parent-1"
     assert recorded[0]["data"]["chunk_index"] == 2
@@ -1038,9 +1226,24 @@ async def test_parent_chunk_broadcast_scales_progress_and_records_chunk_metadata
 
 
 def test_task_id_helpers_extract_matching_scan_jobs():
-    task = {"name": "app.workers.tasks.run_scan_job", "id": "celery-1", "args": ["job-123"], "kwargs": {}}
-    kwargs_task = {"name": "app.workers.tasks.run_scan_job", "id": "celery-2", "args": [], "kwargs": {"job_id": "job-456"}}
-    stringified_task = {"name": "app.workers.tasks.run_scan_job", "id": "celery-3", "args": "('job-789',)", "kwargs": {}}
+    task = {
+        "name": "app.workers.tasks.run_scan_job",
+        "id": "celery-1",
+        "args": ["job-123"],
+        "kwargs": {},
+    }
+    kwargs_task = {
+        "name": "app.workers.tasks.run_scan_job",
+        "id": "celery-2",
+        "args": [],
+        "kwargs": {"job_id": "job-456"},
+    }
+    stringified_task = {
+        "name": "app.workers.tasks.run_scan_job",
+        "id": "celery-3",
+        "args": "('job-789',)",
+        "kwargs": {},
+    }
 
     assert _extract_scan_job_id(task, "job-123") == "job-123"
     assert _extract_scan_job_id(kwargs_task, "job-456") == "job-456"
@@ -1050,8 +1253,12 @@ def test_task_id_helpers_extract_matching_scan_jobs():
 
 
 def test_interrupt_stage_and_merge_scan_summary_cover_queue_and_rollup_logic():
-    parent = ScanSummary(job_id="job-parent", targets="10.0.0.0/24", profile=ScanProfile.BALANCED)
-    child = ScanSummary(job_id="job-child", targets="10.0.0.0/25", profile=ScanProfile.BALANCED)
+    parent = ScanSummary(
+        job_id="job-parent", targets="10.0.0.0/24", profile=ScanProfile.BALANCED
+    )
+    child = ScanSummary(
+        job_id="job-child", targets="10.0.0.0/25", profile=ScanProfile.BALANCED
+    )
     child.hosts_scanned = 3
     child.hosts_up = 2
     child.total_open_ports = 4

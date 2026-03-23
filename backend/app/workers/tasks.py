@@ -152,7 +152,7 @@ async def _run_job_async(job_id: str) -> None:
         if job is None:
             return
 
-        if job.parent_id is None and await _has_child_jobs(db, job.id):
+        if await _should_run_parent_job(db, job):
             await _run_parent_job_async(
                 db,
                 job,
@@ -167,32 +167,39 @@ async def _run_job_async(job_id: str) -> None:
             )
             return
 
-        job.targets = materialize_scan_targets(job.targets)
-        route_error = validate_scan_targets_routable(job.targets)
+        route_error = await _prepare_scan_job_targets(
+            job,
+            materialize_scan_targets,
+            validate_scan_targets_routable,
+        )
         if route_error:
             await _fail_scan_job(db, job, job_id, route_error)
             return
         config = await get_or_create_scanner_config(db)
-        host_chunk_size = getattr(config, "host_chunk_size", 64)
-        top_ports_count = getattr(config, "top_ports_count", 1000)
-        deep_probe_timeout_seconds = getattr(config, "deep_probe_timeout_seconds", 6)
         await _mark_job_running(db, job)
         control_fn = _build_control_fn(db, job, ScanControlDecision)
 
         try:
             profile = _resolve_scan_profile(job.scan_type, ScanProfile)
             summary = ScanSummary(job_id=job_id, targets=job.targets, profile=profile)
-            enable_ai = getattr(config, "ai_after_scan_enabled", settings.AI_ENABLE_PER_SCAN)
 
             summary = await run_scan(
                 job_id=job_id,
                 targets=job.targets,
                 profile=profile,
-                enable_ai=enable_ai,
+                enable_ai=_scan_config_value(
+                    config,
+                    "ai_after_scan_enabled",
+                    settings.AI_ENABLE_PER_SCAN,
+                ),
                 concurrent_hosts=config.concurrent_hosts,
-                host_chunk_size=host_chunk_size,
-                top_ports_count=top_ports_count,
-                deep_probe_timeout_seconds=deep_probe_timeout_seconds,
+                host_chunk_size=_scan_config_value(config, "host_chunk_size", 64),
+                top_ports_count=_scan_config_value(config, "top_ports_count", 1000),
+                deep_probe_timeout_seconds=_scan_config_value(
+                    config,
+                    "deep_probe_timeout_seconds",
+                    6,
+                ),
                 db_session=db,
                 broadcast_fn=_get_job_broadcast_fn(db, job),
                 control_fn=control_fn,
@@ -209,6 +216,23 @@ async def _run_job_async(job_id: str) -> None:
         await _dispatch_next_scan_if_idle(db)
 
     await engine.dispose()
+
+
+async def _should_run_parent_job(db, job: ScanJob) -> bool:
+    return job.parent_id is None and await _has_child_jobs(db, job.id)
+
+
+async def _prepare_scan_job_targets(
+    job: ScanJob,
+    materialize_scan_targets,
+    validate_scan_targets_routable,
+) -> str | None:
+    job.targets = materialize_scan_targets(job.targets)
+    return validate_scan_targets_routable(job.targets)
+
+
+def _scan_config_value(config, key: str, default):
+    return getattr(config, key, default)
 
 
 async def _run_parent_job_async(
@@ -506,28 +530,32 @@ async def _mark_job_running(db, job: ScanJob) -> None:
 def _build_control_fn(db, job, scan_control_decision):
     async def control_fn():
         await db.refresh(job)
-        if job.control_action == "cancel":
-            return scan_control_decision(
-                action="cancel",
-                mode=job.control_mode or "discard",
-                message="Operator cancelled scan",
-            )
-        if job.control_action == "requeue":
-            return scan_control_decision(
-                action="pause",
-                mode="requeue",
-                message="Operator preempted scan and returned it to the queue",
-            )
-        if job.control_action == "pause":
-            return scan_control_decision(
-                action="pause",
-                mode=job.control_mode or "preserve_discovery",
-                resume_after=job.resume_after.isoformat() if job.resume_after else None,
-                message="Operator paused scan",
-            )
-        return None
+        return _scan_control_decision_from_job(job, scan_control_decision)
 
     return control_fn
+
+
+def _scan_control_decision_from_job(job, scan_control_decision):
+    if job.control_action == "cancel":
+        return scan_control_decision(
+            action="cancel",
+            mode=job.control_mode or "discard",
+            message="Operator cancelled scan",
+        )
+    if job.control_action == "requeue":
+        return scan_control_decision(
+            action="pause",
+            mode="requeue",
+            message="Operator preempted scan and returned it to the queue",
+        )
+    if job.control_action == "pause":
+        return scan_control_decision(
+            action="pause",
+            mode=job.control_mode or "preserve_discovery",
+            resume_after=job.resume_after.isoformat() if job.resume_after else None,
+            message="Operator paused scan",
+        )
+    return None
 
 
 def _resolve_scan_profile(scan_type: str, scan_profile_enum):
@@ -576,13 +604,7 @@ async def _handle_scan_interrupt(db, job, job_id: str, exc, summary, persist_res
 
 
 async def _apply_interrupt_result(db, job, exc, summary) -> None:
-    if exc.status == "paused" and job.control_mode == "requeue":
-        job.status = "pending"
-        job.started_at = None
-        job.finished_at = None
-    else:
-        job.status = exc.status
-        job.finished_at = datetime.now(timezone.utc) if exc.status == "cancelled" else None
+    _apply_interrupt_status(job, exc.status)
 
     job.result_summary = {
         **summary.model_dump(mode="json"),
@@ -601,6 +623,16 @@ async def _apply_interrupt_result(db, job, exc, summary) -> None:
         job.resume_after = None
     job.control_action = None
     job.control_mode = None
+
+
+def _apply_interrupt_status(job, interrupt_status: str) -> None:
+    if interrupt_status == "paused" and job.control_mode == "requeue":
+        job.status = "pending"
+        job.started_at = None
+        job.finished_at = None
+        return
+    job.status = interrupt_status
+    job.finished_at = datetime.now(timezone.utc) if interrupt_status == "cancelled" else None
 
 
 def _interrupt_stage(job_status: str, interrupt_status: str) -> str:
@@ -721,18 +753,7 @@ async def _resume_paused_scans_async() -> None:
         )
         jobs = list(result.scalars().all())
         for job in jobs:
-            job.status = "pending"
-            job.control_action = None
-            job.control_mode = None
-            job.resume_after = None
-            job.queue_position = 1
-            summary = dict(job.result_summary or {})
-            summary.update({
-                "stage": "queued",
-                "message": "Resuming paused scan by restarting the job",
-                "resumed_at": now.isoformat(),
-            })
-            job.result_summary = summary
+            _resume_paused_job(job, now)
         await db.commit()
 
         await _normalize_pending_queue(db)
@@ -745,6 +766,23 @@ async def _resume_paused_scans_async() -> None:
     if first_job_id:
         run_scan_job.delay(first_job_id)
         log.info("Resumed paused queue; started job_id=%s", first_job_id)
+
+
+def _resume_paused_job(job, now: datetime) -> None:
+    job.status = "pending"
+    job.control_action = None
+    job.control_mode = None
+    job.resume_after = None
+    job.queue_position = 1
+    summary = dict(job.result_summary or {})
+    summary.update(
+        {
+            "stage": "queued",
+            "message": "Resuming paused scan by restarting the job",
+            "resumed_at": now.isoformat(),
+        }
+    )
+    job.result_summary = summary
 
 
 async def _has_active_scan(db) -> bool:
@@ -804,10 +842,7 @@ async def _dispatch_next_scan_if_idle(db) -> None:
 
 def _get_broadcast_fn():
     """Return a broadcast function that publishes events to Redis pub/sub."""
-    async def broadcast(payload: dict):
-        await _publish_event(payload)
-
-    return broadcast
+    return _publish_event
 
 
 def _get_job_broadcast_fn(db, job):

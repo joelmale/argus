@@ -271,14 +271,19 @@ async def list_scans(
 ):
     result = await db.execute(select(ScanJob))
     scans = [scan for scan in result.scalars().all() if scan.parent_id is None]
-    scans.sort(
-        key=lambda scan: (
-            0 if scan.status == "running" else 1 if scan.status == "paused" else 2 if scan.status == "pending" else 3,
-            scan.queue_position if scan.queue_position is not None else 10_000,
-            -(scan.created_at.timestamp() if scan.created_at else 0),
-        )
-    )
+    scans.sort(key=_scan_sort_key)
     return scans[:limit]
+
+
+def _scan_sort_key(scan: ScanJob) -> tuple[int, int, float]:
+    status_priority = {
+        "running": 0,
+        "paused": 1,
+        "pending": 2,
+    }.get(scan.status, 3)
+    queue_position = scan.queue_position if scan.queue_position is not None else 10_000
+    created_at_sort = -(scan.created_at.timestamp() if scan.created_at else 0)
+    return status_priority, queue_position, created_at_sort
 
 
 @router.post("/trigger", responses=TRIGGER_SCAN_RESPONSES)

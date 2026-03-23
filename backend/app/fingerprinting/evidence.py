@@ -78,50 +78,60 @@ def _signature_evidence(value: str, source: str, details: dict[str, Any]) -> lis
 
 def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
     evidence: list[EvidenceItem] = []
+    _append_basic_evidence(evidence, result)
+    _append_rule_evidence(evidence, result)
+    _append_ai_evidence(evidence, result)
+    _append_probe_evidence(evidence, result)
+    return evidence
 
+
+def _append_basic_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
     if result.mac_vendor:
         evidence.append(EvidenceItem("mac_oui", "vendor", "mac_vendor", result.mac_vendor, 0.72, {}))
 
-    if result.host.ttl is not None:
-        evidence.append(
-            EvidenceItem(
-                "tcpip_stack",
-                "os_hint",
-                "ttl",
-                str(result.host.ttl),
-                0.30,
-                {"ttl": result.host.ttl},
-            )
-        )
-        ttl_hint = _ttl_stack_hint(result.host.ttl)
+    ttl = result.host.ttl
+    if ttl is not None:
+        evidence.append(EvidenceItem("tcpip_stack", "os_hint", "ttl", str(ttl), 0.30, {"ttl": ttl}))
+        ttl_hint = _ttl_stack_hint(ttl)
         if ttl_hint:
             value, confidence, details = ttl_hint
             evidence.append(EvidenceItem("tcpip_stack", "os_hint", "ttl_family", value, confidence, details))
 
-    if result.os_fingerprint.os_name and result.os_fingerprint.os_accuracy:
-        evidence.append(
-            EvidenceItem(
-                "nmap_os",
-                "os",
-                "os_name",
-                result.os_fingerprint.os_name,
-                min(result.os_fingerprint.os_accuracy / 100.0, 0.95),
-                {
-                    "accuracy": result.os_fingerprint.os_accuracy,
-                    "os_family": result.os_fingerprint.os_family,
-                    "os_version": result.os_fingerprint.os_version,
-                    "device_type_hint": result.os_fingerprint.device_type,
-                    "cpe": result.os_fingerprint.cpe,
-                },
-            )
-        )
+    _append_os_fingerprint_evidence(evidence, result)
+    _append_hostname_evidence(evidence, result.reverse_hostname)
+    _append_port_evidence(evidence, result)
 
-    if result.reverse_hostname:
-        evidence.append(
-            EvidenceItem("hostname", "identity", "hostname", result.reverse_hostname, 0.60, {})
-        )
-        evidence.extend(_signature_evidence(result.reverse_hostname, "hostname", {"hostname": result.reverse_hostname}))
 
+def _append_os_fingerprint_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
+    if not result.os_fingerprint.os_name or not result.os_fingerprint.os_accuracy:
+        return
+    evidence.append(
+        EvidenceItem(
+            "nmap_os",
+            "os",
+            "os_name",
+            result.os_fingerprint.os_name,
+            min(result.os_fingerprint.os_accuracy / 100.0, 0.95),
+            {
+                "accuracy": result.os_fingerprint.os_accuracy,
+                "os_family": result.os_fingerprint.os_family,
+                "os_version": result.os_fingerprint.os_version,
+                "device_type_hint": result.os_fingerprint.device_type,
+                "cpe": result.os_fingerprint.cpe,
+            },
+        )
+    )
+
+
+def _append_hostname_evidence(evidence: list[EvidenceItem], reverse_hostname: str | None) -> None:
+    if not reverse_hostname:
+        return
+    details = {"hostname": reverse_hostname}
+    evidence.append(EvidenceItem("hostname", "identity", "hostname", reverse_hostname, 0.60, {}))
+    evidence.extend(_signature_evidence(reverse_hostname, "hostname", details))
+
+
+def _append_port_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
     for port in result.open_ports:
         evidence.append(
             EvidenceItem(
@@ -140,135 +150,145 @@ def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
             )
         )
 
+
+def _append_rule_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
     rule_hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
-    if rule_hint.device_class.value != "unknown":
+    if rule_hint.device_class.value == "unknown":
+        return
+    evidence.append(
+        EvidenceItem(
+            "rule",
+            "device_type",
+            "classified_type",
+            rule_hint.device_class.value,
+            rule_hint.confidence,
+            {"reason": rule_hint.reason},
+        )
+    )
+
+
+def _append_ai_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
+    ai = result.ai_analysis
+    if ai is None:
+        return
+    if ai.device_class.value != "unknown":
         evidence.append(
             EvidenceItem(
-                "rule",
+                "ai",
                 "device_type",
                 "classified_type",
-                rule_hint.device_class.value,
-                rule_hint.confidence,
-                {"reason": rule_hint.reason},
+                ai.device_class.value,
+                ai.confidence,
+                {"backend": ai.ai_backend, "model": ai.model_used, "role": ai.device_role},
             )
         )
+    _append_optional_evidence(evidence, "ai", "vendor", "vendor", ai.vendor, ai.confidence)
+    _append_optional_evidence(evidence, "ai", "model", "model", ai.model, ai.confidence)
+    _append_optional_evidence(evidence, "ai", "os", "os_guess", ai.os_guess, ai.confidence)
 
-    ai = result.ai_analysis
-    if ai is not None:
-        if ai.device_class.value != "unknown":
-            evidence.append(
-                EvidenceItem(
-                    "ai",
-                    "device_type",
-                    "classified_type",
-                    ai.device_class.value,
-                    ai.confidence,
-                    {"backend": ai.ai_backend, "model": ai.model_used, "role": ai.device_role},
-                )
-            )
-        if ai.vendor:
-            evidence.append(EvidenceItem("ai", "vendor", "vendor", ai.vendor, ai.confidence, {}))
-        if ai.model:
-            evidence.append(EvidenceItem("ai", "model", "model", ai.model, ai.confidence, {}))
-        if ai.os_guess:
-            evidence.append(EvidenceItem("ai", "os", "os_guess", ai.os_guess, ai.confidence, {}))
 
+def _append_probe_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
     for probe in result.probes:
         if not probe.success:
             continue
         data = probe.data or {}
         if probe.probe_type in {"http", "https"}:
-            if data.get("server"):
-                evidence.append(EvidenceItem("probe_http", "service", "server_header", str(data["server"]), 0.80, data))
-                evidence.extend(_signature_evidence(str(data["server"]), "probe_http", data))
-            if data.get("title"):
-                evidence.append(EvidenceItem("probe_http", "identity", "http_title", str(data["title"]), 0.72, data))
-                evidence.extend(_signature_evidence(str(data["title"]), "probe_http", data))
-            if data.get("powered_by"):
-                evidence.append(EvidenceItem("probe_http", "service", "powered_by", str(data["powered_by"]), 0.72, data))
-                evidence.extend(_signature_evidence(str(data["powered_by"]), "probe_http", data))
-            if data.get("auth_header"):
-                evidence.append(EvidenceItem("probe_http", "service", "auth_header", str(data["auth_header"]), 0.72, data))
-            if data.get("favicon_hash"):
-                evidence.append(EvidenceItem("probe_http", "identity", "favicon_hash", str(data["favicon_hash"]), 0.76, data))
-            if data.get("detected_app"):
-                evidence.append(EvidenceItem("probe_http", "identity", "detected_app", str(data["detected_app"]), 0.86, data))
-                evidence.extend(_signature_evidence(str(data["detected_app"]), "probe_http", data))
-            if data.get("redirect_host"):
-                evidence.append(EvidenceItem("probe_http", "identity", "redirect_host", str(data["redirect_host"]), 0.74, data))
+            _append_http_probe_evidence(evidence, data)
         elif probe.probe_type == "tls":
-            if data.get("subject_cn"):
-                evidence.append(EvidenceItem("probe_tls", "identity", "cert_cn", str(data["subject_cn"]), 0.82, data))
-                evidence.extend(_signature_evidence(str(data["subject_cn"]), "probe_tls", data))
-            if data.get("cert_org"):
-                evidence.append(EvidenceItem("probe_tls", "vendor", "cert_org", str(data["cert_org"]), 0.84, data))
-                evidence.extend(_signature_evidence(str(data["cert_org"]), "probe_tls", data))
-            if data.get("fingerprint_sha256"):
-                evidence.append(EvidenceItem("probe_tls", "identity", "cert_sha256", str(data["fingerprint_sha256"]), 0.7, data))
+            _append_tls_probe_evidence(evidence, data)
         elif probe.probe_type == "ssh":
-            if data.get("banner"):
-                evidence.append(EvidenceItem("probe_ssh", "service", "ssh_banner", str(data["banner"]), 0.80, data))
-                evidence.extend(_signature_evidence(str(data["banner"]), "probe_ssh", data))
+            _append_optional_probe_signature(evidence, "probe_ssh", "service", "ssh_banner", data.get("banner"), 0.80, data)
         elif probe.probe_type == "snmp":
-            if data.get("sys_descr"):
-                evidence.append(EvidenceItem("probe_snmp", "os", "sys_descr", str(data["sys_descr"]), 0.92, data))
-                evidence.extend(_signature_evidence(str(data["sys_descr"]), "probe_snmp", data))
-            if data.get("sys_name"):
-                evidence.append(EvidenceItem("probe_snmp", "identity", "sys_name", str(data["sys_name"]), 0.86, data))
-            if data.get("sys_object_id"):
-                evidence.append(EvidenceItem("probe_snmp", "identity", "sys_object_id", str(data["sys_object_id"]), 0.90, data))
-                pen_vendor = lookup_pen_vendor(str(data["sys_object_id"]))
-                if pen_vendor:
-                    evidence.append(
-                        EvidenceItem(
-                            "iana_pen",
-                            "vendor",
-                            "snmp_enterprise",
-                            pen_vendor,
-                            0.83,
-                            {"sys_object_id": data["sys_object_id"]},
-                        )
-                    )
-                    evidence.extend(_signature_evidence(str(pen_vendor), "iana_pen", {"sys_object_id": data["sys_object_id"]}))
+            _append_snmp_probe_evidence(evidence, data)
         elif probe.probe_type == "mdns":
-            for service in data.get("services", [])[:8]:
-                if service.get("type"):
-                    evidence.append(
-                        EvidenceItem("probe_mdns", "identity", "service_type", str(service["type"]), 0.78, service)
-                    )
-                    evidence.extend(_signature_evidence(str(service["type"]), "probe_mdns", service))
-                if service.get("host"):
-                    evidence.append(
-                        EvidenceItem("probe_mdns", "identity", "service_host", str(service["host"]), 0.78, service)
-                    )
-                if service.get("name"):
-                    evidence.append(
-                        EvidenceItem("probe_mdns", "identity", "service_name", str(service["name"]), 0.8, service)
-                    )
-                    evidence.extend(_signature_evidence(str(service["name"]), "probe_mdns", service))
-                for prop_key, prop_value in (service.get("properties") or {}).items():
-                    if prop_value:
-                        evidence.extend(_signature_evidence(f"{prop_key}={prop_value}", "probe_mdns", service))
+            _append_mdns_probe_evidence(evidence, data)
         elif probe.probe_type == "upnp":
-            if data.get("manufacturer"):
-                evidence.append(EvidenceItem("probe_upnp", "vendor", "manufacturer", str(data["manufacturer"]), 0.86, data))
-                evidence.extend(_signature_evidence(str(data["manufacturer"]), "probe_upnp", data))
-            if data.get("model_name"):
-                evidence.append(EvidenceItem("probe_upnp", "model", "model_name", str(data["model_name"]), 0.88, data))
-                evidence.extend(_signature_evidence(str(data["model_name"]), "probe_upnp", data))
-            if data.get("friendly_name"):
-                evidence.append(EvidenceItem("probe_upnp", "identity", "friendly_name", str(data["friendly_name"]), 0.82, data))
-                evidence.extend(_signature_evidence(str(data["friendly_name"]), "probe_upnp", data))
-            if data.get("device_type"):
-                evidence.append(EvidenceItem("probe_upnp", "identity", "device_type", str(data["device_type"]), 0.8, data))
+            _append_upnp_probe_evidence(evidence, data)
         elif probe.probe_type == "smb":
-            if data.get("os_string"):
-                evidence.append(EvidenceItem("probe_smb", "os", "os_string", str(data["os_string"]), 0.82, data))
-                evidence.extend(_signature_evidence(str(data["os_string"]), "probe_smb", data))
-            if data.get("netbios_name"):
-                evidence.append(EvidenceItem("probe_smb", "identity", "netbios_name", str(data["netbios_name"]), 0.78, data))
+            _append_smb_probe_evidence(evidence, data)
 
-    return evidence
+
+def _append_http_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
+    _append_optional_probe_signature(evidence, "probe_http", "service", "server_header", data.get("server"), 0.80, data)
+    _append_optional_probe_signature(evidence, "probe_http", "identity", "http_title", data.get("title"), 0.72, data)
+    _append_optional_probe_signature(evidence, "probe_http", "service", "powered_by", data.get("powered_by"), 0.72, data)
+    _append_optional_evidence(evidence, "probe_http", "service", "auth_header", data.get("auth_header"), 0.72, data)
+    _append_optional_evidence(evidence, "probe_http", "identity", "favicon_hash", data.get("favicon_hash"), 0.76, data)
+    _append_optional_probe_signature(evidence, "probe_http", "identity", "detected_app", data.get("detected_app"), 0.86, data)
+    _append_optional_evidence(evidence, "probe_http", "identity", "redirect_host", data.get("redirect_host"), 0.74, data)
+
+
+def _append_tls_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
+    _append_optional_probe_signature(evidence, "probe_tls", "identity", "cert_cn", data.get("subject_cn"), 0.82, data)
+    _append_optional_probe_signature(evidence, "probe_tls", "vendor", "cert_org", data.get("cert_org"), 0.84, data)
+    _append_optional_evidence(evidence, "probe_tls", "identity", "cert_sha256", data.get("fingerprint_sha256"), 0.7, data)
+
+
+def _append_snmp_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
+    _append_optional_probe_signature(evidence, "probe_snmp", "os", "sys_descr", data.get("sys_descr"), 0.92, data)
+    _append_optional_evidence(evidence, "probe_snmp", "identity", "sys_name", data.get("sys_name"), 0.86, data)
+    sys_object_id = data.get("sys_object_id")
+    _append_optional_evidence(evidence, "probe_snmp", "identity", "sys_object_id", sys_object_id, 0.90, data)
+    if not sys_object_id:
+        return
+    pen_vendor = lookup_pen_vendor(str(sys_object_id))
+    if not pen_vendor:
+        return
+    details = {"sys_object_id": sys_object_id}
+    evidence.append(EvidenceItem("iana_pen", "vendor", "snmp_enterprise", pen_vendor, 0.83, details))
+    evidence.extend(_signature_evidence(str(pen_vendor), "iana_pen", details))
+
+
+def _append_mdns_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
+    for service in data.get("services", [])[:8]:
+        _append_optional_probe_signature(evidence, "probe_mdns", "identity", "service_type", service.get("type"), 0.78, service)
+        _append_optional_evidence(evidence, "probe_mdns", "identity", "service_host", service.get("host"), 0.78, service)
+        _append_optional_probe_signature(evidence, "probe_mdns", "identity", "service_name", service.get("name"), 0.8, service)
+        for prop_key, prop_value in (service.get("properties") or {}).items():
+            if prop_value:
+                evidence.extend(_signature_evidence(f"{prop_key}={prop_value}", "probe_mdns", service))
+
+
+def _append_upnp_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
+    _append_optional_probe_signature(evidence, "probe_upnp", "vendor", "manufacturer", data.get("manufacturer"), 0.86, data)
+    _append_optional_probe_signature(evidence, "probe_upnp", "model", "model_name", data.get("model_name"), 0.88, data)
+    _append_optional_probe_signature(evidence, "probe_upnp", "identity", "friendly_name", data.get("friendly_name"), 0.82, data)
+    _append_optional_evidence(evidence, "probe_upnp", "identity", "device_type", data.get("device_type"), 0.8, data)
+
+
+def _append_smb_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
+    _append_optional_probe_signature(evidence, "probe_smb", "os", "os_string", data.get("os_string"), 0.82, data)
+    _append_optional_evidence(evidence, "probe_smb", "identity", "netbios_name", data.get("netbios_name"), 0.78, data)
+
+
+def _append_optional_probe_signature(
+    evidence: list[EvidenceItem],
+    source: str,
+    category: str,
+    key: str,
+    value: Any,
+    confidence: float,
+    details: dict[str, Any],
+) -> None:
+    if value is None:
+        return
+    text = str(value)
+    evidence.append(EvidenceItem(source, category, key, text, confidence, details))
+    evidence.extend(_signature_evidence(text, source, details))
+
+
+def _append_optional_evidence(
+    evidence: list[EvidenceItem],
+    source: str,
+    category: str,
+    key: str,
+    value: Any,
+    confidence: float,
+    details: dict[str, Any] | None = None,
+) -> None:
+    if value is None:
+        return
+    evidence.append(EvidenceItem(source, category, key, str(value), confidence, details or {}))
 
 
 def derive_detected_device_type(evidence: list[EvidenceItem]) -> tuple[str | None, str]:

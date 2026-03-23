@@ -112,25 +112,9 @@ async def _query_mdns(target_ip: str) -> MdnsProbeData:
         for svc_type in QUERY_SERVICES:
             try:
                 infos = await azc.async_get_service_info(svc_type, svc_type, timeout=1000)
-                # async_get_service_info returns None or ServiceInfo
-                if infos is None:
+                if infos is None or target_ip not in infos.parsed_scoped_addresses():
                     continue
-                # Filter by target IP
-                addresses = infos.parsed_scoped_addresses()
-                if target_ip not in addresses:
-                    continue
-                props = {}
-                for k, v in (infos.properties or {}).items():
-                    key = k.decode("utf-8", errors="replace") if isinstance(k, bytes) else str(k)
-                    val = v.decode("utf-8", errors="replace") if isinstance(v, bytes) else str(v) if v else ""
-                    props[key] = val
-                found.append({
-                    "type": svc_type.rstrip("."),
-                    "name": infos.name,
-                    "host": infos.server,
-                    "port": infos.port,
-                    "properties": props,
-                })
+                found.append(_service_info_to_dict(svc_type, infos))
             except Exception:
                 continue
     finally:
@@ -138,3 +122,26 @@ async def _query_mdns(target_ip: str) -> MdnsProbeData:
 
     data.services = found
     return data
+
+
+def _service_info_to_dict(service_type: str, info) -> dict:
+    return {
+        "type": service_type.rstrip("."),
+        "name": info.name,
+        "host": info.server,
+        "port": info.port,
+        "properties": _decode_mdns_properties(info.properties or {}),
+    }
+
+
+def _decode_mdns_properties(properties: dict) -> dict[str, str]:
+    decoded: dict[str, str] = {}
+    for key, value in properties.items():
+        decoded[_decode_mdns_value(key)] = _decode_mdns_value(value)
+    return decoded
+
+
+def _decode_mdns_value(value) -> str:
+    if isinstance(value, bytes):
+        return value.decode("utf-8", errors="replace")
+    return str(value) if value else ""

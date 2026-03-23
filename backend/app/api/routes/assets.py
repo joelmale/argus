@@ -30,7 +30,6 @@ from app.scanner.models import DeviceClass, DiscoveredHost, HostScanResult, Scan
 from app.scanner.pipeline import _investigate_host
 from app.scanner.stages import portscan
 
-router = APIRouter()
 VALID_DEVICE_TYPES = {member.value for member in DeviceClass}
 ASSET_NOT_FOUND_DETAIL = "Asset not found"
 DBSession = Annotated[AsyncSession, Depends(get_db)]
@@ -60,6 +59,7 @@ BACKUP_CAPTURE_RESPONSES = {
     404: {"description": ASSET_NOT_FOUND_DETAIL},
 }
 BACKUP_SNAPSHOT_RESPONSES = {404: {"description": "Backup snapshot not found"}}
+router = APIRouter(responses=ASSET_NOT_FOUND_RESPONSE)
 
 
 def _serialize_ai_analysis(ai: AssetAIAnalysis | None) -> dict | None:

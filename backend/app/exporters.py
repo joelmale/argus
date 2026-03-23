@@ -117,7 +117,7 @@ def _inventory_name(asset: Asset) -> str:
 
 def _resource_name(asset: Asset) -> str:
     base = asset.hostname or asset.ip_address
-    slug = re.sub(r"[^a-zA-Z0-9_]+", "_", base).strip("_").lower()
+    slug = re.sub(r"\W+", "_", base).strip("_").lower()
     if not slug or slug[0].isdigit():
         slug = f"asset_{slug or asset.ip_address.replace('.', '_')}"
     return slug

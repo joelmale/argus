@@ -34,7 +34,6 @@ async def run(
     host: DiscoveredHost,
     ports: list[PortResult],
     priority_probes: list[str],
-    profile: ScanProfile = ScanProfile.BALANCED,
     timeout_seconds: float | None = None,
 ) -> list[ProbeResult]:
     """
@@ -118,7 +117,7 @@ def _append_optional_probe(
     effective_timeout: float | None,
     probe_name: str,
 ) -> None:
-    port_num = _select_probe_port(probe_name, open_port_nums, priority_probes, tasks)
+    port_num = _select_probe_port(probe_name, open_port_nums, tasks)
     if port_num is None and probe_name not in {"mdns", "snmp", "upnp"}:
         return
     if probe_name in {"mdns", "snmp", "upnp"} and not _should_run_priority_probe(probe_name, open_port_nums, priority_probes):
@@ -163,7 +162,6 @@ def _require_port(port_num: int | None, probe_name: str) -> int:
 def _select_probe_port(
     probe_name: str,
     open_port_nums: dict[int, PortResult],
-    priority_probes: list[str],
     tasks: list[tuple[str, asyncio.Task]],
 ) -> int | None:
     if probe_name == "tls":
@@ -233,11 +231,8 @@ def _resolve_probe_timeout(probe_type: str, timeout_seconds: float | None) -> fl
 
 async def _with_timeout(coro, timeout: float, probe_type: str, port: int | None = None) -> ProbeResult:
     try:
-        timeout_context = getattr(asyncio, "timeout", None)
-        if timeout_context is not None:
-            async with timeout_context(timeout):
-                return await coro
-        return await asyncio.wait_for(coro, timeout=timeout)
+        async with asyncio.timeout(timeout):
+            return await coro
     except asyncio.TimeoutError:
         return ProbeResult(probe_type=probe_type, target_port=port, success=False, error=f"Timeout after {timeout}s")
 

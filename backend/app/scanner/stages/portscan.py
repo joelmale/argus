@@ -268,15 +268,18 @@ def _extract_hostname(host_data: dict) -> str | None:
         for entry in entries:
             name = (entry.get("name") or "").strip()
             etype = entry.get("type", "")
-            if not name:
-                continue
-            # Skip reverse-arpa entries like "1.1.168.192.in-addr.arpa"
-            if name.endswith(".in-addr.arpa") or name.endswith(".ip6.arpa"):
+            if not _is_usable_hostname(name):
                 continue
             if type_pref == "" or etype == type_pref:
                 return name
 
     return None
+
+
+def _is_usable_hostname(name: str) -> bool:
+    if not name:
+        return False
+    return not (name.endswith(".in-addr.arpa") or name.endswith(".ip6.arpa"))
 
 
 def _extract_mac_and_vendor(host_data: dict) -> tuple[str | None, str | None]:

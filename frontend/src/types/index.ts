@@ -15,7 +15,6 @@ export type DeviceType =
   | "iot_device"
   | "voip"
   | "unknown";
-export type DeviceClass = DeviceType;
 export type UserRole = "admin" | "viewer";
 
 export interface CurrentUser {
@@ -263,7 +262,7 @@ export interface HomeAssistantExport {
 }
 
 export interface AssetAIAnalysis {
-  device_class: DeviceClass | string;
+  device_class: DeviceType;
   confidence: number;
   vendor: string | null;
   model: string | null;

@@ -70,6 +70,39 @@ class EffectiveScannerConfig:
     last_scheduled_scan_at: datetime | None
 
 
+@dataclass(slots=True)
+class ScannerConfigUpdateInput:
+    enabled: bool
+    default_targets: str | None
+    auto_detect_targets: bool
+    default_profile: str
+    interval_minutes: int
+    concurrent_hosts: int
+    host_chunk_size: int
+    top_ports_count: int
+    deep_probe_timeout_seconds: int
+    ai_after_scan_enabled: bool
+    passive_arp_enabled: bool
+    passive_arp_interface: str
+    snmp_enabled: bool
+    snmp_version: str
+    snmp_community: str | None
+    snmp_timeout: int
+    snmp_v3_username: str | None
+    snmp_v3_auth_key: str | None
+    snmp_v3_priv_key: str | None
+    snmp_v3_auth_protocol: str
+    snmp_v3_priv_protocol: str
+    fingerprint_ai_enabled: bool
+    fingerprint_ai_model: str | None
+    fingerprint_ai_min_confidence: float
+    fingerprint_ai_prompt_suffix: str | None
+    internet_lookup_enabled: bool
+    internet_lookup_allowed_domains: str | None
+    internet_lookup_budget: int
+    internet_lookup_timeout_seconds: int
+
+
 def _ioctl_ipv4(ifname: str, request: int) -> str | None:
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -363,79 +396,50 @@ async def read_effective_scanner_config(db: AsyncSession) -> tuple[ScannerConfig
 
 async def update_scanner_config(
     db: AsyncSession,
-    *,
-    enabled: bool,
-    default_targets: str | None,
-    auto_detect_targets: bool,
-    default_profile: str,
-    interval_minutes: int,
-    concurrent_hosts: int,
-    host_chunk_size: int,
-    top_ports_count: int,
-    deep_probe_timeout_seconds: int,
-    ai_after_scan_enabled: bool,
-    passive_arp_enabled: bool,
-    passive_arp_interface: str,
-    snmp_enabled: bool,
-    snmp_version: str,
-    snmp_community: str | None,
-    snmp_timeout: int,
-    snmp_v3_username: str | None,
-    snmp_v3_auth_key: str | None,
-    snmp_v3_priv_key: str | None,
-    snmp_v3_auth_protocol: str,
-    snmp_v3_priv_protocol: str,
-    fingerprint_ai_enabled: bool,
-    fingerprint_ai_model: str | None,
-    fingerprint_ai_min_confidence: float,
-    fingerprint_ai_prompt_suffix: str | None,
-    internet_lookup_enabled: bool,
-    internet_lookup_allowed_domains: str | None,
-    internet_lookup_budget: int,
-    internet_lookup_timeout_seconds: int,
+    payload: ScannerConfigUpdateInput,
 ) -> tuple[ScannerConfig, EffectiveScannerConfig]:
-    normalized_targets = _normalize_optional_text(default_targets)
-    if not auto_detect_targets and not normalized_targets:
+    normalized_targets = _normalize_optional_text(payload.default_targets)
+    if not payload.auto_detect_targets and not normalized_targets:
         raise ValueError("Explicit scanner targets are required when auto-detect is disabled.")
 
     config = await get_or_create_scanner_config(db)
     _apply_core_scanner_settings(
         config,
-        enabled=enabled,
+        enabled=payload.enabled,
         normalized_targets=normalized_targets,
-        auto_detect_targets=auto_detect_targets,
-        default_profile=default_profile,
-        interval_minutes=interval_minutes,
-        concurrent_hosts=concurrent_hosts,
-        host_chunk_size=host_chunk_size,
-        top_ports_count=top_ports_count,
-        deep_probe_timeout_seconds=deep_probe_timeout_seconds,
-        ai_after_scan_enabled=ai_after_scan_enabled,
-        passive_arp_enabled=passive_arp_enabled,
-        passive_arp_interface=passive_arp_interface,
+        auto_detect_targets=payload.auto_detect_targets,
+        default_profile=payload.default_profile,
+        interval_minutes=payload.interval_minutes,
+        concurrent_hosts=payload.concurrent_hosts,
+        host_chunk_size=payload.host_chunk_size,
+        top_ports_count=payload.top_ports_count,
+        deep_probe_timeout_seconds=payload.deep_probe_timeout_seconds,
+        ai_after_scan_enabled=payload.ai_after_scan_enabled,
+        passive_arp_enabled=payload.passive_arp_enabled,
+        passive_arp_interface=payload.passive_arp_interface,
     )
     _apply_snmp_settings(
         config,
-        snmp_enabled=snmp_enabled,
-        snmp_version=snmp_version,
-        snmp_community=snmp_community,
-        snmp_timeout=snmp_timeout,
-        snmp_v3_username=snmp_v3_username,
-        snmp_v3_auth_key=snmp_v3_auth_key,
-        snmp_v3_priv_key=snmp_v3_priv_key,
-        snmp_v3_auth_protocol=snmp_v3_auth_protocol,
-        snmp_v3_priv_protocol=snmp_v3_priv_protocol,
+        snmp_enabled=payload.snmp_enabled,
+        snmp_version=payload.snmp_version,
+        snmp_community=payload.snmp_community,
+        snmp_timeout=payload.snmp_timeout,
+        snmp_v3_username=payload.snmp_v3_username,
+        snmp_v3_auth_key=payload.snmp_v3_auth_key,
+        snmp_v3_priv_key=payload.snmp_v3_priv_key,
+        snmp_v3_auth_protocol=payload.snmp_v3_auth_protocol,
+        snmp_v3_priv_protocol=payload.snmp_v3_priv_protocol,
     )
     _apply_ai_and_lookup_settings(
         config,
-        fingerprint_ai_enabled=fingerprint_ai_enabled,
-        fingerprint_ai_model=fingerprint_ai_model,
-        fingerprint_ai_min_confidence=fingerprint_ai_min_confidence,
-        fingerprint_ai_prompt_suffix=fingerprint_ai_prompt_suffix,
-        internet_lookup_enabled=internet_lookup_enabled,
-        internet_lookup_allowed_domains=internet_lookup_allowed_domains,
-        internet_lookup_budget=internet_lookup_budget,
-        internet_lookup_timeout_seconds=internet_lookup_timeout_seconds,
+        fingerprint_ai_enabled=payload.fingerprint_ai_enabled,
+        fingerprint_ai_model=payload.fingerprint_ai_model,
+        fingerprint_ai_min_confidence=payload.fingerprint_ai_min_confidence,
+        fingerprint_ai_prompt_suffix=payload.fingerprint_ai_prompt_suffix,
+        internet_lookup_enabled=payload.internet_lookup_enabled,
+        internet_lookup_allowed_domains=payload.internet_lookup_allowed_domains,
+        internet_lookup_budget=payload.internet_lookup_budget,
+        internet_lookup_timeout_seconds=payload.internet_lookup_timeout_seconds,
     )
     await db.flush()
     return config, build_effective_scanner_config(config)

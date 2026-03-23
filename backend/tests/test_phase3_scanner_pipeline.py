@@ -46,7 +46,7 @@ def test_fingerprint_rules_capture_homelab_firewall_signals():
     os_fp = OSFingerprint(os_name="Linux 5.x", device_type="general purpose|router")
 
     hint = classify(host, ports, os_fp, mac_vendor="Firewalla")
-    priorities = probe_priority(host, ports, hint)
+    priorities = probe_priority(ports, hint)
 
     assert hint.device_class == DeviceClass.FIREWALL
     assert hint.confidence >= 0.95

@@ -153,7 +153,29 @@ function ScanRow({
 }: ScanRowProps) {
   const rowState = buildScanRowState(scan)
   const pauseOptions = [15, 30, 60, 240, 720]
-  const statusActions = !isViewer ? renderScanActions(scan, pauseOptions, isControlling, onControl, onQueueAction) : null
+  const canManageScan = isViewer !== true
+  const statusActions = canManageScan ? renderScanActions(scan, pauseOptions, isControlling, onControl, onQueueAction) : null
+
+  function renderDuration() {
+    if (rowState.duration !== null) {
+      return (
+        <span className="text-xs text-zinc-500 flex items-center gap-1">
+          <Clock className="w-3 h-3" />
+          {rowState.duration < 60 ? `${rowState.duration}s` : `${Math.floor(rowState.duration / 60)}m ${rowState.duration % 60}s`}
+        </span>
+      )
+    }
+
+    if (scan.status === 'running') {
+      return (
+        <span className="text-xs text-sky-500 animate-pulse flex items-center gap-1">
+          <Cpu className="w-3 h-3" /> scanning…
+        </span>
+      )
+    }
+
+    return <span className="text-zinc-400 text-xs">—</span>
+  }
 
   return (
     <>
@@ -226,20 +248,7 @@ function ScanRow({
           )}
         </td>
 
-        <td className="px-4 py-3">
-          {rowState.duration !== null ? (
-            <span className="text-xs text-zinc-500 flex items-center gap-1">
-              <Clock className="w-3 h-3" />
-              {rowState.duration < 60 ? `${rowState.duration}s` : `${Math.floor(rowState.duration / 60)}m ${rowState.duration % 60}s`}
-            </span>
-          ) : scan.status === 'running' ? (
-            <span className="text-xs text-sky-500 animate-pulse flex items-center gap-1">
-              <Cpu className="w-3 h-3" /> scanning…
-            </span>
-          ) : (
-            <span className="text-zinc-400 text-xs">—</span>
-          )}
-        </td>
+        <td className="px-4 py-3">{renderDuration()}</td>
 
         <td className="px-4 py-3">
           <span className={`text-xs px-1.5 py-0.5 rounded font-medium ${rowState.triggeredByClass}`}>
@@ -255,7 +264,7 @@ function ScanRow({
         <tr className="bg-zinc-50/60 dark:bg-zinc-950/40">
           <td colSpan={9} className="px-4 py-3">
             <div className="rounded-lg border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 p-3 space-y-3">
-              {!isViewer && (
+              {canManageScan && (
                 <div className="flex flex-wrap gap-2">{statusActions}</div>
               )}
               <p className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">Live Scan Detail</p>

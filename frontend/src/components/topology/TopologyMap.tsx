@@ -10,7 +10,7 @@ import { cn } from '@/lib/utils'
 import { ZoomIn, ZoomOut, Maximize2, RefreshCw, Filter } from 'lucide-react'
 
 // Register fcose layout once
-if (typeof window !== 'undefined') {
+if (globalThis.window !== undefined) {
   cytoscape.use(fcose)
 }
 

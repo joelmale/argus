@@ -164,36 +164,53 @@ def _collect_port_signature_hints(open_ports: dict[int, PortResult]) -> list[Dev
 def _collect_port_pattern_hints(open_ports: dict[int, PortResult]) -> list[DeviceHint]:
     candidates: list[DeviceHint] = []
     port_set = set(open_ports.keys())
-
-    if port_set & {80, 443} and port_set & {22} and port_set & {161, 179, 520}:
-        candidates.append(DeviceHint(DeviceClass.ROUTER, 0.80, "Router port pattern (SSH+HTTP+SNMP/BGP)"))
-
-    if port_set & {80, 443} and port_set & {22, 8080, 8443} and 161 in port_set:
-        candidates.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.78, "Managed AP pattern (web+ssh+snmp)"))
-
-    if 445 in port_set and port_set & {2049, 548, 873}:
-        candidates.append(DeviceHint(DeviceClass.NAS, 0.80, "NAS port pattern (SMB+NFS/AFP/rsync)"))
-
-    if 22 in port_set and not port_set & {161, 179, 520} and not port_set & {9100, 554}:
-        candidates.append(DeviceHint(DeviceClass.SERVER, 0.50, "SSH without routing protocols"))
-
-    if port_set <= {80, 443, 8080, 8443} and len(port_set) <= 2:
-        candidates.append(DeviceHint(DeviceClass.IOT_DEVICE, 0.50, "HTTP-only small footprint"))
-
-    if 8006 in port_set:
-        candidates.append(DeviceHint(DeviceClass.SERVER, 0.92, "Proxmox VE web UI"))
-    if 5000 in port_set or 5001 in port_set:
-        candidates.append(DeviceHint(DeviceClass.NAS, 0.80, "Synology DSM web UI"))
-    if 32400 in port_set or 8096 in port_set:
-        candidates.append(DeviceHint(DeviceClass.NAS, 0.82, "Media/NAS service pattern"))
-    if 8123 in port_set:
-        candidates.append(DeviceHint(DeviceClass.IOT_DEVICE, 0.85, "Home Assistant service"))
-    if 53 in port_set:
-        dns_port = open_ports.get(53)
-        dns_service = f"{dns_port.service or ''} {dns_port.product or ''} {dns_port.version or ''}".lower() if dns_port else ""
-        if "dnsmasq" in dns_service and (22 in port_set or 80 in port_set or 443 in port_set):
-            candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.86, "dnsmasq gateway pattern"))
+    candidates.extend(_base_port_pattern_hints(port_set))
+    candidates.extend(_well_known_service_hints(port_set))
+    dnsmasq_hint = _dnsmasq_gateway_hint(open_ports, port_set)
+    if dnsmasq_hint is not None:
+        candidates.append(dnsmasq_hint)
     return candidates
+
+
+def _base_port_pattern_hints(port_set: set[int]) -> list[DeviceHint]:
+    hints: list[DeviceHint] = []
+    if port_set & {80, 443} and 22 in port_set and port_set & {161, 179, 520}:
+        hints.append(DeviceHint(DeviceClass.ROUTER, 0.80, "Router port pattern (SSH+HTTP+SNMP/BGP)"))
+    if port_set & {80, 443} and port_set & {22, 8080, 8443} and 161 in port_set:
+        hints.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.78, "Managed AP pattern (web+ssh+snmp)"))
+    if 445 in port_set and port_set & {2049, 548, 873}:
+        hints.append(DeviceHint(DeviceClass.NAS, 0.80, "NAS port pattern (SMB+NFS/AFP/rsync)"))
+    if 22 in port_set and not port_set & {161, 179, 520} and not port_set & {9100, 554}:
+        hints.append(DeviceHint(DeviceClass.SERVER, 0.50, "SSH without routing protocols"))
+    if port_set <= {80, 443, 8080, 8443} and len(port_set) <= 2:
+        hints.append(DeviceHint(DeviceClass.IOT_DEVICE, 0.50, "HTTP-only small footprint"))
+    return hints
+
+
+def _well_known_service_hints(port_set: set[int]) -> list[DeviceHint]:
+    port_hints = (
+        (8006, DeviceClass.SERVER, 0.92, "Proxmox VE web UI"),
+        (5000, DeviceClass.NAS, 0.80, "Synology DSM web UI"),
+        (5001, DeviceClass.NAS, 0.80, "Synology DSM web UI"),
+        (32400, DeviceClass.NAS, 0.82, "Media/NAS service pattern"),
+        (8096, DeviceClass.NAS, 0.82, "Media/NAS service pattern"),
+        (8123, DeviceClass.IOT_DEVICE, 0.85, "Home Assistant service"),
+    )
+    return [
+        DeviceHint(device_class, confidence, reason)
+        for port, device_class, confidence, reason in port_hints
+        if port in port_set
+    ]
+
+
+def _dnsmasq_gateway_hint(open_ports: dict[int, PortResult], port_set: set[int]) -> DeviceHint | None:
+    if 53 not in port_set:
+        return None
+    dns_port = open_ports.get(53)
+    dns_service = f"{dns_port.service or ''} {dns_port.product or ''} {dns_port.version or ''}".lower() if dns_port else ""
+    if "dnsmasq" in dns_service and port_set & {22, 80, 443}:
+        return DeviceHint(DeviceClass.FIREWALL, 0.86, "dnsmasq gateway pattern")
+    return None
 
 
 def _collect_hostname_hints(host_name: str, host: DiscoveredHost) -> list[DeviceHint]:
@@ -239,7 +256,6 @@ def _collect_vendor_hints(
 
 
 def probe_priority(
-    host: DiscoveredHost,
     ports: list[PortResult],
     hint: DeviceHint,
 ) -> list[str]:

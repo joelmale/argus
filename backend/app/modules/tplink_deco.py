@@ -128,32 +128,12 @@ def _parse_deco_log_summary(raw_text: str) -> str:
     if not lines:
         return ""
 
-    counters = {
-        "wifi_client_associations": 0,
-        "wifi_handshakes_completed": 0,
-        "80211k_timeouts": 0,
-        "steering_engine_errors": 0,
-        "invalid_message_events": 0,
-        "mesh_band_mismatch_events": 0,
-    }
+    counters = _empty_deco_log_counters()
     client_macs: set[str] = set()
 
     for line in lines:
-        upper = line.upper()
-        if "AP-STA-CONNECTED" in upper or "ACTION\":\"ASSOCIATE" in upper or "ACTION:ASSOCIATE" in upper:
-            counters["wifi_client_associations"] += 1
-        if "EAPOL-4WAY-HS-COMPLETED" in upper:
-            counters["wifi_handshakes_completed"] += 1
-        if "TIMEOUT WAITING FOR 802.11K RESPONSE" in upper:
-            counters["80211k_timeouts"] += 1
-        if "STEERALG" in upper:
-            counters["steering_engine_errors"] += 1
-        if "INVALID MESSAGE LEN" in upper:
-            counters["invalid_message_events"] += 1
-        if "TARGETBAND" in upper and "MEASUREDBSS" in upper:
-            counters["mesh_band_mismatch_events"] += 1
-        for match in re.findall(r"(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}", upper):
-            client_macs.add(match.replace("-", ":"))
+        _update_deco_log_counters(counters, line)
+        _collect_uppercase_log_macs(line, client_macs)
 
     summary_lines = ["# Parsed Deco Log Summary"]
     for key, value in counters.items():
@@ -166,18 +146,79 @@ def _parse_deco_log_summary(raw_text: str) -> str:
     return "\n".join(summary_lines)
 
 
+def _empty_deco_log_counters() -> dict[str, int]:
+    return {
+        "wifi_client_associations": 0,
+        "wifi_handshakes_completed": 0,
+        "80211k_timeouts": 0,
+        "steering_engine_errors": 0,
+        "invalid_message_events": 0,
+        "mesh_band_mismatch_events": 0,
+    }
+
+
+def _update_deco_log_counters(counters: dict[str, int], line: str) -> None:
+    upper = line.upper()
+    if _is_client_association_line(upper):
+        counters["wifi_client_associations"] += 1
+    if "EAPOL-4WAY-HS-COMPLETED" in upper:
+        counters["wifi_handshakes_completed"] += 1
+    if "TIMEOUT WAITING FOR 802.11K RESPONSE" in upper:
+        counters["80211k_timeouts"] += 1
+    if "STEERALG" in upper:
+        counters["steering_engine_errors"] += 1
+    if "INVALID MESSAGE LEN" in upper:
+        counters["invalid_message_events"] += 1
+    if "TARGETBAND" in upper and "MEASUREDBSS" in upper:
+        counters["mesh_band_mismatch_events"] += 1
+
+
+def _is_client_association_line(upper: str) -> bool:
+    return (
+        "AP-STA-CONNECTED" in upper
+        or 'ACTION":"ASSOCIATE' in upper
+        or "ACTION:ASSOCIATE" in upper
+    )
+
+
+def _collect_uppercase_log_macs(line: str, client_macs: set[str]) -> None:
+    upper = line.upper()
+    for match in re.findall(r"(?:[0-9A-F]{2}[:-]){5}[0-9A-F]{2}", upper):
+        client_macs.add(match.replace("-", ":"))
+
+
 def analyze_deco_logs(raw_text: str) -> dict[str, Any]:
     lines = [line.strip() for line in raw_text.splitlines() if line.strip()]
     if not lines:
-        return {
-            "health_score": 100,
-            "event_count": 0,
-            "issues": [],
-            "recommendations": [],
-            "observed_macs": [],
-        }
+        return _empty_log_analysis()
 
-    pattern_catalog = [
+    pattern_catalog = _deco_log_pattern_catalog()
+
+    issue_map, observed_macs = _collect_deco_log_matches(lines, pattern_catalog)
+    issues, total_penalty = _build_deco_issues(issue_map)
+    recommendations = _build_deco_recommendations(issues)
+
+    return {
+        "health_score": max(0, 100 - total_penalty),
+        "event_count": len(lines),
+        "issues": issues,
+        "recommendations": recommendations,
+        "observed_macs": sorted(observed_macs),
+    }
+
+
+def _empty_log_analysis() -> dict[str, Any]:
+    return {
+        "health_score": 100,
+        "event_count": 0,
+        "issues": [],
+        "recommendations": [],
+        "observed_macs": [],
+    }
+
+
+def _deco_log_pattern_catalog() -> list[dict[str, Any]]:
+    return [
         {
             "key": "band_steering_mismatch",
             "title": "Aggressive band steering mismatch",
@@ -260,18 +301,6 @@ def analyze_deco_logs(raw_text: str) -> dict[str, Any]:
             "health_penalty": 0,
         },
     ]
-
-    issue_map, observed_macs = _collect_deco_log_matches(lines, pattern_catalog)
-    issues, total_penalty = _build_deco_issues(issue_map)
-    recommendations = _build_deco_recommendations(issues)
-
-    return {
-        "health_score": max(0, 100 - total_penalty),
-        "event_count": len(lines),
-        "issues": issues,
-        "recommendations": recommendations,
-        "observed_macs": sorted(observed_macs),
-    }
 
 
 def _collect_deco_log_matches(lines: list[str], pattern_catalog: list[dict[str, Any]]) -> tuple[dict[str, dict[str, Any]], set[str]]:
@@ -760,27 +789,24 @@ def func_lower(column):
 
 
 async def _enrich_asset_from_client(db: AsyncSession, asset: Asset, client: DecoClientRecord) -> None:
-    if client.mac and not asset.mac_address:
-        asset.mac_address = client.mac
-    if client.hostname and not asset.hostname:
-        asset.hostname = client.hostname
-    asset.status = "online"
-    current_custom_fields = dict(asset.custom_fields or {})
-    current_custom_fields["tplink_deco"] = {
-        "nickname": client.nickname,
-        "device_model": client.device_model,
-        "connection_type": client.connection_type,
-        "access_point_name": client.access_point_name,
-        "last_seen_via": "tplink_deco",
-        "raw": client.raw,
-    }
-    asset.custom_fields = current_custom_fields
+    _set_asset_identity(asset, mac=client.mac, hostname=client.hostname)
+    asset.custom_fields = _merge_custom_fields(
+        asset.custom_fields,
+        "tplink_deco",
+        {
+            "nickname": client.nickname,
+            "device_model": client.device_model,
+            "connection_type": client.connection_type,
+            "access_point_name": client.access_point_name,
+            "last_seen_via": "tplink_deco",
+            "raw": client.raw,
+        },
+    )
 
-    tag_names = {tag.tag for tag in (await db.execute(select(AssetTag).where(AssetTag.asset_id == asset.id))).scalars().all()}
-    if "tplink-deco" not in tag_names:
-        db.add(AssetTag(asset_id=asset.id, tag="tplink-deco"))
-    if client.connection_type and "wireless" in client.connection_type.lower() and "wifi" not in tag_names:
-        db.add(AssetTag(asset_id=asset.id, tag="wifi"))
+    tag_names = await _existing_asset_tags(db, asset)
+    _ensure_asset_tag(db, asset, "tplink-deco", tag_names)
+    if client.connection_type and "wireless" in client.connection_type.lower():
+        _ensure_asset_tag(db, asset, "wifi", tag_names)
 
     await record_passive_observation(
         db,
@@ -801,29 +827,25 @@ async def _enrich_asset_from_client(db: AsyncSession, asset: Asset, client: Deco
 
 
 async def _enrich_asset_from_deco_device(db: AsyncSession, asset: Asset, device: DecoDeviceRecord) -> None:
-    if device.mac and not asset.mac_address:
-        asset.mac_address = device.mac
-    if device.hostname and not asset.hostname:
-        asset.hostname = device.hostname
-    asset.status = "online"
+    _set_asset_identity(asset, mac=device.mac, hostname=device.hostname)
     asset.vendor = asset.vendor or "TP-Link"
-    current_custom_fields = dict(asset.custom_fields or {})
-    current_custom_fields["tplink_deco_device"] = {
-        "nickname": device.nickname,
-        "model": device.model,
-        "role": device.role,
-        "software_version": device.software_version,
-        "hardware_version": device.hardware_version,
-        "last_seen_via": "tplink_deco",
-        "raw": device.raw,
-    }
-    asset.custom_fields = current_custom_fields
+    asset.custom_fields = _merge_custom_fields(
+        asset.custom_fields,
+        "tplink_deco_device",
+        {
+            "nickname": device.nickname,
+            "model": device.model,
+            "role": device.role,
+            "software_version": device.software_version,
+            "hardware_version": device.hardware_version,
+            "last_seen_via": "tplink_deco",
+            "raw": device.raw,
+        },
+    )
 
-    tag_names = {tag.tag for tag in (await db.execute(select(AssetTag).where(AssetTag.asset_id == asset.id))).scalars().all()}
-    if "tplink-deco" not in tag_names:
-        db.add(AssetTag(asset_id=asset.id, tag="tplink-deco"))
-    if "access-point" not in tag_names:
-        db.add(AssetTag(asset_id=asset.id, tag="access-point"))
+    tag_names = await _existing_asset_tags(db, asset)
+    _ensure_asset_tag(db, asset, "tplink-deco", tag_names)
+    _ensure_asset_tag(db, asset, "access-point", tag_names)
 
     await record_passive_observation(
         db,
@@ -842,6 +864,36 @@ async def _enrich_asset_from_deco_device(db: AsyncSession, asset: Asset, device:
             "raw": device.raw,
         },
     )
+
+
+def _set_asset_identity(asset: Asset, *, mac: str | None, hostname: str | None) -> None:
+    if mac and not asset.mac_address:
+        asset.mac_address = mac
+    if hostname and not asset.hostname:
+        asset.hostname = hostname
+    asset.status = "online"
+
+
+def _merge_custom_fields(
+    custom_fields: dict[str, Any] | None,
+    key: str,
+    payload: dict[str, Any],
+) -> dict[str, Any]:
+    merged = dict(custom_fields or {})
+    merged[key] = payload
+    return merged
+
+
+async def _existing_asset_tags(db: AsyncSession, asset: Asset) -> set[str]:
+    result = await db.execute(select(AssetTag).where(AssetTag.asset_id == asset.id))
+    return {tag.tag for tag in result.scalars().all()}
+
+
+def _ensure_asset_tag(db: AsyncSession, asset: Asset, tag: str, tag_names: set[str]) -> None:
+    if tag in tag_names:
+        return
+    db.add(AssetTag(asset_id=asset.id, tag=tag))
+    tag_names.add(tag)
 
 
 async def test_tplink_deco_connection(db: AsyncSession) -> dict[str, Any]:

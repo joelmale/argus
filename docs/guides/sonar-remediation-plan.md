@@ -9,133 +9,142 @@ This plan tracks the current Sonar backlog in severity order and groups work int
 
 ## Current Snapshot
 
-The counts below are from the last completed Sonar export. Additional frontend and tail-cleanup work has landed locally since then and still needs a fresh Sonar run to confirm the new totals.
+The counts below are from the latest completed SonarCloud analysis on `main` for commit `2cf3f62` on March 23, 2026.
 
-- `BLOCKER`: 1
-- `CRITICAL`: 46
-- `MAJOR`: 92
-- `MINOR`: 88
-- `VULNERABILITY`: 10
-- `CODE_SMELL`: 217
+Quality gate status:
 
-Most common rules in the current export:
+- `ERROR`
+- failing condition: `new_coverage` = `61.6%` against an `80%` threshold
+- new-code baseline date: `2026-03-21T01:36:56+0000`
 
-- `typescript:S6759` Frontend maintainability issues
-- `python:S3776` Cognitive complexity is too high
-- `typescript:S3358` Nested conditional expressions should be simplified
-- `typescript:S6772` React props and state maintainability issues
-- `python:S7483` Python maintainability issues
+Project measures:
 
-Most concentrated files:
+- `BUGS`: `0`
+- `VULNERABILITIES`: `0`
+- `CODE_SMELLS`: `53`
+- `COVERAGE`: `57.5%`
+- `DUPLICATED_LINES_DENSITY`: `0.0%`
 
-- `frontend/src/app/settings/page.tsx`
-- `frontend/src/components/scans/ScanHistory.tsx`
-- `frontend/src/app/assets/[id]/page.tsx`
-- `frontend/src/components/assets/AssetTable.tsx`
-- `frontend/src/app/login/page.tsx`
-- `backend/app/workers/tasks.py`
+Open code-smell severity mix:
+
+- `CRITICAL`: `14`
+- `MAJOR`: `21`
+- `MINOR`: `18`
+
+Most common remaining rules:
+
+- `python:S3776` Cognitive complexity is too high (`14`)
+- `python:S1172` Remove unused function parameters (`6`)
+- `typescript:S6759` Mark component props as read-only (`5`)
+- `typescript:S3358` Extract nested ternary operations (`4`)
+- `python:S3358` Extract nested conditional expressions (`3`)
+
+Most concentrated remaining files:
+
+- `backend/app/db/upsert.py` (`5`)
+- `backend/app/scanner/stages/deep_probe.py` (`3`)
+- `frontend/src/components/dashboard/RecentAssets.tsx` (`3`)
+- `frontend/src/components/scans/ScanHistory.tsx` (`3`)
+- `backend/app/api/routes/scans.py` (`2`)
+- `backend/app/scanner/agent/tools.py` (`2`)
+- `backend/app/scanner/pipeline.py` (`2`)
+- `backend/app/scanner/probes/mdns.py` (`2`)
+- `backend/app/scanner/snmp.py` (`2`)
+- `backend/app/scanner/stages/fingerprint.py` (`2`)
 
 ## Remaining Backlog By Severity And Phase
 
-### `BLOCKER`
-
-Batch 5: Tail cleanup
-
-- `1` blocker remains outside the completed backend route and API-contract batches.
-
-Status update:
-
-- The remaining blocker in `backend/app/core/config.py` has been fixed locally by removing the hard-coded database password default and deriving `DATABASE_URL` from environment-backed settings.
-- A fresh Sonar run is required to clear the count in this section.
-
 ### `CRITICAL`
 
-Batch 2 follow-up: Backend complexity reduction
-
-- `27` critical issues remain, concentrated in:
-  - `backend/app/workers/tasks.py`
-  - `backend/app/modules/tplink_deco.py`
+- All `14` remaining critical code smells are backend `python:S3776` complexity items.
+- Highest-risk files:
+  - `backend/app/db/upsert.py` (`4`)
+  - `backend/app/scanner/stages/fingerprint.py`
   - `backend/app/scanner/pipeline.py`
-
-Batch 5: Tail cleanup
-
-- `15` critical issues remain in backend modules and probe helpers outside the completed route batches.
-
-Batch 4: Frontend accessibility and maintainability
-
-- `4` critical frontend issues remain.
-
-Status update:
-
-- The highest-risk frontend hotspots have been addressed locally in:
-  - `frontend/src/app/login/page.tsx`
-  - `frontend/src/app/settings/page.tsx`
-  - `frontend/src/components/scans/ScanHistory.tsx`
-  - `frontend/src/components/assets/AssetTable.tsx`
-  - `frontend/src/app/assets/[id]/page.tsx`
-- A fresh Sonar run is required to confirm how many critical findings remain after the latest refactors.
+  - `backend/app/modules/tplink_deco.py`
+  - `backend/app/scanner/stages/discovery.py`
+  - `backend/app/fingerprinting/evidence.py`
+  - `backend/app/scanner/stages/portscan.py`
+  - `backend/app/scanner/agent/anthropic_analyst.py`
+  - `backend/app/scanner/agent/ollama_analyst.py`
+  - `backend/app/scanner/agent/tools.py`
+  - `backend/app/scanner/probes/mdns.py`
 
 ### `MAJOR`
 
-Batch 4: Frontend accessibility and maintainability
-
-- `63` major issues remain.
-- Highest concentration:
-  - `frontend/src/app/settings/page.tsx`
+- `21` major code smells remain.
+- Backend major backlog is now mostly:
+  - `python:S1172` unused parameters
+  - `python:S3358` nested conditional cleanup
+  - `python:S8415` missing documented HTTPException responses
+  - `python:S7483` timeout handling in `deep_probe.py`
+  - `python:S107` parameter explosion in `scanner/config.py`
+  - `python:S5843` regex complexity in `fingerprinting/internet_lookup.py`
+  - `python:S5886` return type mismatch in `db/upsert.py`
+- Frontend major backlog is now concentrated in:
+  - `frontend/src/app/scans/page.tsx`
+  - `frontend/src/components/dashboard/DeviceTypeChart.tsx`
+  - `frontend/src/components/dashboard/RecentAssets.tsx`
   - `frontend/src/components/scans/ScanHistory.tsx`
-  - `frontend/src/app/assets/[id]/page.tsx`
-  - `frontend/src/components/assets/AssetTable.tsx`
-
-Batch 5: Tail cleanup
-
-- `24` major backend cleanup items remain.
-
-Batch 3 follow-up: API contract hygiene
-
-- `3` major API-contract cleanup items remain.
-
-Batch 2 follow-up: Backend complexity reduction
-
-- `2` major complexity items remain after the first refactor sweep.
+  - `frontend/src/app/assets/page.tsx`
+  - `frontend/src/types/index.ts`
 
 ### `MINOR`
 
-Batch 4: Frontend accessibility and maintainability
-
-- `77` minor frontend issues remain.
-
-Batch 2 follow-up: Backend complexity reduction
-
-- `6` minor backend maintainability issues remain.
-
-Batch 5: Tail cleanup
-
-- `5` minor cleanup items remain.
+- `18` minor code smells remain.
+- Frontend minor backlog is dominated by:
+  - `typescript:S6759` read-only props (`5`)
+  - `typescript:S7735` negated conditions (`3`)
+  - `typescript:S7764` prefer `globalThis.window` (`2`)
+- Backend minor backlog is dominated by:
+  - `python:S7503` async functions without async behavior (`3`)
+  - one-off cleanup rules such as `python:S6353`
 
 ## Remediation Strategy
 
 The order below follows a security and risk-management lens:
 
-1. Remove real defects and correctness risks.
-2. Eliminate high-volume blockers that obscure the true backlog.
-3. Refactor high-complexity control paths that affect scan execution and operator actions.
-4. Clean up API contracts and frontend accessibility gaps.
-5. Finish low-cost maintainability cleanup.
+1. Recover the quality gate by raising new-code backend coverage above `80%`.
+2. Refactor the remaining backend complexity hotspots.
+3. Clear the concentrated frontend major/minor maintainability issues.
+4. Finish backend API-contract and tail-cleanup items.
 
-## Batch 0: Correctness Fixes
+## Batch 0: Quality Gate Recovery
 
 Priority: immediate
 
-- Fix the `_investigate_host(...)` call mismatch in `backend/app/api/routes/assets.py`.
-- Confirm route behavior still works after the fix with focused backend validation.
+Target gate:
+
+- `new_coverage >= 80%`
+
+Current state:
+
+- `new_coverage`: `61.6%`
+- `new_lines_to_cover`: `1369`
+- `new_uncovered_lines`: `474`
+- `new_code_smells`: `8`
+
+Approach:
+
+- Add focused backend tests for the active code added since the March 21 baseline.
+- Prioritize branch-heavy paths already being refactored because they are the most likely to carry uncovered new lines.
+- Use targeted tests instead of broad end-to-end tests to raise coverage quickly and keep failures local.
+
+Likely target modules for immediate test additions:
+
+- `backend/app/scanner/pipeline.py`
+- `backend/app/modules/tplink_deco.py`
+- `backend/app/scanner/stages/fingerprint.py`
+- `backend/app/scanner/stages/deep_probe.py`
+- `backend/app/db/upsert.py`
 
 Outcome:
 
-- Clears the one known `BUG`/correctness-style blocker before broader cleanup.
+- Restores merge confidence by making the quality gate meaningful again.
 
 ## Batch 1: FastAPI `Annotated` Migration
 
-Priority: high
+Priority: complete
 
 Target rule:
 
@@ -156,11 +165,10 @@ Approach:
 - Replace `Query(...)` route parameters with `Annotated[...]` query aliases where needed.
 - Prefer local aliases like `DBSession`, `AdminUser`, and `CurrentUser` to keep signatures readable.
 
-Risk reduction:
+Status:
 
-- Lowers blocker volume quickly without changing endpoint behavior.
-- Standardizes dependency declarations, which reduces accidental drift across route modules.
-
+- Completed.
+- No remaining `python:S8410` items are present in the latest scan.
 ## Batch 2: Critical Complexity Reduction
 
 Priority: high
@@ -171,9 +179,17 @@ Target rule:
 
 Remaining target files:
 
-- `backend/app/workers/tasks.py`
-- `backend/app/modules/tplink_deco.py`
+- `backend/app/db/upsert.py`
+- `backend/app/scanner/stages/fingerprint.py`
 - `backend/app/scanner/pipeline.py`
+- `backend/app/modules/tplink_deco.py`
+- `backend/app/scanner/stages/discovery.py`
+- `backend/app/fingerprinting/evidence.py`
+- `backend/app/scanner/stages/portscan.py`
+- `backend/app/scanner/agent/anthropic_analyst.py`
+- `backend/app/scanner/agent/ollama_analyst.py`
+- `backend/app/scanner/agent/tools.py`
+- `backend/app/scanner/probes/mdns.py`
 
 Approach:
 
@@ -187,8 +203,8 @@ Risk reduction:
 
 Status:
 
-- First pass completed in `scans.py`, `tasks.py`, and `pipeline.py`.
-- Follow-up work remains in the same files plus `tplink_deco.py`.
+- First pass completed in queue-control and frontend hotspot areas.
+- The current scan confirms the remaining complexity backlog has shifted into lower-level scanner, evidence, and upsert modules.
 
 ## Batch 3: API Contract Hygiene
 
@@ -201,7 +217,9 @@ Target rules:
 
 Remaining target files:
 
-- backend route handlers still carrying undocumented edge-case responses after the first decorator pass
+- `backend/app/api/routes/assets.py`
+- `backend/app/api/routes/scans.py`
+- `backend/app/scanner/probes/mdns.py`
 
 Approach:
 
@@ -215,8 +233,8 @@ Risk reduction:
 
 Status:
 
-- Primary response metadata pass completed in `assets.py`, `scans.py`, and `system.py`.
-- Only a small residual set remains.
+- Primary response metadata pass completed.
+- Residual work is now one `python:S8415` item and a small set of nested-conditional cleanups.
 
 ## Batch 4: Frontend Accessibility And Deprecation Cleanup
 
@@ -224,21 +242,28 @@ Priority: medium
 
 Target files:
 
-- `frontend/src/app/settings/page.tsx`
-- `frontend/src/app/login/page.tsx`
-- `frontend/src/components/scans/ScanHistory.tsx`
-- `frontend/src/components/assets/AssetTable.tsx`
-- `frontend/src/app/assets/[id]/page.tsx`
 - `frontend/src/app/scans/page.tsx`
+- `frontend/src/components/dashboard/DeviceTypeChart.tsx`
+- `frontend/src/components/dashboard/RecentAssets.tsx`
+- `frontend/src/components/scans/ScanHistory.tsx`
+- `frontend/src/app/assets/page.tsx`
+- `frontend/src/types/index.ts`
+- `frontend/src/app/layout.tsx`
+- `frontend/src/app/providers.tsx`
+- `frontend/src/components/dashboard/ActivityFeed.tsx`
+- `frontend/src/components/dashboard/StatsGrid.tsx`
+- `frontend/src/components/layout/AppShell.tsx`
 - `frontend/src/hooks/useAuth.ts`
-- `frontend/src/components/scans/QuickScan.tsx`
-- `frontend/src/lib/api.ts`
+- `frontend/src/hooks/useWebSocket.ts`
+- `frontend/src/components/topology/TopologyMap.tsx`
 
 Approach:
 
-- Fix label-to-control associations.
-- Replace deprecated form event patterns.
-- Simplify conditional rendering patterns flagged by Sonar.
+- Remove the remaining nested ternaries and negated conditions.
+- Finish read-only prop typing across shared components.
+- Replace `window` references with `globalThis.window`.
+- Remove array-index keys and small dashboard-list maintainability issues.
+- Clean up the two type-shape issues in `frontend/src/types/index.ts`.
 
 Risk reduction:
 
@@ -247,21 +272,14 @@ Risk reduction:
 
 Current severity mix:
 
-- `CRITICAL`: 4
-- `MAJOR`: 63
-- `MINOR`: 77
+- `MAJOR`: 6
+- `MINOR`: 13
 
 Status:
 
-- Primary pass completed locally.
-- Changes include:
-  - proper `label` / `htmlFor` associations in the login and setup forms
-  - replacement of deprecated `FormEvent`-style handlers with form submit handler types derived from component props
-  - extraction of nested scan-row and filter-menu logic in `ScanHistory.tsx` and `AssetTable.tsx`
-  - checkbox label text wrapped in elements to eliminate ambiguous JSX spacing issues
-  - readonly prop typing applied across the main frontend hotspot components
-  - array-index keys removed from the major list/skeleton hotspots in the asset detail view and scan history
-- Remaining frontend cleanup should be treated as residual follow-up after the next Sonar run, not as untouched Batch 4 work.
+- Major first pass completed.
+- The latest scan confirms `frontend/src/app/settings/page.tsx`, `frontend/src/components/assets/AssetTable.tsx`, and most prior hotspot files are no longer dominant backlog drivers.
+- Remaining frontend work is now a short residual pass, not a full hotspot refactor batch.
 
 ## Batch 5: Tail Cleanup
 
@@ -284,19 +302,21 @@ Risk reduction:
 
 Current severity mix:
 
-- `BLOCKER`: 1
-- `CRITICAL`: 15
-- `MAJOR`: 24
+- `CRITICAL`: 14
+- `MAJOR`: 15
+- `MINOR`: 5
 
 Status:
 
 - In progress.
-- Completed locally so far:
-  - duplicate literal cleanup in backend route/model hotspots
-  - tail cleanup in frontend hotspot files while doing Batch 4, including readonly props, stable keys, and smaller JSX simplifications
-  - Docusaurus dependency alignment plus `serialize-javascript@7.0.4` override in `website/package.json`, with docs build passing and `npm audit` returning zero vulnerabilities
-- Remaining Batch 5 work is now mostly backend residual rules and any frontend stragglers left after the next Sonar refresh.
-- `MINOR`: 5
+- Remaining Batch 5 work is now mostly backend residual rules:
+  - `python:S1172`
+  - `python:S7503`
+  - `python:S5843`
+  - `python:S5886`
+  - `python:S7483`
+  - `python:S6353`
+  - `python:S107`
 
 ## Verification Gates
 
@@ -309,10 +329,10 @@ Each batch should end with focused validation:
 
 ## Progress Log
 
-- [x] Batch 0: `_investigate_host(...)` call mismatch identified
-- [x] Batch 0: correctness fix implemented
+- [x] Batch 0: SonarCloud latest run captured from GitHub Actions and Sonar API
+- [ ] Batch 0: raise `new_coverage` from `61.6%` to `80%+`
 - [x] Batch 1: first `Annotated` migration pass across backend route modules
-- [x] Batch 2: complexity refactors in scan-control code
+- [ ] Batch 2: remaining backend complexity hotspots
 - [x] Batch 3: API contract cleanup
-- [ ] Batch 4: frontend accessibility cleanup
+- [ ] Batch 4: residual frontend maintainability cleanup
 - [ ] Batch 5: tail cleanup

@@ -140,7 +140,7 @@ async def run_scan(
     # ── Stages 3–6: Per-host investigation (concurrent) ──────────────────────
     semaphore = asyncio.Semaphore(max(1, concurrent_hosts))
     analyst = None
-    if enable_ai and mode_behavior.enable_ai_by_default:
+    if _should_enable_ai(enable_ai, mode_behavior):
         from app.scanner.agent import get_analyst
         analyst = get_analyst()
 
@@ -156,50 +156,18 @@ async def run_scan(
         job_id,
     )
 
-    results: list[HostScanResult | None] = []
-    completed_hosts = 0
-    deep_probed_hosts = 0
     total_hosts = len(tasks)
     await _broadcast_investigation_start(broadcast_fn, job_id, hosts, total_hosts, summary)
-
-    for task in asyncio.as_completed(tasks):
-        result = await task
-        results.append(result)
-        completed_hosts += 1
-        if result is not None and result.probes:
-            deep_probed_hosts += 1
-        if db_session is not None and result is not None:
-            await _call_persist_results(
-                _persist_results,
-                db_session,
-                [result],
-                {result.host.ip_address},
-                summary,
-                broadcast_fn,
-                job_id,
-                mark_missing_offline=False,
-                stage="investigation",
-            )
-        await _broadcast_investigation_progress(
-            broadcast_fn,
-            job_id,
-            hosts,
-            summary,
-            completed_hosts,
-            deep_probed_hosts,
-            total_hosts,
-            result,
-        )
-
-        await _check_control(
-            control_fn,
-            stage="investigation",
-            summary=summary,
-            hosts=hosts,
-            completed_results=[r for r in results if r],
-            total_hosts=total_hosts,
-            tasks=tasks,
-        )
+    results, completed_hosts, deep_probed_hosts = await _collect_investigation_results(
+        tasks,
+        hosts,
+        total_hosts,
+        summary,
+        db_session,
+        broadcast_fn,
+        job_id,
+        control_fn,
+    )
 
     # ── Stage 6: Finalize offline reconciliation ────────────────────────────
     if db_session is not None:
@@ -209,7 +177,6 @@ async def run_scan(
             summary=summary,
             hosts=hosts,
             completed_results=[r for r in results if r],
-            total_hosts=total_hosts,
         )
         await _broadcast(broadcast_fn, {
             "event": "scan_progress",
@@ -227,7 +194,7 @@ async def run_scan(
                 "message": f"Persisting results for {completed_hosts} investigated hosts",
             },
         })
-        scanned_ips = {host.ip_address for host in hosts}
+        scanned_ips = _build_host_scanned_ips(hosts)
         await _call_persist_results(
             _persist_results,
             db_session,
@@ -240,12 +207,7 @@ async def run_scan(
             stage="persist",
         )
 
-    # Tally summary
-    for r in results:
-        if r:
-            summary.total_open_ports += len(r.open_ports)
-            if r.ai_analysis:
-                summary.ai_analyses_completed += 1
+    _tally_summary_from_results(summary, results)
 
     summary.duration_seconds = round(time.monotonic() - t0, 2)
     log.info("=== Scan complete: %s | %d hosts | %ds ===",
@@ -257,6 +219,23 @@ async def run_scan(
     })
 
     return summary
+
+
+def _should_enable_ai(enable_ai: bool, mode_behavior) -> bool:
+    return enable_ai and mode_behavior.enable_ai_by_default
+
+
+def _build_host_scanned_ips(hosts: list[DiscoveredHost]) -> set[str]:
+    return {host.ip_address for host in hosts}
+
+
+def _tally_summary_from_results(summary: ScanSummary, results: list[HostScanResult | None]) -> None:
+    for result in results:
+        if result is None:
+            continue
+        summary.total_open_ports += len(result.open_ports)
+        if result.ai_analysis:
+            summary.ai_analyses_completed += 1
 
 
 async def _run_port_scan_stage(
@@ -276,7 +255,6 @@ async def _run_port_scan_stage(
         summary=summary,
         hosts=hosts,
         completed_results=[],
-        total_hosts=len(hosts),
     )
     port_map = await _run_port_scan_chunks(
         hosts,
@@ -293,7 +271,6 @@ async def _run_port_scan_stage(
         summary=summary,
         hosts=hosts,
         completed_results=[],
-        total_hosts=len(hosts),
     )
     return port_map
 
@@ -477,7 +454,6 @@ async def _run_discovery_stage(
         summary=summary,
         hosts=hosts,
         completed_results=[],
-        total_hosts=len(hosts),
     )
     return hosts
 
@@ -513,7 +489,6 @@ async def _check_control(
     summary: ScanSummary,
     hosts: list[DiscoveredHost],
     completed_results: list[HostScanResult],
-    total_hosts: int,
     tasks: list[asyncio.Task] | None = None,
 ) -> None:
     if control_fn is None:
@@ -540,6 +515,64 @@ async def _cancel_pending_tasks(tasks: list[asyncio.Task] | None) -> None:
     await asyncio.gather(*tasks, return_exceptions=True)
 
 
+async def _collect_investigation_results(
+    tasks: list[asyncio.Task],
+    hosts: list[DiscoveredHost],
+    total_hosts: int,
+    summary: ScanSummary,
+    db_session,
+    broadcast_fn,
+    job_id: str,
+    control_fn,
+) -> tuple[list[HostScanResult | None], int, int]:
+    results: list[HostScanResult | None] = []
+    completed_hosts = 0
+    deep_probed_hosts = 0
+
+    for task in asyncio.as_completed(tasks):
+        result = await task
+        results.append(result)
+        completed_hosts += 1
+        if result is not None and result.probes:
+            deep_probed_hosts += 1
+        await _persist_investigation_result(db_session, result, summary, broadcast_fn, job_id)
+        await _broadcast_investigation_progress(
+            broadcast_fn,
+            job_id,
+            hosts,
+            summary,
+            completed_hosts,
+            deep_probed_hosts,
+            total_hosts,
+            result,
+        )
+        await _check_control(
+            control_fn,
+            stage="investigation",
+            summary=summary,
+            hosts=hosts,
+            completed_results=[row for row in results if row],
+            tasks=tasks,
+        )
+    return results, completed_hosts, deep_probed_hosts
+
+
+async def _persist_investigation_result(db_session, result, summary: ScanSummary, broadcast_fn, job_id: str) -> None:
+    if db_session is None or result is None:
+        return
+    await _call_persist_results(
+        _persist_results,
+        db_session,
+        [result],
+        {result.host.ip_address},
+        summary,
+        broadcast_fn,
+        job_id,
+        mark_missing_offline=False,
+        stage="investigation",
+    )
+
+
 def _build_control_interrupt(
     decision: ScanControlDecision,
     stage: str,
@@ -549,10 +582,11 @@ def _build_control_interrupt(
 ) -> ScanControlInterrupt:
     preserve_discovery = decision.mode == "preserve_discovery"
     persisted_results = partial_results if preserve_discovery else completed_results
-    action_label = "paused" if decision.action == "pause" else "cancelled"
+    status = _interrupt_status(decision.action)
+    action_label = status
     message = decision.message or f"Scan {action_label} during {stage}"
     return ScanControlInterrupt(
-        status="paused" if decision.action == "pause" else "cancelled",
+        status=status,
         message=message,
         summary=summary.model_copy(deep=True),
         partial_results=persisted_results,
@@ -560,6 +594,10 @@ def _build_control_interrupt(
         resume_after=decision.resume_after,
         mark_missing_offline=False,
     )
+
+
+def _interrupt_status(action: str) -> str:
+    return "paused" if action == "pause" else "cancelled"
 
 
 def _build_partial_results(
@@ -609,7 +647,7 @@ async def _investigate_host(
 
         vendor, reverse_hostname = await _lookup_host_enrichment(mac_vendor, dns_lookup, host, ip, nmap_vendor)
         hint = classify(host, ports, os_fp, vendor)
-        priority_probes = probe_priority(host, ports, hint)
+        priority_probes = probe_priority(ports, hint)
 
         # Build partial result
         result = HostScanResult(
@@ -648,7 +686,6 @@ async def _run_deep_probe_stage(
     host: DiscoveredHost,
     ports,
     priority_probes,
-    profile: ScanProfile,
     deep_probe_timeout_seconds: int,
 ) -> list:
     if not run_deep_probes:
@@ -658,7 +695,6 @@ async def _run_deep_probe_stage(
         host,
         ports,
         priority_probes,
-        profile,
         timeout_seconds=deep_probe_timeout_seconds,
     )
 
@@ -811,22 +847,14 @@ async def _persist_results(
             notify_new_device_if_enabled,
         )
 
-    # Mark offline assets
-    if mark_missing_offline:
-        offline_count, offline_assets = await mark_offline(db_session, offline_ips)
-        summary.offline_assets = offline_count
-        if offline_assets:
-            await notify_devices_offline_if_enabled(
-                db_session,
-                [
-                    {
-                        "ip": asset.ip_address,
-                        "hostname": asset.hostname,
-                        "last_seen": asset.last_seen.isoformat() if asset.last_seen else None,
-                    }
-                    for asset in offline_assets
-                ]
-            )
+    await _persist_offline_assets(
+        db_session,
+        offline_ips,
+        summary,
+        mark_missing_offline,
+        mark_offline,
+        notify_devices_offline_if_enabled,
+    )
 
     await db_session.commit()
 
@@ -898,6 +926,34 @@ async def _persist_result(
         summary.errors.append(f"{result.host.ip_address}: {exc}")
 
 
+async def _persist_offline_assets(
+    db_session,
+    offline_ips: list[str],
+    summary: ScanSummary,
+    mark_missing_offline: bool,
+    mark_offline,
+    notify_devices_offline_if_enabled,
+) -> None:
+    if not mark_missing_offline:
+        return
+    offline_count, offline_assets = await mark_offline(db_session, offline_ips)
+    summary.offline_assets = offline_count
+    if not offline_assets:
+        return
+    await notify_devices_offline_if_enabled(
+        db_session,
+        [_offline_notification_payload(asset) for asset in offline_assets],
+    )
+
+
+def _offline_notification_payload(asset) -> dict[str, str | None]:
+    return {
+        "ip": asset.ip_address,
+        "hostname": asset.hostname,
+        "last_seen": asset.last_seen.isoformat() if asset.last_seen else None,
+    }
+
+
 async def _persist_snmp_topology(db_session, asset, result: HostScanResult, infer_topology_links_from_snmp) -> None:
     snmp_probe = next((probe for probe in result.probes if probe.probe_type == "snmp" and probe.success), None)
     if snmp_probe:
@@ -916,30 +972,39 @@ async def _update_summary(
 ) -> None:
     if change_type == "discovered":
         summary.new_assets += 1
-        discovered_event = {
-            "event": "device_discovered",
-            "data": {
-                "job_id": job_id,
-                "stage": stage,
-                "ip": result.host.ip_address,
-                "mac": result.host.mac_address,
-                "hostname": result.reverse_hostname,
-                "device_class": result.ai_analysis.device_class.value if result.ai_analysis else "unknown",
-            },
-        }
+        discovered_event = _build_discovered_event(job_id, stage, result)
         await _broadcast(broadcast_fn, discovered_event)
         await notify_new_device_if_enabled(db_session, discovered_event["data"])
-    elif change_type == "updated":
+        return
+    if change_type == "updated":
         summary.changed_assets += 1
-        await _broadcast(broadcast_fn, {
-            "event": "device_updated",
-            "data": {
-                "job_id": job_id,
-                "stage": stage,
-                "ip": result.host.ip_address,
-                "hostname": result.reverse_hostname,
-            },
-        })
+        await _broadcast(broadcast_fn, _build_updated_event(job_id, stage, result))
+
+
+def _build_discovered_event(job_id: str, stage: str, result: HostScanResult) -> dict:
+    return {
+        "event": "device_discovered",
+        "data": {
+            "job_id": job_id,
+            "stage": stage,
+            "ip": result.host.ip_address,
+            "mac": result.host.mac_address,
+            "hostname": result.reverse_hostname,
+            "device_class": result.ai_analysis.device_class.value if result.ai_analysis else "unknown",
+        },
+    }
+
+
+def _build_updated_event(job_id: str, stage: str, result: HostScanResult) -> dict:
+    return {
+        "event": "device_updated",
+        "data": {
+            "job_id": job_id,
+            "stage": stage,
+            "ip": result.host.ip_address,
+            "hostname": result.reverse_hostname,
+        },
+    }
 
 
 async def _broadcast(fn, payload: dict) -> None:

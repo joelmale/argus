@@ -75,121 +75,57 @@ async def upsert_scan_result(
     stmt = select(Asset).where(Asset.ip_address == ip)
     existing = (await db.execute(stmt)).scalar_one_or_none()
 
-    # ── Determine new field values ────────────────────────────────────────────
-    new_hostname = result.reverse_hostname
-    new_os = None
-    new_vendor = result.mac_vendor
-    evidence = extract_evidence(result)
-    new_device_type, new_device_type_source = derive_detected_device_type(evidence)
-
-    if _should_persist_os_name(result):
-        new_os = result.os_fingerprint.os_name
-
-    if result.ai_analysis and _should_persist_ai_fields(result):
-        ai = result.ai_analysis
-        if ai.os_guess:
-            new_os = ai.os_guess
-        if ai.vendor:
-            new_vendor = ai.vendor
+    new_hostname, new_os, new_vendor, evidence, new_device_type, new_device_type_source = _derive_asset_fields(result)
 
     now = datetime.now(timezone.utc)
 
     # ── New asset ─────────────────────────────────────────────────────────────
     if existing is None:
-        asset = Asset(
-            ip_address=ip,
-            mac_address=result.host.mac_address,
-            hostname=new_hostname,
-            vendor=new_vendor,
-            os_name=new_os,
-            device_type=new_device_type,
-            device_type_source=new_device_type_source,
-            status="online",
-            first_seen=now,
-            last_seen=now,
+        asset = await _create_asset(
+            db,
+            result,
+            now,
+            new_hostname,
+            new_vendor,
+            new_os,
+            new_device_type,
+            new_device_type_source,
         )
-        db.add(asset)
-        await db.flush()  # Get the generated ID
-
-        await _refresh_fingerprint_snapshot(db, asset, result, evidence)
-        await _upsert_ai_analysis(db, asset, result)
-        await _upsert_fingerprint_hypothesis(db, asset, evidence)
-        await _upsert_internet_lookup(db, asset, evidence)
-        await refresh_risk_and_lifecycle(db, asset, evidence)
-        await _upsert_autopsy(
+        await _persist_asset_context(
             db,
             asset,
-            _build_autopsy_trace(
-                asset,
-                result,
-                evidence,
-                new_hostname,
-                new_vendor,
-                new_os,
-                new_device_type,
-                new_device_type_source,
-            ),
+            result,
+            evidence,
+            new_hostname,
+            new_vendor,
+            new_os,
+            new_device_type,
+            new_device_type_source,
         )
-
         await _upsert_ports(db, asset, result)
-
-        db.add(AssetHistory(
-            asset_id=asset.id,
-            change_type="discovered",
-            diff={"ip_address": ip, "mac": result.host.mac_address, "discovery_method": result.host.discovery_method},
-        ))
-
+        _record_discovery_history(db, asset, result)
         log.info("NEW asset: %s", ip)
         return asset, "discovered"
 
     # ── Existing asset — compute diff ─────────────────────────────────────────
     changes: dict[str, dict] = {}
 
-    def _check(field: str, new_val, current_val=None):
-        """Record a field change if new_val is set and differs from current."""
-        if new_val is None:
-            return
-        cur = current_val if current_val is not None else getattr(existing, field)
-        if cur != new_val:
-            changes[field] = {"old": cur, "new": new_val}
-            setattr(existing, field, new_val)
-
-    # Status change: offline → online
-    if existing.status == "offline":
-        changes["status"] = {"old": "offline", "new": "online"}
-        existing.status = "online"
-
-    _check("hostname", new_hostname)
-    _check("vendor", new_vendor)
-    _check("os_name", new_os)
-    if not existing.device_type_override:
-        _check("device_type", new_device_type)
-        if new_device_type is not None:
-            _check("device_type_source", new_device_type_source)
-
-    if result.host.mac_address and not existing.mac_address:
-        _check("mac_address", result.host.mac_address)
+    _apply_asset_updates(existing, result, changes, new_hostname, new_vendor, new_os, new_device_type, new_device_type_source)
 
     existing.last_seen = now
 
-    await _refresh_fingerprint_snapshot(db, existing, result, evidence)
-    await _upsert_ai_analysis(db, existing, result)
-    await _upsert_fingerprint_hypothesis(db, existing, evidence)
-    await _upsert_internet_lookup(db, existing, evidence)
-    await refresh_risk_and_lifecycle(db, existing, evidence)
-    await _upsert_autopsy(
+    selected_device_type = existing.effective_device_type if existing.device_type_override else new_device_type
+    selected_device_type_source = existing.effective_device_type_source if existing.device_type_override else new_device_type_source
+    await _persist_asset_context(
         db,
         existing,
-        _build_autopsy_trace(
-            existing,
-            result,
-            evidence,
-            new_hostname,
-            new_vendor,
-            new_os,
-            existing.effective_device_type if existing.device_type_override else new_device_type,
-            existing.effective_device_type_source if existing.device_type_override else new_device_type_source,
-        ),
+        result,
+        evidence,
+        new_hostname,
+        new_vendor,
+        new_os,
+        selected_device_type,
+        selected_device_type_source,
     )
 
     # ── Upsert ports ──────────────────────────────────────────────────────────
@@ -213,12 +149,140 @@ async def upsert_scan_result(
     return existing, "updated"
 
 
+def _derive_asset_fields(
+    result: HostScanResult,
+) -> tuple[str | None, str | None, str | None, list, str | None, str]:
+    new_hostname = result.reverse_hostname
+    new_os = result.os_fingerprint.os_name if _should_persist_os_name(result) else None
+    new_vendor = result.mac_vendor
+    evidence = extract_evidence(result)
+    new_device_type, new_device_type_source = derive_detected_device_type(evidence)
+
+    if result.ai_analysis and _should_persist_ai_fields(result):
+        ai = result.ai_analysis
+        if ai.os_guess:
+            new_os = ai.os_guess
+        if ai.vendor:
+            new_vendor = ai.vendor
+    return new_hostname, new_os, new_vendor, evidence, new_device_type, new_device_type_source
+
+
+async def _create_asset(
+    db: AsyncSession,
+    result: HostScanResult,
+    now: datetime,
+    new_hostname: str | None,
+    new_vendor: str | None,
+    new_os: str | None,
+    new_device_type: str | None,
+    new_device_type_source: str,
+) -> Asset:
+    asset = Asset(
+        ip_address=result.host.ip_address,
+        mac_address=result.host.mac_address,
+        hostname=new_hostname,
+        vendor=new_vendor,
+        os_name=new_os,
+        device_type=new_device_type,
+        device_type_source=new_device_type_source,
+        status="online",
+        first_seen=now,
+        last_seen=now,
+    )
+    db.add(asset)
+    await db.flush()
+    return asset
+
+
+async def _persist_asset_context(
+    db: AsyncSession,
+    asset: Asset,
+    result: HostScanResult,
+    evidence: list,
+    new_hostname: str | None,
+    new_vendor: str | None,
+    new_os: str | None,
+    selected_device_type: str | None,
+    selected_device_type_source: str,
+) -> None:
+    await _refresh_fingerprint_snapshot(db, asset, result, evidence)
+    await _upsert_ai_analysis(db, asset, result)
+    await _upsert_fingerprint_hypothesis(db, asset, evidence)
+    await _upsert_internet_lookup(db, asset, evidence)
+    await refresh_risk_and_lifecycle(db, asset, evidence)
+    await _upsert_autopsy(
+        db,
+        asset,
+        _build_autopsy_trace(
+            asset,
+            result,
+            evidence,
+            new_hostname,
+            new_vendor,
+            new_os,
+            selected_device_type,
+            selected_device_type_source,
+        ),
+    )
+
+
+def _apply_asset_updates(
+    existing: Asset,
+    result: HostScanResult,
+    changes: dict[str, dict],
+    new_hostname: str | None,
+    new_vendor: str | None,
+    new_os: str | None,
+    new_device_type: str | None,
+    new_device_type_source: str,
+) -> None:
+    def _check(field: str, new_val, current_val=None):
+        if new_val is None:
+            return
+        cur = current_val if current_val is not None else getattr(existing, field)
+        if cur != new_val:
+            changes[field] = {"old": cur, "new": new_val}
+            setattr(existing, field, new_val)
+
+    if existing.status == "offline":
+        changes["status"] = {"old": "offline", "new": "online"}
+        existing.status = "online"
+
+    _check("hostname", new_hostname)
+    _check("vendor", new_vendor)
+    _check("os_name", new_os)
+    if not existing.device_type_override:
+        _check("device_type", new_device_type)
+        if new_device_type is not None:
+            _check("device_type_source", new_device_type_source)
+    if result.host.mac_address and not existing.mac_address:
+        _check("mac_address", result.host.mac_address)
+
+
+def _record_discovery_history(db: AsyncSession, asset: Asset, result: HostScanResult) -> None:
+    db.add(AssetHistory(
+        asset_id=asset.id,
+        change_type="discovered",
+        diff={
+            "ip_address": asset.ip_address,
+            "mac": result.host.mac_address,
+            "discovery_method": result.host.discovery_method,
+        },
+    ))
+
+
 async def _refresh_fingerprint_snapshot(
     db: AsyncSession,
     asset: Asset,
     result: HostScanResult,
     evidence_items,
 ) -> None:
+    await _delete_existing_evidence_snapshot(db, asset)
+    _store_evidence_items(db, asset, result, evidence_items)
+    _store_probe_runs(db, asset, result)
+
+
+async def _delete_existing_evidence_snapshot(db: AsyncSession, asset: Asset) -> None:
     evidence_stmt = select(AssetEvidence).where(AssetEvidence.asset_id == asset.id)
     for row in (await db.execute(evidence_stmt)).scalars().all():
         if row.source in _PASSIVE_EVIDENCE_SOURCES or row.source.startswith("passive_"):
@@ -229,6 +293,8 @@ async def _refresh_fingerprint_snapshot(
     for row in (await db.execute(probe_stmt)).scalars().all():
         await db.delete(row)
 
+
+def _store_evidence_items(db: AsyncSession, asset: Asset, result: HostScanResult, evidence_items) -> None:
     for item in evidence_items:
         db.add(
             AssetEvidence(
@@ -243,13 +309,10 @@ async def _refresh_fingerprint_snapshot(
             )
         )
 
+
+def _store_probe_runs(db: AsyncSession, asset: Asset, result: HostScanResult) -> None:
     for probe in result.probes:
         details = dict(probe.data or {})
-        summary = None
-        if probe.success:
-            summary = details.get("title") or details.get("sys_descr") or details.get("friendly_name") or details.get("banner")
-            if summary is not None:
-                summary = str(summary)[:512]
         db.add(
             ProbeRun(
                 asset_id=asset.id,
@@ -257,12 +320,19 @@ async def _refresh_fingerprint_snapshot(
                 target_port=probe.target_port,
                 success=probe.success,
                 duration_ms=probe.duration_ms,
-                summary=summary,
+                summary=_probe_run_summary(details, probe.success),
                 details=details,
                 raw_excerpt=probe.raw[:4000] if probe.raw else None,
                 observed_at=result.scanned_at,
             )
         )
+
+
+def _probe_run_summary(details: dict, probe_success: bool) -> str | None:
+    if not probe_success:
+        return None
+    summary = details.get("title") or details.get("sys_descr") or details.get("friendly_name") or details.get("banner")
+    return str(summary)[:512] if summary is not None else None
 
 
 def _best_device_type_confidence(evidence_items) -> float:
@@ -330,6 +400,34 @@ def _build_autopsy_trace(
     selected_device_type: str | None,
     selected_device_type_source: str,
 ) -> dict:
+    top_evidence = _top_evidence_snapshot(evidence_items)
+    return {
+        "asset_identity": {
+            "ip_address": asset.ip_address,
+            "hostname": new_hostname or asset.hostname,
+            "mac_address": result.host.mac_address or asset.mac_address,
+        },
+        "scan_context": {
+            "scanned_at": result.scanned_at.isoformat(),
+            "scan_profile": result.scan_profile.value,
+            "scan_duration_ms": result.scan_duration_ms,
+        },
+        "pipeline": _build_autopsy_pipeline(
+            asset,
+            result,
+            evidence_items,
+            top_evidence,
+            new_hostname,
+            new_vendor,
+            new_os,
+            selected_device_type,
+            selected_device_type_source,
+        ),
+        "weak_points": _autopsy_weak_points(result, selected_device_type),
+    }
+
+
+def _autopsy_weak_points(result: HostScanResult, selected_device_type: str | None) -> list[str]:
     weak_points: list[str] = []
     if not result.open_ports:
         weak_points.append("No open ports were confirmed during this scan.")
@@ -343,8 +441,11 @@ def _build_autopsy_trace(
         weak_points.append("No AI investigation was attached to this host result.")
     elif result.ai_analysis.device_class.value == "unknown":
         weak_points.append("AI investigation ran but did not produce a confident device class.")
+    return weak_points
 
-    top_evidence = [
+
+def _top_evidence_snapshot(evidence_items) -> list[dict]:
+    return [
         {
             "source": item.source,
             "category": item.category,
@@ -356,126 +457,156 @@ def _build_autopsy_trace(
         for item in sorted(evidence_items, key=lambda row: row.confidence, reverse=True)[:12]
     ]
 
+
+def _build_autopsy_pipeline(
+    asset: Asset,
+    result: HostScanResult,
+    evidence_items,
+    top_evidence: list[dict],
+    new_hostname: str | None,
+    new_vendor: str | None,
+    new_os: str | None,
+    selected_device_type: str | None,
+    selected_device_type_source: str,
+) -> list[dict]:
+    return [
+        _discovery_stage_trace(result),
+        _port_scan_stage_trace(result),
+        _deep_probe_stage_trace(result),
+        _evidence_stage_trace(evidence_items, top_evidence),
+        _classification_stage_trace(evidence_items, selected_device_type, selected_device_type_source),
+        _ai_stage_trace(result),
+        _persistence_stage_trace(asset, new_hostname, new_vendor, new_os),
+    ]
+
+
+def _discovery_stage_trace(result: HostScanResult) -> dict:
     return {
-        "asset_identity": {
-            "ip_address": asset.ip_address,
-            "hostname": new_hostname or asset.hostname,
-            "mac_address": result.host.mac_address or asset.mac_address,
+        "stage": "discovery",
+        "status": "ok",
+        "summary": f"Host discovered via {result.host.discovery_method}.",
+        "outputs": {
+            "discovery_method": result.host.discovery_method,
+            "response_time_ms": result.host.response_time_ms,
+            "ttl": result.host.ttl,
+            "nmap_hostname": result.host.nmap_hostname,
         },
-        "scan_context": {
-            "scanned_at": result.scanned_at.isoformat(),
-            "scan_profile": result.scan_profile.value,
-            "scan_duration_ms": result.scan_duration_ms,
+    }
+
+
+def _port_scan_stage_trace(result: HostScanResult) -> dict:
+    return {
+        "stage": "port_scan",
+        "status": "ok" if result.ports else "limited",
+        "summary": f"{len(result.open_ports)} open ports identified.",
+        "outputs": {
+            "open_port_count": len(result.open_ports),
+            "ports": [
+                {
+                    "port": port.port,
+                    "protocol": port.protocol,
+                    "service": port.service,
+                    "product": port.product,
+                    "version": port.version,
+                    "cpe": port.cpe,
+                }
+                for port in result.open_ports[:20]
+            ],
+            "os_fingerprint": result.os_fingerprint.model_dump(),
         },
-        "pipeline": [
-            {
-                "stage": "discovery",
-                "status": "ok",
-                "summary": f"Host discovered via {result.host.discovery_method}.",
-                "outputs": {
-                    "discovery_method": result.host.discovery_method,
-                    "response_time_ms": result.host.response_time_ms,
-                    "ttl": result.host.ttl,
-                    "nmap_hostname": result.host.nmap_hostname,
-                },
+    }
+
+
+def _deep_probe_stage_trace(result: HostScanResult) -> dict:
+    successful_probes = [probe for probe in result.probes if probe.success]
+    failed_probes = [probe for probe in result.probes if not probe.success]
+    return {
+        "stage": "deep_probes",
+        "status": "ok" if successful_probes else "limited",
+        "summary": f"{len(successful_probes)} of {len(result.probes)} probes succeeded.",
+        "outputs": {
+            "successful_probes": [
+                {
+                    "probe_type": probe.probe_type,
+                    "target_port": probe.target_port,
+                    "details": probe.data or {},
+                }
+                for probe in successful_probes[:10]
+            ],
+            "failed_probes": [
+                {
+                    "probe_type": probe.probe_type,
+                    "target_port": probe.target_port,
+                    "error": probe.error,
+                }
+                for probe in failed_probes[:10]
+            ],
+        },
+    }
+
+
+def _evidence_stage_trace(evidence_items, top_evidence: list[dict]) -> dict:
+    return {
+        "stage": "evidence_normalization",
+        "status": "ok",
+        "summary": f"{len(evidence_items)} evidence items normalized.",
+        "outputs": {
+            "evidence_count": len(evidence_items),
+            "top_evidence": top_evidence,
+        },
+    }
+
+
+def _classification_stage_trace(evidence_items, selected_device_type: str | None, selected_device_type_source: str) -> dict:
+    return {
+        "stage": "classification",
+        "status": "ok" if selected_device_type else "limited",
+        "summary": f"Resolved device type to {selected_device_type or 'unknown'} via {selected_device_type_source}.",
+        "outputs": {
+            "device_type_candidates": _build_device_type_candidate_trace(evidence_items),
+            "selected_device_type": selected_device_type,
+            "selected_device_type_source": selected_device_type_source,
+        },
+    }
+
+
+def _ai_stage_trace(result: HostScanResult) -> dict:
+    if result.ai_analysis is None:
+        return {
+            "stage": "ai_investigation",
+            "status": "skipped",
+            "summary": "No AI investigation data was present.",
+            "outputs": {},
+        }
+    return {
+        "stage": "ai_investigation",
+        "status": "ok",
+        "summary": f"AI classified the asset as {result.ai_analysis.device_class.value} at {result.ai_analysis.confidence:.0%} confidence.",
+        "outputs": result.ai_analysis.model_dump(),
+    }
+
+
+def _persistence_stage_trace(asset: Asset, new_hostname: str | None, new_vendor: str | None, new_os: str | None) -> dict:
+    return {
+        "stage": "persistence",
+        "status": "ok",
+        "summary": "Applied precedence rules and persisted final fields.",
+        "outputs": {
+            "precedence": [
+                "manual override",
+                "high-confidence AI/probe classification",
+                "rule-based classification",
+                "unknown",
+            ],
+            "manual_override_present": bool(asset.device_type_override),
+            "final_fields": {
+                "hostname": new_hostname,
+                "vendor": new_vendor,
+                "os_name": new_os,
+                "device_type": asset.effective_device_type,
+                "device_type_source": asset.effective_device_type_source,
             },
-            {
-                "stage": "port_scan",
-                "status": "ok" if result.ports else "limited",
-                "summary": f"{len(result.open_ports)} open ports identified.",
-                "outputs": {
-                    "open_port_count": len(result.open_ports),
-                    "ports": [
-                        {
-                            "port": port.port,
-                            "protocol": port.protocol,
-                            "service": port.service,
-                            "product": port.product,
-                            "version": port.version,
-                            "cpe": port.cpe,
-                        }
-                        for port in result.open_ports[:20]
-                    ],
-                    "os_fingerprint": result.os_fingerprint.model_dump(),
-                },
-            },
-            {
-                "stage": "deep_probes",
-                "status": "ok" if any(probe.success for probe in result.probes) else "limited",
-                "summary": f"{sum(1 for probe in result.probes if probe.success)} of {len(result.probes)} probes succeeded.",
-                "outputs": {
-                    "successful_probes": [
-                        {
-                            "probe_type": probe.probe_type,
-                            "target_port": probe.target_port,
-                            "details": probe.data or {},
-                        }
-                        for probe in result.probes
-                        if probe.success
-                    ][:10],
-                    "failed_probes": [
-                        {
-                            "probe_type": probe.probe_type,
-                            "target_port": probe.target_port,
-                            "error": probe.error,
-                        }
-                        for probe in result.probes
-                        if not probe.success
-                    ][:10],
-                },
-            },
-            {
-                "stage": "evidence_normalization",
-                "status": "ok",
-                "summary": f"{len(evidence_items)} evidence items normalized.",
-                "outputs": {
-                    "evidence_count": len(evidence_items),
-                    "top_evidence": top_evidence,
-                },
-            },
-            {
-                "stage": "classification",
-                "status": "ok" if selected_device_type else "limited",
-                "summary": f"Resolved device type to {selected_device_type or 'unknown'} via {selected_device_type_source}.",
-                "outputs": {
-                    "device_type_candidates": _build_device_type_candidate_trace(evidence_items),
-                    "selected_device_type": selected_device_type,
-                    "selected_device_type_source": selected_device_type_source,
-                },
-            },
-            {
-                "stage": "ai_investigation",
-                "status": "ok" if result.ai_analysis else "skipped",
-                "summary": (
-                    f"AI classified the asset as {result.ai_analysis.device_class.value} at {result.ai_analysis.confidence:.0%} confidence."
-                    if result.ai_analysis
-                    else "No AI investigation data was present."
-                ),
-                "outputs": result.ai_analysis.model_dump() if result.ai_analysis else {},
-            },
-            {
-                "stage": "persistence",
-                "status": "ok",
-                "summary": "Applied precedence rules and persisted final fields.",
-                "outputs": {
-                    "precedence": [
-                        "manual override",
-                        "high-confidence AI/probe classification",
-                        "rule-based classification",
-                        "unknown",
-                    ],
-                    "manual_override_present": bool(asset.device_type_override),
-                    "final_fields": {
-                        "hostname": new_hostname,
-                        "vendor": new_vendor,
-                        "os_name": new_os,
-                        "device_type": asset.effective_device_type,
-                        "device_type_source": asset.effective_device_type_source,
-                    },
-                },
-            },
-        ],
-        "weak_points": weak_points,
+        },
     }
 
 
@@ -628,25 +759,7 @@ async def _upsert_ports(db: AsyncSession, asset: Asset, result: HostScanResult) 
     for port_result in result.open_ports:
         key = (port_result.port, port_result.protocol)
         new_port_keys.add(key)
-
-        if key not in existing_ports:
-            db.add(Port(
-                asset_id=asset.id,
-                port_number=port_result.port,
-                protocol=port_result.protocol,
-                service=port_result.service,
-                version=port_result.version,
-                state="open",
-            ))
-            changes[f"port_{port_result.port}/{port_result.protocol}"] = {"old": None, "new": "open"}
-        else:
-            # Update service/version if enriched
-            p = existing_ports[key]
-            if port_result.version and p.version != port_result.version:
-                changes[f"port_{port_result.port}_version"] = {"old": p.version, "new": port_result.version}
-                p.version = port_result.version
-            if port_result.service and p.service != port_result.service:
-                p.service = port_result.service
+        _upsert_single_port(db, asset, existing_ports, changes, key, port_result)
 
     # Mark ports not seen this scan as closed
     for key, port_obj in existing_ports.items():
@@ -657,7 +770,35 @@ async def _upsert_ports(db: AsyncSession, asset: Asset, result: HostScanResult) 
     return changes
 
 
-async def mark_offline(db: AsyncSession, ip_addresses: list[str]) -> int:
+def _upsert_single_port(
+    db: AsyncSession,
+    asset: Asset,
+    existing_ports: dict[tuple[int, str], Port],
+    changes: dict,
+    key: tuple[int, str],
+    port_result,
+) -> None:
+    if key not in existing_ports:
+        db.add(Port(
+            asset_id=asset.id,
+            port_number=port_result.port,
+            protocol=port_result.protocol,
+            service=port_result.service,
+            version=port_result.version,
+            state="open",
+        ))
+        changes[f"port_{port_result.port}/{port_result.protocol}"] = {"old": None, "new": "open"}
+        return
+
+    existing_port = existing_ports[key]
+    if port_result.version and existing_port.version != port_result.version:
+        changes[f"port_{port_result.port}_version"] = {"old": existing_port.version, "new": port_result.version}
+        existing_port.version = port_result.version
+    if port_result.service and existing_port.service != port_result.service:
+        existing_port.service = port_result.service
+
+
+async def mark_offline(db: AsyncSession, ip_addresses: list[str]) -> tuple[int, list[Asset]]:
     """
     Mark assets not seen in a scan as offline.
     Returns count of assets marked offline.

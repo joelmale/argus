@@ -16,12 +16,19 @@ export function useWebSocket(enabled = true) {
 
   const { setWsConnected } = useAppStore()
 
+  function getStoredToken() {
+    if (globalThis.window === undefined) {
+      return null
+    }
+    return globalThis.localStorage.getItem('argus_token')
+  }
+
   function connect() {
     if (!enabled) return
     if (!mountedRef.current) return
     if (wsRef.current?.readyState === WebSocket.OPEN) return
 
-    const token = typeof window === 'undefined' ? null : localStorage.getItem('argus_token')
+    const token = getStoredToken()
     if (!token) return
 
     const ws = new WebSocket(`${WS_URL}/ws/events?token=${encodeURIComponent(token)}`)

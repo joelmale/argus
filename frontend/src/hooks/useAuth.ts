@@ -8,7 +8,7 @@ import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy
 const AUTH_EVENT = 'argus-auth-changed'
 
 function hasBrowserWindow() {
-  return typeof globalThis.window !== 'undefined'
+  return globalThis.window !== undefined
 }
 
 function emitAuthChange() {

@@ -47,8 +47,10 @@ async def get_current_user(
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")
 
 
-async def get_current_admin(user: User = Depends(get_current_user)) -> User:
-    return await require_role("admin")(user)
+def get_current_admin(user: User = Depends(get_current_user)) -> User:
+    if user.role != "admin":
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin access required")
+    return user
 
 
 def require_role(role: str) -> Callable[[User], User]:

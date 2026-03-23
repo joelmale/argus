@@ -54,16 +54,7 @@ class OllamaAnalyst(BaseAnalyst):
         self.model = settings.OLLAMA_MODEL
 
     async def investigate(self, result: HostScanResult) -> AIAnalysis:
-        # Get heuristic hint to prime the agent's context
-        hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
-        priorities = probe_priority(result.host, result.ports, hint)
-
-        initial_context = self._build_context(
-            result,
-            hint.device_class.value,
-            hint.confidence,
-            priorities,
-        )
+        hint, initial_context = self._build_investigation_seed(result)
 
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": SYSTEM_PROMPT},
@@ -103,38 +94,10 @@ class OllamaAnalyst(BaseAnalyst):
                 # Try to extract final_analysis from text if present (model quirk)
                 if msg.content and "final_analysis" in msg.content.lower():
                     break
-                # Ask the model to wrap up
-                if steps >= 3:
-                    messages.append({
-                        "role": "user",
-                        "content": "Please call final_analysis now to submit your findings.",
-                    })
+                self._request_final_analysis(messages, steps)
                 continue
 
-            # Process each tool call
-            for tool_call in msg.tool_calls:
-                tool_name = tool_call.function.name
-                try:
-                    tool_args = json.loads(tool_call.function.arguments)
-                except json.JSONDecodeError:
-                    tool_args = {}
-
-                log.debug("Agent calling tool: %s(%s)", tool_name, tool_args)
-
-                # Check for termination
-                if tool_name == "final_analysis":
-                    final_args = tool_args
-                    break
-
-                # Execute the probe
-                tool_result = await execute(tool_name, tool_args, result.host.ip_address, result.ports)
-
-                # Append tool result to conversation
-                messages.append({
-                    "role": "tool",
-                    "tool_call_id": tool_call.id,
-                    "content": tool_result[:4000],  # Truncate to stay within context
-                })
+            final_args = await self._handle_tool_calls(messages, msg.tool_calls, result.host.ip_address)
 
             if final_args is not None:
                 break
@@ -144,11 +107,7 @@ class OllamaAnalyst(BaseAnalyst):
             analysis = self._parse_analysis(final_args)
         else:
             log.warning("Agent did not produce final_analysis for %s, using heuristics", result.host.ip_address)
-            analysis = AIAnalysis(
-                device_class=hint.device_class,
-                confidence=hint.confidence * 0.7,  # Reduce confidence for fallback
-                investigation_notes=f"AI agent did not complete investigation. Heuristic guess: {hint.reason}",
-            )
+            analysis = self._fallback_analysis(hint)
 
         analysis.ai_backend = "ollama"
         analysis.model_used = self.model
@@ -162,3 +121,52 @@ class OllamaAnalyst(BaseAnalyst):
             steps,
         )
         return analysis
+
+    def _build_investigation_seed(self, result: HostScanResult):
+        hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
+        priorities = probe_priority(result.ports, hint)
+        initial_context = self._build_context(
+            result,
+            hint.device_class.value,
+            hint.confidence,
+            priorities,
+        )
+        return hint, initial_context
+
+    def _request_final_analysis(self, messages: list[ChatCompletionMessageParam], steps: int) -> None:
+        if steps >= 3:
+            messages.append({
+                "role": "user",
+                "content": "Please call final_analysis now to submit your findings.",
+            })
+
+    async def _handle_tool_calls(self, messages: list[ChatCompletionMessageParam], tool_calls, ip_address: str) -> dict | None:
+        for tool_call in tool_calls:
+            tool_name = tool_call.function.name
+            tool_args = self._parse_tool_args(tool_call.function.arguments)
+
+            log.debug("Agent calling tool: %s(%s)", tool_name, tool_args)
+
+            if tool_name == "final_analysis":
+                return tool_args
+
+            tool_result = await execute(tool_name, tool_args, ip_address)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tool_call.id,
+                "content": tool_result[:4000],
+            })
+        return None
+
+    def _parse_tool_args(self, raw_arguments: str) -> dict:
+        try:
+            return json.loads(raw_arguments)
+        except json.JSONDecodeError:
+            return {}
+
+    def _fallback_analysis(self, hint) -> AIAnalysis:
+        return AIAnalysis(
+            device_class=hint.device_class,
+            confidence=hint.confidence * 0.7,
+            investigation_notes=f"AI agent did not complete investigation. Heuristic guess: {hint.reason}",
+        )

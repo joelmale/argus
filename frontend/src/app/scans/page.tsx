@@ -98,6 +98,76 @@ export default function ScansPage() {
     return <><ScanLine className="w-4 h-4" /> Start Scan</>
   }
 
+  function renderLiveStatus() {
+    if (activeScan) {
+      return (
+        <div className="space-y-3">
+          <div className="flex items-center gap-2">
+            <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse flex-shrink-0" />
+            <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
+              {stageLabel ? `Stage: ${stageLabel}` : 'Scanning…'}
+            </span>
+          </div>
+          {activeScan.current_host && (
+            <div>
+              <p className="text-xs text-zinc-500 mb-0.5">Current host</p>
+              <p className="text-sm font-mono text-zinc-800 dark:text-zinc-200">{activeScan.current_host}</p>
+            </div>
+          )}
+          {activeScan.progress !== undefined && (
+            <div>
+              <div className="flex justify-between text-xs text-zinc-500 mb-1">
+                <span>Progress</span>
+                <span>{Math.round(activeScan.progress * 100)}%</span>
+              </div>
+              <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800">
+                <div
+                  className="h-1.5 rounded-full bg-sky-500 transition-all duration-500"
+                  style={{ width: `${activeScan.progress * 100}%` }}
+                />
+              </div>
+            </div>
+          )}
+          {activeScan.hosts_found !== undefined && (
+            <div className="grid grid-cols-2 gap-2 text-xs text-zinc-500">
+              <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_found}</span> hosts discovered</p>
+              <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_port_scanned ?? 0}</span> port scanned</p>
+              <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_fingerprinted ?? 0}</span> fingerprinted</p>
+              <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_deep_probed ?? 0}</span> deep probed</p>
+              <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.assets_created ?? 0}</span> assets created</p>
+              <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.assets_updated ?? 0}</span> assets updated</p>
+            </div>
+          )}
+          <Link
+            href="/assets"
+            className="inline-flex items-center justify-center rounded-lg border border-sky-200 px-3 py-2 text-xs font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-900 dark:text-sky-300 dark:hover:bg-sky-950/30"
+          >
+            View Inventory So Far
+          </Link>
+        </div>
+      )
+    }
+
+    if (runningScans.length > 0) {
+      return (
+        <div className="flex items-center gap-2">
+          <Cpu className="w-4 h-4 text-sky-500 animate-pulse" />
+          <span className="text-sm text-zinc-600 dark:text-zinc-300">
+            {runningScans.length} {queuedScanLabel} in queue
+          </span>
+        </div>
+      )
+    }
+
+    return (
+      <div className="flex flex-col items-center justify-center py-6 text-center">
+        <Radio className="w-8 h-8 text-zinc-300 dark:text-zinc-700 mb-2" />
+        <p className="text-sm text-zinc-400">No active scans</p>
+        <p className="text-xs text-zinc-400 mt-0.5">Trigger a scan to see live progress here.</p>
+      </div>
+    )
+  }
+
   return (
     <AppShell>
       <div className="max-w-6xl mx-auto space-y-6">
@@ -206,67 +276,7 @@ export default function ScansPage() {
               <CardHeader>
                 <CardTitle><Radio className="w-4 h-4 inline mr-1.5 text-sky-500" />Live Status</CardTitle>
               </CardHeader>
-              <CardBody>
-                {activeScan ? (
-                  <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                      <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse flex-shrink-0" />
-                      <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
-                        {stageLabel ? `Stage: ${stageLabel}` : 'Scanning…'}
-                      </span>
-                    </div>
-                    {activeScan.current_host && (
-                      <div>
-                        <p className="text-xs text-zinc-500 mb-0.5">Current host</p>
-                        <p className="text-sm font-mono text-zinc-800 dark:text-zinc-200">{activeScan.current_host}</p>
-                      </div>
-                    )}
-                    {activeScan.progress !== undefined && (
-                      <div>
-                        <div className="flex justify-between text-xs text-zinc-500 mb-1">
-                          <span>Progress</span>
-                          <span>{Math.round(activeScan.progress * 100)}%</span>
-                        </div>
-                        <div className="h-1.5 rounded-full bg-zinc-200 dark:bg-zinc-800">
-                          <div
-                            className="h-1.5 rounded-full bg-sky-500 transition-all duration-500"
-                            style={{ width: `${activeScan.progress * 100}%` }}
-                          />
-                        </div>
-                      </div>
-                    )}
-                    {activeScan.hosts_found !== undefined && (
-                      <div className="grid grid-cols-2 gap-2 text-xs text-zinc-500">
-                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_found}</span> hosts discovered</p>
-                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_port_scanned ?? 0}</span> port scanned</p>
-                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_fingerprinted ?? 0}</span> fingerprinted</p>
-                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.hosts_deep_probed ?? 0}</span> deep probed</p>
-                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.assets_created ?? 0}</span> assets created</p>
-                        <p><span className="font-medium text-zinc-900 dark:text-zinc-100">{activeScan.assets_updated ?? 0}</span> assets updated</p>
-                      </div>
-                    )}
-                    <Link
-                      href="/assets"
-                      className="inline-flex items-center justify-center rounded-lg border border-sky-200 px-3 py-2 text-xs font-medium text-sky-600 hover:bg-sky-50 dark:border-sky-900 dark:text-sky-300 dark:hover:bg-sky-950/30"
-                    >
-                      View Inventory So Far
-                    </Link>
-                  </div>
-                ) : runningScans.length > 0 ? (
-                  <div className="flex items-center gap-2">
-                    <Cpu className="w-4 h-4 text-sky-500 animate-pulse" />
-                    <span className="text-sm text-zinc-600 dark:text-zinc-300">
-                      {runningScans.length} {queuedScanLabel} in queue
-                    </span>
-                  </div>
-                ) : (
-                  <div className="flex flex-col items-center justify-center py-6 text-center">
-                    <Radio className="w-8 h-8 text-zinc-300 dark:text-zinc-700 mb-2" />
-                    <p className="text-sm text-zinc-400">No active scans</p>
-                    <p className="text-xs text-zinc-400 mt-0.5">Trigger a scan to see live progress here.</p>
-                  </div>
-                )}
-              </CardBody>
+              <CardBody>{renderLiveStatus()}</CardBody>
             </Card>
           </div>
         </div>

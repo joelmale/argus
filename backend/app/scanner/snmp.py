@@ -143,6 +143,9 @@ class SnmpPoller:
         # Consumer APs often expose no standard client-association tables over SNMP.
         # Keep the interface in place so vendor-specific or enterprise AP support can
         # populate this later without changing the pipeline contract.
+        if not host:
+            return []
+        await asyncio.sleep(0)
         return []
 
     async def _get_single(self, host: str, oid: str) -> str | None:

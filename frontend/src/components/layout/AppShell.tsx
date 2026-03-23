@@ -10,7 +10,11 @@ import { useWebSocket } from '@/hooks/useWebSocket'
 import { clearAuthToken, useCurrentUser } from '@/hooks/useAuth'
 import { cn } from '@/lib/utils'
 
-export function AppShell({ children }: { children: React.ReactNode }) {
+interface AppShellProps {
+  children: React.ReactNode
+}
+
+export function AppShell({ children }: Readonly<AppShellProps>) {
   const router = useRouter()
   const pathname = usePathname()
   const { sidebarCollapsed } = useAppStore()

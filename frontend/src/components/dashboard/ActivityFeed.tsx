@@ -14,7 +14,7 @@ const EVENT_LABELS: Record<string, { label: string; dot: string }> = {
   offline:             { label: 'Device offline',    dot: 'bg-red-500' },
 }
 
-function EventRow({ event }: { event: LiveEvent }) {
+function EventRow({ event }: Readonly<{ event: LiveEvent }>) {
   const cfg = EVENT_LABELS[event.event] ?? { label: event.event, dot: 'bg-zinc-500' }
 
   // Build a human-readable summary

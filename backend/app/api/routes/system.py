@@ -27,7 +27,7 @@ from app.modules.tplink_deco import (
     update_tplink_deco_config,
 )
 from app.plugins import list_plugins
-from app.scanner.config import clear_inventory, read_effective_scanner_config, update_scanner_config
+from app.scanner.config import ScannerConfigUpdateInput, clear_inventory, read_effective_scanner_config, update_scanner_config
 
 router = APIRouter()
 DBSession = Annotated[AsyncSession, Depends(get_db)]
@@ -357,35 +357,37 @@ async def write_scanner_config(
     try:
         config, effective = await update_scanner_config(
             db,
-            enabled=payload.enabled,
-            default_targets=payload.default_targets,
-            auto_detect_targets=payload.auto_detect_targets,
-            default_profile=payload.default_profile,
-            interval_minutes=payload.interval_minutes,
-            concurrent_hosts=payload.concurrent_hosts,
-            host_chunk_size=payload.host_chunk_size,
-            top_ports_count=payload.top_ports_count,
-            deep_probe_timeout_seconds=payload.deep_probe_timeout_seconds,
-            ai_after_scan_enabled=payload.ai_after_scan_enabled,
-            passive_arp_enabled=payload.passive_arp_enabled,
-            passive_arp_interface=payload.passive_arp_interface,
-            snmp_enabled=payload.snmp_enabled,
-            snmp_version=payload.snmp_version,
-            snmp_community=payload.snmp_community,
-            snmp_timeout=payload.snmp_timeout,
-            snmp_v3_username=payload.snmp_v3_username,
-            snmp_v3_auth_key=payload.snmp_v3_auth_key,
-            snmp_v3_priv_key=payload.snmp_v3_priv_key,
-            snmp_v3_auth_protocol=payload.snmp_v3_auth_protocol,
-            snmp_v3_priv_protocol=payload.snmp_v3_priv_protocol,
-            fingerprint_ai_enabled=payload.fingerprint_ai_enabled,
-            fingerprint_ai_model=payload.fingerprint_ai_model,
-            fingerprint_ai_min_confidence=payload.fingerprint_ai_min_confidence,
-            fingerprint_ai_prompt_suffix=payload.fingerprint_ai_prompt_suffix,
-            internet_lookup_enabled=payload.internet_lookup_enabled,
-            internet_lookup_allowed_domains=payload.internet_lookup_allowed_domains,
-            internet_lookup_budget=payload.internet_lookup_budget,
-            internet_lookup_timeout_seconds=payload.internet_lookup_timeout_seconds,
+            ScannerConfigUpdateInput(
+                enabled=payload.enabled,
+                default_targets=payload.default_targets,
+                auto_detect_targets=payload.auto_detect_targets,
+                default_profile=payload.default_profile,
+                interval_minutes=payload.interval_minutes,
+                concurrent_hosts=payload.concurrent_hosts,
+                host_chunk_size=payload.host_chunk_size,
+                top_ports_count=payload.top_ports_count,
+                deep_probe_timeout_seconds=payload.deep_probe_timeout_seconds,
+                ai_after_scan_enabled=payload.ai_after_scan_enabled,
+                passive_arp_enabled=payload.passive_arp_enabled,
+                passive_arp_interface=payload.passive_arp_interface,
+                snmp_enabled=payload.snmp_enabled,
+                snmp_version=payload.snmp_version,
+                snmp_community=payload.snmp_community,
+                snmp_timeout=payload.snmp_timeout,
+                snmp_v3_username=payload.snmp_v3_username,
+                snmp_v3_auth_key=payload.snmp_v3_auth_key,
+                snmp_v3_priv_key=payload.snmp_v3_priv_key,
+                snmp_v3_auth_protocol=payload.snmp_v3_auth_protocol,
+                snmp_v3_priv_protocol=payload.snmp_v3_priv_protocol,
+                fingerprint_ai_enabled=payload.fingerprint_ai_enabled,
+                fingerprint_ai_model=payload.fingerprint_ai_model,
+                fingerprint_ai_min_confidence=payload.fingerprint_ai_min_confidence,
+                fingerprint_ai_prompt_suffix=payload.fingerprint_ai_prompt_suffix,
+                internet_lookup_enabled=payload.internet_lookup_enabled,
+                internet_lookup_allowed_domains=payload.internet_lookup_allowed_domains,
+                internet_lookup_budget=payload.internet_lookup_budget,
+                internet_lookup_timeout_seconds=payload.internet_lookup_timeout_seconds,
+            ),
         )
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc

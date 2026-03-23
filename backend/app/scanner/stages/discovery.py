@@ -175,25 +175,12 @@ def _parse_ping_sweep_xml(xml_output: str) -> list[DiscoveredHost]:
         if status is None or status.attrib.get("state") != "up":
             continue
 
-        ip_address = None
-        mac_address = None
-        for address in host_node.findall("address"):
-            addr_type = address.attrib.get("addrtype")
-            if addr_type == "ipv4":
-                ip_address = address.attrib.get("addr")
-            elif addr_type == "mac":
-                mac_address = address.attrib.get("addr")
+        ip_address, mac_address = _extract_host_addresses(host_node)
 
         if not ip_address:
             continue
 
-        ttl = None
-        reason_ttl = status.attrib.get("reason_ttl")
-        if reason_ttl:
-            try:
-                ttl = int(reason_ttl)
-            except ValueError:
-                ttl = None
+        ttl = _parse_reason_ttl(status.attrib.get("reason_ttl"))
 
         hosts.append(
             DiscoveredHost(
@@ -205,6 +192,27 @@ def _parse_ping_sweep_xml(xml_output: str) -> list[DiscoveredHost]:
             )
         )
     return hosts
+
+
+def _extract_host_addresses(host_node: ET.Element) -> tuple[str | None, str | None]:
+    ip_address = None
+    mac_address = None
+    for address in host_node.findall("address"):
+        addr_type = address.attrib.get("addrtype")
+        if addr_type == "ipv4":
+            ip_address = address.attrib.get("addr")
+        elif addr_type == "mac":
+            mac_address = address.attrib.get("addr")
+    return ip_address, mac_address
+
+
+def _parse_reason_ttl(reason_ttl: str | None) -> int | None:
+    if not reason_ttl:
+        return None
+    try:
+        return int(reason_ttl)
+    except ValueError:
+        return None
 
 
 # ─── Passive ARP listener ────────────────────────────────────────────────────

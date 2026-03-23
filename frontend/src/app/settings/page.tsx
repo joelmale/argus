@@ -488,6 +488,7 @@ function TplinkDecoModuleCard({
   const [verifyTls, setVerifyTls] = useState(moduleConfig?.verify_tls ?? false)
   const [actionMessage, setActionMessage] = useState<string | null>(null)
   const [actionError, setActionError] = useState<string | null>(null)
+  const isSyncDisabled = isSaving || isTesting || isSyncing || enabled !== true
 
   function buildPayload() {
     return {
@@ -584,7 +585,7 @@ function TplinkDecoModuleCard({
           </button>
           <button
             type="button"
-            disabled={isSaving || isTesting || isSyncing || !enabled}
+            disabled={isSyncDisabled}
             onClick={handleSync}
             className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700 disabled:opacity-50"
           >

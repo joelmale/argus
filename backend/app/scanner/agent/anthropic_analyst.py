@@ -48,9 +48,7 @@ class AnthropicAnalyst(BaseAnalyst):
         self.model = settings.ANTHROPIC_MODEL
 
     async def investigate(self, result: HostScanResult) -> AIAnalysis:
-        hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
-        priorities = probe_priority(result.host, result.ports, hint)
-        initial_context = self._build_context(result, hint.device_class.value, hint.confidence, priorities)
+        hint, initial_context = self._build_investigation_seed(result)
 
         messages = [{"role": "user", "content": initial_context}]
         steps = 0
@@ -80,27 +78,12 @@ class AnthropicAnalyst(BaseAnalyst):
 
             tool_calls = [b for b in msg.content if b.type == "tool_use"]
             if not tool_calls:
-                if steps >= 3:
-                    messages.append({"role": "user", "content": "Please call final_analysis now."})
+                self._request_final_analysis(messages, steps)
                 if msg.stop_reason == "end_turn":
                     break
                 continue
 
-            tool_results = []
-            for tc in tool_calls:
-                tool_name = tc.name
-                tool_args = tc.input if isinstance(tc.input, dict) else {}
-
-                if tool_name == "final_analysis":
-                    final_args = tool_args
-                    break
-
-                tool_result = await execute(tool_name, tool_args, result.host.ip_address, result.ports)
-                tool_results.append({
-                    "type": "tool_result",
-                    "tool_use_id": tc.id,
-                    "content": tool_result[:4000],
-                })
+            final_args, tool_results = await self._handle_tool_calls(tool_calls, result.host.ip_address)
 
             if final_args:
                 break
@@ -108,16 +91,43 @@ class AnthropicAnalyst(BaseAnalyst):
             if tool_results:
                 messages.append({"role": "user", "content": tool_results})
 
-        if final_args:
-            analysis = self._parse_analysis(final_args)
-        else:
-            analysis = AIAnalysis(
-                device_class=hint.device_class,
-                confidence=hint.confidence * 0.7,
-                investigation_notes=f"Anthropic agent did not complete. Heuristic: {hint.reason}",
-            )
+        analysis = self._parse_analysis(final_args) if final_args else self._fallback_analysis(hint)
 
         analysis.ai_backend = "anthropic"
         analysis.model_used = self.model
         analysis.agent_steps = steps
         return analysis
+
+    def _build_investigation_seed(self, result: HostScanResult):
+        hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
+        priorities = probe_priority(result.ports, hint)
+        initial_context = self._build_context(result, hint.device_class.value, hint.confidence, priorities)
+        return hint, initial_context
+
+    def _request_final_analysis(self, messages: list[dict], steps: int) -> None:
+        if steps >= 3:
+            messages.append({"role": "user", "content": "Please call final_analysis now."})
+
+    async def _handle_tool_calls(self, tool_calls, ip_address: str) -> tuple[dict | None, list[dict]]:
+        tool_results = []
+        for tool_call in tool_calls:
+            tool_name = tool_call.name
+            tool_args = tool_call.input if isinstance(tool_call.input, dict) else {}
+
+            if tool_name == "final_analysis":
+                return tool_args, tool_results
+
+            tool_result = await execute(tool_name, tool_args, ip_address)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tool_call.id,
+                "content": tool_result[:4000],
+            })
+        return None, tool_results
+
+    def _fallback_analysis(self, hint) -> AIAnalysis:
+        return AIAnalysis(
+            device_class=hint.device_class,
+            confidence=hint.confidence * 0.7,
+            investigation_notes=f"Anthropic agent did not complete. Heuristic: {hint.reason}",
+        )

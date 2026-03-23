@@ -7,6 +7,15 @@ import httpx
 
 
 SEARCH_ENDPOINT = "https://duckduckgo.com/html/?q={query}"
+RESULT_LINK_RE = re.compile(
+    r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="(?P<url>[^"]+)"[^>]*>(?P<title>.*?)</a>',
+    re.IGNORECASE | re.DOTALL,
+)
+RESULT_SNIPPET_RE = re.compile(
+    r'(?:<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>|<div[^>]+class="[^"]*result__snippet[^"]*"[^>]*>)(?P<snippet>.*?)</(?:a|div)>',
+    re.IGNORECASE | re.DOTALL,
+)
+TAG_RE = re.compile(r"<[^>]+>")
 
 
 def normalize_allowed_domains(value: str | None) -> list[str]:
@@ -42,17 +51,12 @@ def domain_is_allowed(url: str, allowed_domains: list[str]) -> bool:
 
 def parse_search_results(html: str, allowed_domains: list[str]) -> list[dict]:
     results: list[dict] = []
-    pattern = re.compile(
-        r'<a[^>]+class="[^"]*result__a[^"]*"[^>]+href="(?P<url>[^"]+)"[^>]*>(?P<title>.*?)</a>.*?(?:<a[^>]+class="[^"]*result__snippet[^"]*"[^>]*>|<div[^>]+class="[^"]*result__snippet[^"]*"[^>]*>)(?P<snippet>.*?)</(?:a|div)>',
-        re.IGNORECASE | re.DOTALL,
-    )
-    strip_tags = re.compile(r"<[^>]+>")
-    for match in pattern.finditer(html):
+    for match in RESULT_LINK_RE.finditer(html):
         url = httpx.URL(match.group("url")).copy_with(fragment=None)
         if not domain_is_allowed(str(url), allowed_domains):
             continue
-        title = strip_tags.sub("", match.group("title")).strip()
-        snippet = strip_tags.sub("", match.group("snippet")).strip()
+        snippet = _extract_result_snippet(html, match.end())
+        title = TAG_RE.sub("", match.group("title")).strip()
         results.append(
             {
                 "url": str(url),
@@ -62,6 +66,14 @@ def parse_search_results(html: str, allowed_domains: list[str]) -> list[dict]:
             }
         )
     return results
+
+
+def _extract_result_snippet(html: str, anchor_end: int) -> str:
+    window = html[anchor_end: anchor_end + 3000]
+    snippet_match = RESULT_SNIPPET_RE.search(window)
+    if not snippet_match:
+        return ""
+    return TAG_RE.sub("", snippet_match.group("snippet")).strip()[:1000]
 
 
 async def search_lookup(query: str, *, allowed_domains: list[str], timeout_seconds: int, budget: int) -> list[dict]:
