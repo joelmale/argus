@@ -16,10 +16,10 @@ from app.workers.tasks import _run_job_async
 
 @pytest.mark.asyncio
 async def test_discovery_sweep_merges_results_and_prefers_arp_mac(monkeypatch):
-    async def fake_arp(_targets: str, _timeout: int):
+    async def fake_arp(_targets: str):
         return [DiscoveredHost(ip_address="192.168.96.10", mac_address="AA:BB:CC:DD:EE:FF", discovery_method="arp")]
 
-    async def fake_ping(_targets: str, _timeout: int):
+    async def fake_ping(_targets: str):
         return [
             DiscoveredHost(ip_address="192.168.96.10", discovery_method="ping"),
             DiscoveredHost(ip_address="192.168.96.11", discovery_method="ping", ttl=64),

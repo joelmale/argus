@@ -98,18 +98,42 @@ def classify(
     Returns the best guess with a confidence score.
     """
     open_ports = {p.port: p for p in ports if p.state == "open"}
-    candidates: list[DeviceHint] = []
     mac_vendor_lower = (mac_vendor or "").lower()
     host_name = (host.nmap_hostname or "").lower()
+    candidates = _collect_device_hints(open_ports, os_fp, host_name, mac_vendor_lower, host, mac_vendor)
 
-    # 1. OS fingerprint hints
+    if not candidates:
+        return DeviceHint(DeviceClass.UNKNOWN, 0.0, "No matching signatures")
+
+    return max(candidates, key=lambda h: h.confidence)
+
+
+def _collect_device_hints(
+    open_ports: dict[int, PortResult],
+    os_fp: OSFingerprint,
+    host_name: str,
+    mac_vendor_lower: str,
+    host: DiscoveredHost,
+    mac_vendor: str | None,
+) -> list[DeviceHint]:
+    candidates: list[DeviceHint] = []
+    candidates.extend(_collect_os_hints(os_fp))
+    candidates.extend(_collect_port_signature_hints(open_ports))
+    candidates.extend(_collect_port_pattern_hints(open_ports))
+    candidates.extend(_collect_hostname_hints(host_name, host))
+    candidates.extend(_collect_vendor_hints(mac_vendor_lower, open_ports, mac_vendor))
+    return candidates
+
+
+def _collect_os_hints(os_fp: OSFingerprint) -> list[DeviceHint]:
+    candidates: list[DeviceHint] = []
+
     os_name_lower = (os_fp.os_name or "").lower()
     for keyword, cls in OS_SIGNATURES.items():
         if keyword in os_name_lower:
             candidates.append(DeviceHint(cls, 0.6, f"OS fingerprint: {os_fp.os_name}"))
             break
 
-    # nmap device type hint
     nmap_type = (os_fp.device_type or "").lower()
     if "router" in nmap_type or "switch" in nmap_type:
         candidates.append(DeviceHint(DeviceClass.ROUTER, 0.70, f"nmap device type: {os_fp.device_type}"))
@@ -121,8 +145,11 @@ def classify(
         candidates.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.80, f"nmap device type: {os_fp.device_type}"))
     elif "firewall" in nmap_type:
         candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.80, f"nmap device type: {os_fp.device_type}"))
+    return candidates
 
-    # 2. Port signature matching
+
+def _collect_port_signature_hints(open_ports: dict[int, PortResult]) -> list[DeviceHint]:
+    candidates: list[DeviceHint] = []
     for port_num, svc_substr, cls, conf, reason in PORT_SIGNATURES:
         if port_num is not None and port_num not in open_ports:
             continue
@@ -131,31 +158,28 @@ def classify(
             if port_obj and svc_substr not in (port_obj.service or "").lower():
                 continue
         candidates.append(DeviceHint(cls, conf, reason))
+    return candidates
 
-    # 3. Composite port set analysis
+
+def _collect_port_pattern_hints(open_ports: dict[int, PortResult]) -> list[DeviceHint]:
+    candidates: list[DeviceHint] = []
     port_set = set(open_ports.keys())
 
-    # Router/AP pattern: 22 + 80 + 443 + (161 or 179)
     if port_set & {80, 443} and port_set & {22} and port_set & {161, 179, 520}:
         candidates.append(DeviceHint(DeviceClass.ROUTER, 0.80, "Router port pattern (SSH+HTTP+SNMP/BGP)"))
 
-    # Access point / wireless controller pattern
     if port_set & {80, 443} and port_set & {22, 8080, 8443} and 161 in port_set:
         candidates.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.78, "Managed AP pattern (web+ssh+snmp)"))
 
-    # NAS pattern: 445 + (2049 or 548 or 873)
     if 445 in port_set and port_set & {2049, 548, 873}:
         candidates.append(DeviceHint(DeviceClass.NAS, 0.80, "NAS port pattern (SMB+NFS/AFP/rsync)"))
 
-    # Server pattern: SSH + no router protocols
     if 22 in port_set and not port_set & {161, 179, 520} and not port_set & {9100, 554}:
         candidates.append(DeviceHint(DeviceClass.SERVER, 0.50, "SSH without routing protocols"))
 
-    # Bare HTTP/HTTPS only → likely IoT/embedded
     if port_set <= {80, 443, 8080, 8443} and len(port_set) <= 2:
         candidates.append(DeviceHint(DeviceClass.IOT_DEVICE, 0.50, "HTTP-only small footprint"))
 
-    # Homelab virtualization / infrastructure
     if 8006 in port_set:
         candidates.append(DeviceHint(DeviceClass.SERVER, 0.92, "Proxmox VE web UI"))
     if 5000 in port_set or 5001 in port_set:
@@ -164,8 +188,16 @@ def classify(
         candidates.append(DeviceHint(DeviceClass.NAS, 0.82, "Media/NAS service pattern"))
     if 8123 in port_set:
         candidates.append(DeviceHint(DeviceClass.IOT_DEVICE, 0.85, "Home Assistant service"))
+    if 53 in port_set:
+        dns_port = open_ports.get(53)
+        dns_service = f"{dns_port.service or ''} {dns_port.product or ''} {dns_port.version or ''}".lower() if dns_port else ""
+        if "dnsmasq" in dns_service and (22 in port_set or 80 in port_set or 443 in port_set):
+            candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.86, "dnsmasq gateway pattern"))
+    return candidates
 
-    # Common hostname/vendor hints in homelabs
+
+def _collect_hostname_hints(host_name: str, host: DiscoveredHost) -> list[DeviceHint]:
+    candidates: list[DeviceHint] = []
     if any(token in host_name for token in ("ap", "wap", "wifi", "deco")):
         candidates.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.60, f"Hostname hint: {host.nmap_hostname}"))
     if any(token in host_name for token in ("sw", "switch")):
@@ -176,7 +208,16 @@ def classify(
         candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.97, f"Hostname hint: {host.nmap_hostname}"))
     if any(token in host_name for token in ("nas", "truenas", "synology")):
         candidates.append(DeviceHint(DeviceClass.NAS, 0.75, f"Hostname hint: {host.nmap_hostname}"))
+    return candidates
 
+
+def _collect_vendor_hints(
+    mac_vendor_lower: str,
+    open_ports: dict[int, PortResult],
+    mac_vendor: str | None,
+) -> list[DeviceHint]:
+    candidates: list[DeviceHint] = []
+    port_set = set(open_ports.keys())
     if "firewalla" in mac_vendor_lower:
         candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.99, f"Vendor hint: {mac_vendor}"))
     if "ubiquiti" in mac_vendor_lower or "unifi" in mac_vendor_lower:
@@ -194,17 +235,7 @@ def classify(
             candidates.append(DeviceHint(DeviceClass.PRINTER, 0.78, f"Vendor and ports: {mac_vendor}"))
     if any(vendor in mac_vendor_lower for vendor in ("hikvision", "dahua", "reolink", "axis")):
         candidates.append(DeviceHint(DeviceClass.IP_CAMERA, 0.82, f"Vendor hint: {mac_vendor}"))
-    if 53 in port_set:
-        dns_port = open_ports.get(53)
-        dns_service = f"{dns_port.service or ''} {dns_port.product or ''} {dns_port.version or ''}".lower() if dns_port else ""
-        if "dnsmasq" in dns_service and (22 in port_set or 80 in port_set or 443 in port_set):
-            candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.86, "dnsmasq gateway pattern"))
-
-    if not candidates:
-        return DeviceHint(DeviceClass.UNKNOWN, 0.0, "No matching signatures")
-
-    # Return highest-confidence hint
-    return max(candidates, key=lambda h: h.confidence)
+    return candidates
 
 
 def probe_priority(

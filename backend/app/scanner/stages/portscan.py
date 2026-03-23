@@ -174,40 +174,43 @@ def _scan_sync(
 def _extract_ports(host_data: dict) -> list[PortResult]:
     ports: list[PortResult] = []
 
-    for proto in ("tcp", "udp"):
-        proto_data = host_data.get(proto, {})
-        for port_num, info in proto_data.items():
-            state = info.get("state", "")
-            if state not in ("open", "open|filtered"):
-                continue
-
-            # Build version string from nmap components
-            parts = [info.get("product", ""), info.get("version", ""), info.get("extrainfo", "")]
-            version_str = " ".join(p for p in parts if p).strip() or None
-
-            # Collect any NSE script output as a banner
-            scripts = info.get("script", {})
-            banner_parts = []
-            for script_name, output in scripts.items():
-                if output and isinstance(output, str):
-                    banner_parts.append(f"[{script_name}] {output[:300]}")
-            banner = "\n".join(banner_parts) if banner_parts else None
-
-            ports.append(PortResult(
-                port=int(port_num),
-                protocol=proto,
-                state=state,
-                service=info.get("name"),
-                version=version_str,
-                product=info.get("product"),
-                extra_info=info.get("extrainfo"),
-                cpe=_first_cpe(info.get("cpe")),
-                banner=banner,
-            ))
+    for proto, port_num, info in _iter_open_ports(host_data):
+        ports.append(PortResult(
+            port=int(port_num),
+            protocol=proto,
+            state=info.get("state", ""),
+            service=info.get("name"),
+            version=_build_version_string(info),
+            product=info.get("product"),
+            extra_info=info.get("extrainfo"),
+            cpe=_first_cpe(info.get("cpe")),
+            banner=_build_script_banner(info.get("script", {})),
+        ))
 
     # Sort by port number for consistent output
     ports.sort(key=lambda p: p.port)
     return ports
+
+
+def _iter_open_ports(host_data: dict):
+    for proto in ("tcp", "udp"):
+        proto_data = host_data.get(proto, {})
+        for port_num, info in proto_data.items():
+            if info.get("state", "") in ("open", "open|filtered"):
+                yield proto, port_num, info
+
+
+def _build_version_string(info: dict) -> str | None:
+    parts = [info.get("product", ""), info.get("version", ""), info.get("extrainfo", "")]
+    return " ".join(part for part in parts if part).strip() or None
+
+
+def _build_script_banner(scripts: dict) -> str | None:
+    banner_parts = []
+    for script_name, output in scripts.items():
+        if output and isinstance(output, str):
+            banner_parts.append(f"[{script_name}] {output[:300]}")
+    return "\n".join(banner_parts) if banner_parts else None
 
 
 def _extract_os(host_data: dict) -> OSFingerprint:
@@ -305,13 +308,10 @@ def build_escalated_args(ports: list[PortResult]) -> str:
     port_nums: list[str] = []
 
     for port in ports:
-        if port.state == "open":
-            port_nums.append(str(port.port))
-            svc = (port.service or "").lower()
-            for key, scripts in SERVICE_SCRIPTS.items():
-                if key in svc or (key == "https" and port.port == 443) or (key == "http" and port.port == 80):
-                    for s in scripts.split(","):
-                        script_set.add(s.strip())
+        if port.state != "open":
+            continue
+        port_nums.append(str(port.port))
+        script_set.update(_service_scripts_for_port(port))
 
     if not script_set:
         return ""
@@ -319,3 +319,12 @@ def build_escalated_args(ports: list[PortResult]) -> str:
     ports_arg = ",".join(sorted(set(port_nums)))
     scripts_arg = ",".join(sorted(script_set))
     return f"-sV -T4 -p {ports_arg} --script={scripts_arg}"
+
+
+def _service_scripts_for_port(port: PortResult) -> set[str]:
+    scripts: set[str] = set()
+    svc = (port.service or "").lower()
+    for key, service_scripts in SERVICE_SCRIPTS.items():
+        if key in svc or (key == "https" and port.port == 443) or (key == "http" and port.port == 80):
+            scripts.update(script.strip() for script in service_scripts.split(","))
+    return scripts

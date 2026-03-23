@@ -28,6 +28,7 @@ from app.scanner.models import (
     DiscoveredHost,
     HostScanResult,
     HttpProbeData,
+    OSFingerprint,
     PortResult,
     ProbeResult,
     ScanProfile,
@@ -53,6 +54,7 @@ from app.scanner.probes import tls as tls_probe
 from app.scanner.probes import upnp as upnp_probe
 from app.scanner.enrichment import dns_lookup
 from app.scanner.stages import deep_probe, discovery
+from app.scanner.stages import fingerprint, portscan
 from app.scanner.stages.discovery import _merge_discovered_host, _merge_discovery_results, _parse_ping_sweep_xml
 from app.workers.tasks import (
     _apply_interrupt_result,
@@ -533,6 +535,57 @@ async def test_discovery_sweep_merges_results_when_one_method_fails(monkeypatch)
     hosts = await discovery.sweep("10.0.0.0/24")
 
     assert sorted(host.ip_address for host in hosts) == ["10.0.0.8", "10.0.0.9"]
+
+
+def test_fingerprint_classify_prefers_vendor_and_dnsmasq_gateway_pattern():
+    host = DiscoveredHost(ip_address="10.0.0.1", nmap_hostname="fw-core")
+    ports = [
+        PortResult(port=22, protocol="tcp", state="open", service="ssh"),
+        PortResult(port=53, protocol="tcp", state="open", service="domain", product="dnsmasq"),
+        PortResult(port=443, protocol="tcp", state="open", service="https"),
+    ]
+
+    hint = fingerprint.classify(host, ports, OSFingerprint(os_name="Linux"), mac_vendor="Firewalla Inc.")
+
+    assert hint.device_class is DeviceClass.FIREWALL
+    assert hint.confidence >= 0.95
+
+
+def test_portscan_extract_ports_builds_versions_and_truncates_script_banner():
+    host_data = {
+        "tcp": {
+            80: {
+                "state": "open",
+                "name": "http",
+                "product": "nginx",
+                "version": "1.25",
+                "extrainfo": "Ubuntu",
+                "cpe": ["cpe:/a:nginx:nginx:1.25"],
+                "script": {"http-title": "A" * 400},
+            },
+            81: {"state": "closed"},
+        }
+    }
+
+    ports = portscan._extract_ports(host_data)
+
+    assert len(ports) == 1
+    assert ports[0].version == "nginx 1.25 Ubuntu"
+    assert ports[0].cpe == "cpe:/a:nginx:nginx:1.25"
+    assert ports[0].banner is not None
+    assert len(ports[0].banner) < 330
+
+
+def test_portscan_service_scripts_match_web_ports_without_service_names():
+    https_scripts = portscan._service_scripts_for_port(
+        PortResult(port=443, protocol="tcp", state="open", service=None)
+    )
+    http_scripts = portscan._service_scripts_for_port(
+        PortResult(port=80, protocol="tcp", state="open", service=None)
+    )
+
+    assert "ssl-cert" in https_scripts
+    assert "http-title" in http_scripts
 
 
 def test_split_scan_targets_breaks_large_networks_and_groups_ips():
