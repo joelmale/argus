@@ -126,49 +126,15 @@ async def run_scan(
         summary.duration_seconds = time.monotonic() - t0
         return summary
 
-    # ── Stage 2: Port scan all hosts together (nmap batch) ───────────────────
-    await _broadcast(broadcast_fn, {
-        "event": "scan_progress",
-        "data": {
-            "job_id": job_id,
-            "stage": "port_scan",
-            "progress": 0.2,
-            "hosts_found": len(hosts),
-            "hosts_port_scanned": 0,
-            "hosts_fingerprinted": 0,
-            "hosts_deep_probed": 0,
-            "assets_created": summary.new_assets,
-            "assets_updated": summary.changed_assets,
-            "message": f"Running nmap port scan across {len(hosts)} hosts",
-        },
-    })
-
-    await _check_control(
-        control_fn,
-        stage="pre_port_scan",
-        summary=summary,
-        hosts=hosts,
-        completed_results=[],
-        total_hosts=len(hosts),
-    )
-
-    port_map = await _run_port_scan_chunks(
+    port_map = await _run_port_scan_stage(
         hosts,
         profile,
         top_ports_count,
         host_chunk_size,
-        broadcast_fn,
-        job_id,
         summary,
-    )
-
-    await _check_control(
+        job_id,
+        broadcast_fn,
         control_fn,
-        stage="post_port_scan",
-        summary=summary,
-        hosts=hosts,
-        completed_results=[],
-        total_hosts=len(hosts),
     )
 
     # ── Stages 3–6: Per-host investigation (concurrent) ──────────────────────
@@ -178,46 +144,23 @@ async def run_scan(
         from app.scanner.agent import get_analyst
         analyst = get_analyst()
 
-    tasks = [
-        asyncio.create_task(
-            _investigate_host(
-                host=host,
-                ports=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[0],
-                os_fp=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[1],
-                nmap_hostname=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[2],
-                nmap_vendor=port_map.get(host.ip_address, ([], OSFingerprint(), None, None))[3],
-                profile=profile,
-                analyst=analyst,
-                run_deep_probes=mode_behavior.run_deep_probes,
-                deep_probe_timeout_seconds=deep_probe_timeout_seconds,
-                semaphore=semaphore,
-                broadcast_fn=broadcast_fn,
-                job_id=job_id,
-            )
-        )
-        for host in hosts
-    ]
+    tasks = _build_investigation_tasks(
+        hosts,
+        port_map,
+        profile,
+        analyst,
+        mode_behavior.run_deep_probes,
+        deep_probe_timeout_seconds,
+        semaphore,
+        broadcast_fn,
+        job_id,
+    )
 
     results: list[HostScanResult | None] = []
     completed_hosts = 0
     deep_probed_hosts = 0
     total_hosts = len(tasks)
-    await _broadcast(broadcast_fn, {
-        "event": "scan_progress",
-        "data": {
-            "job_id": job_id,
-            "stage": "investigation",
-            "progress": 0.25,
-            "hosts_found": len(hosts),
-            "hosts_port_scanned": len(hosts),
-            "hosts_fingerprinted": 0,
-            "hosts_deep_probed": 0,
-            "hosts_investigated": 0,
-            "assets_created": summary.new_assets,
-            "assets_updated": summary.changed_assets,
-            "message": f"Investigating {total_hosts} discovered hosts",
-        },
-    })
+    await _broadcast_investigation_start(broadcast_fn, job_id, hosts, total_hosts, summary)
 
     for task in asyncio.as_completed(tasks):
         result = await task
@@ -237,25 +180,16 @@ async def run_scan(
                 mark_missing_offline=False,
                 stage="investigation",
             )
-        progress = 0.25 + (0.6 * (completed_hosts / max(total_hosts, 1)))
-        current_host = result.host.ip_address if result else None
-        await _broadcast(broadcast_fn, {
-            "event": "scan_progress",
-            "data": {
-                "job_id": job_id,
-                "stage": "investigation",
-                "progress": round(progress, 3),
-                "hosts_found": len(hosts),
-                "hosts_port_scanned": len(hosts),
-                "hosts_fingerprinted": completed_hosts,
-                "hosts_deep_probed": deep_probed_hosts,
-                "hosts_investigated": completed_hosts,
-                "current_host": current_host,
-                "assets_created": summary.new_assets,
-                "assets_updated": summary.changed_assets,
-                "message": f"Investigated {completed_hosts}/{total_hosts} hosts",
-            },
-        })
+        await _broadcast_investigation_progress(
+            broadcast_fn,
+            job_id,
+            hosts,
+            summary,
+            completed_hosts,
+            deep_probed_hosts,
+            total_hosts,
+            result,
+        )
 
         await _check_control(
             control_fn,
@@ -323,6 +257,164 @@ async def run_scan(
     })
 
     return summary
+
+
+async def _run_port_scan_stage(
+    hosts: list[DiscoveredHost],
+    profile: ScanProfile,
+    top_ports_count: int,
+    host_chunk_size: int,
+    summary: ScanSummary,
+    job_id: str,
+    broadcast_fn,
+    control_fn,
+) -> dict[str, tuple]:
+    await _broadcast_port_scan_start(broadcast_fn, job_id, hosts, summary)
+    await _check_control(
+        control_fn,
+        stage="pre_port_scan",
+        summary=summary,
+        hosts=hosts,
+        completed_results=[],
+        total_hosts=len(hosts),
+    )
+    port_map = await _run_port_scan_chunks(
+        hosts,
+        profile,
+        top_ports_count,
+        host_chunk_size,
+        broadcast_fn,
+        job_id,
+        summary,
+    )
+    await _check_control(
+        control_fn,
+        stage="post_port_scan",
+        summary=summary,
+        hosts=hosts,
+        completed_results=[],
+        total_hosts=len(hosts),
+    )
+    return port_map
+
+
+def _build_investigation_tasks(
+    hosts: list[DiscoveredHost],
+    port_map: dict[str, tuple],
+    profile: ScanProfile,
+    analyst,
+    run_deep_probes: bool,
+    deep_probe_timeout_seconds: int,
+    semaphore: asyncio.Semaphore,
+    broadcast_fn,
+    job_id: str,
+) -> list[asyncio.Task]:
+    return [
+        asyncio.create_task(
+            _investigate_host(
+                host=host,
+                ports=port_details[0],
+                os_fp=port_details[1],
+                nmap_hostname=port_details[2],
+                nmap_vendor=port_details[3],
+                profile=profile,
+                analyst=analyst,
+                run_deep_probes=run_deep_probes,
+                deep_probe_timeout_seconds=deep_probe_timeout_seconds,
+                semaphore=semaphore,
+                broadcast_fn=broadcast_fn,
+                job_id=job_id,
+            )
+        )
+        for host in hosts
+        for port_details in [_port_details_for_host(port_map, host.ip_address)]
+    ]
+
+
+def _port_details_for_host(port_map: dict[str, tuple], ip_address: str) -> tuple:
+    return port_map.get(ip_address, ([], OSFingerprint(), None, None))
+
+
+async def _broadcast_port_scan_start(broadcast_fn, job_id: str, hosts: list[DiscoveredHost], summary: ScanSummary) -> None:
+    await _broadcast(
+        broadcast_fn,
+        {
+            "event": "scan_progress",
+            "data": {
+                "job_id": job_id,
+                "stage": "port_scan",
+                "progress": 0.2,
+                "hosts_found": len(hosts),
+                "hosts_port_scanned": 0,
+                "hosts_fingerprinted": 0,
+                "hosts_deep_probed": 0,
+                "assets_created": summary.new_assets,
+                "assets_updated": summary.changed_assets,
+                "message": f"Running nmap port scan across {len(hosts)} hosts",
+            },
+        },
+    )
+
+
+async def _broadcast_investigation_start(
+    broadcast_fn,
+    job_id: str,
+    hosts: list[DiscoveredHost],
+    total_hosts: int,
+    summary: ScanSummary,
+) -> None:
+    await _broadcast(
+        broadcast_fn,
+        {
+            "event": "scan_progress",
+            "data": {
+                "job_id": job_id,
+                "stage": "investigation",
+                "progress": 0.25,
+                "hosts_found": len(hosts),
+                "hosts_port_scanned": len(hosts),
+                "hosts_fingerprinted": 0,
+                "hosts_deep_probed": 0,
+                "hosts_investigated": 0,
+                "assets_created": summary.new_assets,
+                "assets_updated": summary.changed_assets,
+                "message": f"Investigating {total_hosts} discovered hosts",
+            },
+        },
+    )
+
+
+async def _broadcast_investigation_progress(
+    broadcast_fn,
+    job_id: str,
+    hosts: list[DiscoveredHost],
+    summary: ScanSummary,
+    completed_hosts: int,
+    deep_probed_hosts: int,
+    total_hosts: int,
+    result: HostScanResult | None,
+) -> None:
+    progress = 0.25 + (0.6 * (completed_hosts / max(total_hosts, 1)))
+    await _broadcast(
+        broadcast_fn,
+        {
+            "event": "scan_progress",
+            "data": {
+                "job_id": job_id,
+                "stage": "investigation",
+                "progress": round(progress, 3),
+                "hosts_found": len(hosts),
+                "hosts_port_scanned": len(hosts),
+                "hosts_fingerprinted": completed_hosts,
+                "hosts_deep_probed": deep_probed_hosts,
+                "hosts_investigated": completed_hosts,
+                "current_host": result.host.ip_address if result else None,
+                "assets_created": summary.new_assets,
+                "assets_updated": summary.changed_assets,
+                "message": f"Investigated {completed_hosts}/{total_hosts} hosts",
+            },
+        },
+    )
 
 
 async def _run_discovery_stage(

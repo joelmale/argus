@@ -44,70 +44,7 @@ async def run(
     ip = host.ip_address
     open_port_nums = {p.port: p for p in ports if p.state == "open"}
     effective_timeout = _normalize_probe_timeout(timeout_seconds)
-
-    # Build the probe task list
-    tasks: list[tuple[str, asyncio.Task]] = []
-
-    # Always run DNS
-    tasks.append(("dns", asyncio.create_task(_dns_probe(ip))))
-
-    # HTTP probes — one per web port found
-    web_ports = {
-        80: False, 8080: False, 8000: False, 8008: False, 8888: False,
-        443: True, 8443: True, 4443: True,
-    }
-    for port_num, use_https in web_ports.items():
-        if port_num in open_port_nums:
-            label = "https" if use_https else "http"
-            timeout = _resolve_probe_timeout("http", effective_timeout)
-            tasks.append((label, asyncio.create_task(
-                _with_timeout(
-                    _http_probe(ip, port_num, use_https),
-                    timeout,
-                    probe_type=label, port=port_num,
-                )
-            )))
-
-    # TLS: run on any HTTPS port even if not in priority list
-    for port_num in (443, 8443, 4443):
-        if port_num in open_port_nums and "tls" not in [t[0] for t in tasks]:
-            tasks.append(("tls", asyncio.create_task(
-                _with_timeout(_tls_probe(ip, port_num), _resolve_probe_timeout("tls", effective_timeout), "tls", port_num)
-            )))
-
-    # SSH
-    for port_num in (22, 2222):
-        if port_num in open_port_nums:
-            tasks.append(("ssh", asyncio.create_task(
-                _with_timeout(_ssh_probe(ip, port_num), _resolve_probe_timeout("ssh", effective_timeout), "ssh", port_num)
-            )))
-            break
-
-    # SNMP
-    if 161 in open_port_nums or "snmp" in priority_probes:
-        tasks.append(("snmp", asyncio.create_task(
-            _with_timeout(_snmp_probe(ip), _resolve_probe_timeout("snmp", effective_timeout), "snmp", 161)
-        )))
-
-    # mDNS — probe if suggested or if 5353 is in port scan
-    if "mdns" in priority_probes or 5353 in open_port_nums:
-        tasks.append(("mdns", asyncio.create_task(
-            _with_timeout(_mdns_probe(ip), _resolve_probe_timeout("mdns", effective_timeout), "mdns")
-        )))
-
-    # UPnP
-    if "upnp" in priority_probes or 1900 in open_port_nums:
-        tasks.append(("upnp", asyncio.create_task(
-            _with_timeout(_upnp_probe(ip), _resolve_probe_timeout("upnp", effective_timeout), "upnp", 1900)
-        )))
-
-    # SMB
-    for port_num in (445, 139):
-        if port_num in open_port_nums:
-            tasks.append(("smb", asyncio.create_task(
-                _with_timeout(_smb_probe(ip, port_num), _resolve_probe_timeout("smb", effective_timeout), "smb", port_num)
-            )))
-            break
+    tasks = _build_probe_tasks(ip, open_port_nums, priority_probes, effective_timeout)
 
     if not tasks:
         return []
@@ -128,6 +65,156 @@ async def run(
     log.debug("Probes complete for %s: %d/%d succeeded", ip, successes, len(probe_results))
 
     return probe_results
+
+
+def _build_probe_tasks(
+    ip: str,
+    open_port_nums: dict[int, PortResult],
+    priority_probes: list[str],
+    effective_timeout: float | None,
+) -> list[tuple[str, asyncio.Task]]:
+    tasks: list[tuple[str, asyncio.Task]] = [("dns", asyncio.create_task(_dns_probe(ip)))]
+    tasks.extend(_build_http_tasks(ip, open_port_nums, effective_timeout))
+    _append_optional_probe(tasks, ip, open_port_nums, priority_probes, effective_timeout, "tls")
+    _append_optional_probe(tasks, ip, open_port_nums, priority_probes, effective_timeout, "ssh")
+    _append_optional_probe(tasks, ip, open_port_nums, priority_probes, effective_timeout, "snmp")
+    _append_optional_probe(tasks, ip, open_port_nums, priority_probes, effective_timeout, "mdns")
+    _append_optional_probe(tasks, ip, open_port_nums, priority_probes, effective_timeout, "upnp")
+    _append_optional_probe(tasks, ip, open_port_nums, priority_probes, effective_timeout, "smb")
+    return tasks
+
+
+def _build_http_tasks(
+    ip: str,
+    open_port_nums: dict[int, PortResult],
+    effective_timeout: float | None,
+) -> list[tuple[str, asyncio.Task]]:
+    tasks: list[tuple[str, asyncio.Task]] = []
+    for port_num, use_https in _web_ports().items():
+        if port_num not in open_port_nums:
+            continue
+        label = "https" if use_https else "http"
+        tasks.append(
+            (
+                label,
+                asyncio.create_task(
+                    _with_timeout(
+                        _http_probe(ip, port_num, use_https),
+                        _resolve_probe_timeout("http", effective_timeout),
+                        probe_type=label,
+                        port=port_num,
+                    )
+                ),
+            )
+        )
+    return tasks
+
+
+def _append_optional_probe(
+    tasks: list[tuple[str, asyncio.Task]],
+    ip: str,
+    open_port_nums: dict[int, PortResult],
+    priority_probes: list[str],
+    effective_timeout: float | None,
+    probe_name: str,
+) -> None:
+    port_num = _select_probe_port(probe_name, open_port_nums, priority_probes, tasks)
+    if port_num is None and probe_name not in {"mdns", "snmp", "upnp"}:
+        return
+    if probe_name in {"mdns", "snmp", "upnp"} and not _should_run_priority_probe(probe_name, open_port_nums, priority_probes):
+        return
+    tasks.append(
+        (
+            probe_name,
+            asyncio.create_task(
+                _with_timeout(
+                    _probe_coroutine(probe_name, ip, port_num),
+                    _resolve_probe_timeout(probe_name, effective_timeout),
+                    probe_name,
+                    port_num,
+                )
+            ),
+        )
+    )
+
+
+def _probe_coroutine(probe_name: str, ip: str, port_num: int | None):
+    if probe_name == "tls":
+        return _tls_probe(ip, _require_port(port_num, probe_name))
+    if probe_name == "ssh":
+        return _ssh_probe(ip, _require_port(port_num, probe_name))
+    if probe_name == "snmp":
+        return _snmp_probe(ip)
+    if probe_name == "mdns":
+        return _mdns_probe(ip)
+    if probe_name == "upnp":
+        return _upnp_probe(ip)
+    if probe_name == "smb":
+        return _smb_probe(ip, _require_port(port_num, probe_name))
+    raise ValueError(f"Unsupported probe type: {probe_name}")
+
+
+def _require_port(port_num: int | None, probe_name: str) -> int:
+    if port_num is None:
+        raise ValueError(f"Probe {probe_name} requires a target port")
+    return port_num
+
+
+def _select_probe_port(
+    probe_name: str,
+    open_port_nums: dict[int, PortResult],
+    priority_probes: list[str],
+    tasks: list[tuple[str, asyncio.Task]],
+) -> int | None:
+    if probe_name == "tls":
+        if any(existing_name == "tls" for existing_name, _ in tasks):
+            return None
+        return _first_matching_port((443, 8443, 4443), open_port_nums)
+    if probe_name == "ssh":
+        return _first_matching_port((22, 2222), open_port_nums)
+    if probe_name == "smb":
+        return _first_matching_port((445, 139), open_port_nums)
+    if probe_name == "snmp":
+        return 161
+    if probe_name == "upnp":
+        return 1900
+    if probe_name == "mdns":
+        return None
+    return None
+
+
+def _should_run_priority_probe(
+    probe_name: str,
+    open_port_nums: dict[int, PortResult],
+    priority_probes: list[str],
+) -> bool:
+    if probe_name == "snmp":
+        return 161 in open_port_nums or probe_name in priority_probes
+    if probe_name == "mdns":
+        return 5353 in open_port_nums or probe_name in priority_probes
+    if probe_name == "upnp":
+        return 1900 in open_port_nums or probe_name in priority_probes
+    return False
+
+
+def _first_matching_port(candidates: tuple[int, ...], open_port_nums: dict[int, PortResult]) -> int | None:
+    for port_num in candidates:
+        if port_num in open_port_nums:
+            return port_num
+    return None
+
+
+def _web_ports() -> dict[int, bool]:
+    return {
+        80: False,
+        8080: False,
+        8000: False,
+        8008: False,
+        8888: False,
+        443: True,
+        8443: True,
+        4443: True,
+    }
 
 
 def _normalize_probe_timeout(timeout_seconds: float | None) -> float | None:

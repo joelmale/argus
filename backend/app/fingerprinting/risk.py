@@ -30,33 +30,82 @@ def extract_normalized_products(evidence: list) -> list[NormalizedProduct]:
     seen: set[tuple[str, str | None, str]] = set()
 
     for item in evidence:
-        details = item.details or {}
-        product = details.get("product")
-        version = details.get("version")
-        cpe = details.get("cpe")
-        if product:
-            normalized = str(product).strip().lower()
-            key = (normalized, str(version) if version else None, item.source)
-            if key not in seen:
-                products.append(NormalizedProduct(normalized, str(version) if version else None, item.source, str(cpe) if cpe else None))
-                seen.add(key)
-        if isinstance(cpe, str) and cpe.startswith("cpe:/"):
-            parts = cpe.split(":")
-            if len(parts) >= 5:
-                normalized = parts[3].replace("_", " ").lower()
-                cpe_version = parts[4] or None
-                key = (normalized, cpe_version, item.source)
-                if key not in seen:
-                    products.append(NormalizedProduct(normalized, cpe_version, item.source, cpe))
-                    seen.add(key)
-        if item.key == "detected_app":
-            normalized = item.value.strip().lower()
-            key = (normalized, None, item.source)
-            if key not in seen:
-                products.append(NormalizedProduct(normalized, None, item.source))
-                seen.add(key)
+        for candidate in _extract_item_products(item):
+            _append_normalized_product(products, seen, candidate)
 
     return products
+
+
+def _extract_item_products(item) -> list[NormalizedProduct]:
+    details = item.details or {}
+    product = details.get("product")
+    version = _normalize_version(details.get("version"))
+    cpe = _normalize_optional_text(details.get("cpe"))
+    candidates: list[NormalizedProduct] = []
+
+    if product:
+        candidates.append(
+            NormalizedProduct(
+                product=_normalize_product_name(product),
+                version=version,
+                source=item.source,
+                cpe=cpe,
+            )
+        )
+    if cpe:
+        cpe_candidate = _product_from_cpe(cpe, item.source)
+        if cpe_candidate is not None:
+            candidates.append(cpe_candidate)
+    if item.key == "detected_app":
+        candidates.append(
+            NormalizedProduct(
+                product=_normalize_product_name(item.value),
+                version=None,
+                source=item.source,
+            )
+        )
+    return candidates
+
+
+def _append_normalized_product(
+    products: list[NormalizedProduct],
+    seen: set[tuple[str, str | None, str]],
+    product: NormalizedProduct,
+) -> None:
+    key = (product.product, product.version, product.source)
+    if key in seen:
+        return
+    products.append(product)
+    seen.add(key)
+
+
+def _product_from_cpe(cpe: str, source: str) -> NormalizedProduct | None:
+    if not cpe.startswith("cpe:/"):
+        return None
+    parts = cpe.split(":")
+    if len(parts) < 5:
+        return None
+    return NormalizedProduct(
+        product=parts[3].replace("_", " ").lower(),
+        version=parts[4] or None,
+        source=source,
+        cpe=cpe,
+    )
+
+
+def _normalize_product_name(value) -> str:
+    return str(value).strip().lower()
+
+
+def _normalize_version(value) -> str | None:
+    return str(value) if value else None
+
+
+def _normalize_optional_text(value) -> str | None:
+    if value is None:
+        return None
+    normalized = str(value).strip()
+    return normalized or None
 
 
 def _matches(product: NormalizedProduct, rule: dict) -> bool:

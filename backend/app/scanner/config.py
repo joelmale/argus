@@ -394,11 +394,74 @@ async def update_scanner_config(
     internet_lookup_budget: int,
     internet_lookup_timeout_seconds: int,
 ) -> tuple[ScannerConfig, EffectiveScannerConfig]:
-    normalized_targets = default_targets.strip() if default_targets and default_targets.strip() else None
+    normalized_targets = _normalize_optional_text(default_targets)
     if not auto_detect_targets and not normalized_targets:
         raise ValueError("Explicit scanner targets are required when auto-detect is disabled.")
 
     config = await get_or_create_scanner_config(db)
+    _apply_core_scanner_settings(
+        config,
+        enabled=enabled,
+        normalized_targets=normalized_targets,
+        auto_detect_targets=auto_detect_targets,
+        default_profile=default_profile,
+        interval_minutes=interval_minutes,
+        concurrent_hosts=concurrent_hosts,
+        host_chunk_size=host_chunk_size,
+        top_ports_count=top_ports_count,
+        deep_probe_timeout_seconds=deep_probe_timeout_seconds,
+        ai_after_scan_enabled=ai_after_scan_enabled,
+        passive_arp_enabled=passive_arp_enabled,
+        passive_arp_interface=passive_arp_interface,
+    )
+    _apply_snmp_settings(
+        config,
+        snmp_enabled=snmp_enabled,
+        snmp_version=snmp_version,
+        snmp_community=snmp_community,
+        snmp_timeout=snmp_timeout,
+        snmp_v3_username=snmp_v3_username,
+        snmp_v3_auth_key=snmp_v3_auth_key,
+        snmp_v3_priv_key=snmp_v3_priv_key,
+        snmp_v3_auth_protocol=snmp_v3_auth_protocol,
+        snmp_v3_priv_protocol=snmp_v3_priv_protocol,
+    )
+    _apply_ai_and_lookup_settings(
+        config,
+        fingerprint_ai_enabled=fingerprint_ai_enabled,
+        fingerprint_ai_model=fingerprint_ai_model,
+        fingerprint_ai_min_confidence=fingerprint_ai_min_confidence,
+        fingerprint_ai_prompt_suffix=fingerprint_ai_prompt_suffix,
+        internet_lookup_enabled=internet_lookup_enabled,
+        internet_lookup_allowed_domains=internet_lookup_allowed_domains,
+        internet_lookup_budget=internet_lookup_budget,
+        internet_lookup_timeout_seconds=internet_lookup_timeout_seconds,
+    )
+    await db.flush()
+    return config, build_effective_scanner_config(config)
+
+
+def _normalize_optional_text(value: str | None) -> str | None:
+    normalized = (value or "").strip()
+    return normalized or None
+
+
+def _apply_core_scanner_settings(
+    config: ScannerConfig,
+    *,
+    enabled: bool,
+    normalized_targets: str | None,
+    auto_detect_targets: bool,
+    default_profile: str,
+    interval_minutes: int,
+    concurrent_hosts: int,
+    host_chunk_size: int,
+    top_ports_count: int,
+    deep_probe_timeout_seconds: int,
+    ai_after_scan_enabled: bool,
+    passive_arp_enabled: bool,
+    passive_arp_interface: str,
+) -> None:
     config.enabled = enabled
     config.default_targets = normalized_targets
     config.auto_detect_targets = auto_detect_targets
@@ -410,26 +473,53 @@ async def update_scanner_config(
     config.deep_probe_timeout_seconds = max(1, min(30, deep_probe_timeout_seconds))
     config.ai_after_scan_enabled = ai_after_scan_enabled
     config.passive_arp_enabled = passive_arp_enabled
-    config.passive_arp_interface = (passive_arp_interface or "").strip() or settings.SCANNER_PASSIVE_ARP_INTERFACE
+    config.passive_arp_interface = _normalize_optional_text(passive_arp_interface) or settings.SCANNER_PASSIVE_ARP_INTERFACE
+
+
+def _apply_snmp_settings(
+    config: ScannerConfig,
+    *,
+    snmp_enabled: bool,
+    snmp_version: str,
+    snmp_community: str | None,
+    snmp_timeout: int,
+    snmp_v3_username: str | None,
+    snmp_v3_auth_key: str | None,
+    snmp_v3_priv_key: str | None,
+    snmp_v3_auth_protocol: str,
+    snmp_v3_priv_protocol: str,
+) -> None:
     config.snmp_enabled = snmp_enabled
     config.snmp_version = (snmp_version or "2c").lower()
-    config.snmp_community = (snmp_community or "").strip() or settings.SNMP_COMMUNITY
+    config.snmp_community = _normalize_optional_text(snmp_community) or settings.SNMP_COMMUNITY
     config.snmp_timeout = max(1, snmp_timeout)
-    config.snmp_v3_username = (snmp_v3_username or "").strip() or None
-    config.snmp_v3_auth_key = (snmp_v3_auth_key or "").strip() or None
-    config.snmp_v3_priv_key = (snmp_v3_priv_key or "").strip() or None
+    config.snmp_v3_username = _normalize_optional_text(snmp_v3_username)
+    config.snmp_v3_auth_key = _normalize_optional_text(snmp_v3_auth_key)
+    config.snmp_v3_priv_key = _normalize_optional_text(snmp_v3_priv_key)
     config.snmp_v3_auth_protocol = (snmp_v3_auth_protocol or "sha").lower()
     config.snmp_v3_priv_protocol = (snmp_v3_priv_protocol or "aes").lower()
+
+
+def _apply_ai_and_lookup_settings(
+    config: ScannerConfig,
+    *,
+    fingerprint_ai_enabled: bool,
+    fingerprint_ai_model: str | None,
+    fingerprint_ai_min_confidence: float,
+    fingerprint_ai_prompt_suffix: str | None,
+    internet_lookup_enabled: bool,
+    internet_lookup_allowed_domains: str | None,
+    internet_lookup_budget: int,
+    internet_lookup_timeout_seconds: int,
+) -> None:
     config.fingerprint_ai_enabled = fingerprint_ai_enabled
-    config.fingerprint_ai_model = (fingerprint_ai_model or "").strip() or settings.OLLAMA_MODEL
+    config.fingerprint_ai_model = _normalize_optional_text(fingerprint_ai_model) or settings.OLLAMA_MODEL
     config.fingerprint_ai_min_confidence = max(0.0, min(1.0, fingerprint_ai_min_confidence))
-    config.fingerprint_ai_prompt_suffix = fingerprint_ai_prompt_suffix.strip() if fingerprint_ai_prompt_suffix and fingerprint_ai_prompt_suffix.strip() else None
+    config.fingerprint_ai_prompt_suffix = _normalize_optional_text(fingerprint_ai_prompt_suffix)
     config.internet_lookup_enabled = internet_lookup_enabled
-    config.internet_lookup_allowed_domains = internet_lookup_allowed_domains.strip() if internet_lookup_allowed_domains and internet_lookup_allowed_domains.strip() else None
+    config.internet_lookup_allowed_domains = _normalize_optional_text(internet_lookup_allowed_domains)
     config.internet_lookup_budget = max(1, internet_lookup_budget)
     config.internet_lookup_timeout_seconds = max(1, internet_lookup_timeout_seconds)
-    await db.flush()
-    return config, build_effective_scanner_config(config)
 
 
 def resolve_scan_targets(config: ScannerConfig, requested_targets: str | None) -> str:

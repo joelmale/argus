@@ -10,6 +10,8 @@ import httpx
 import pytest
 
 from app.db.models import ScanJob, ScannerConfig
+from app.fingerprinting.evidence import EvidenceItem
+from app.fingerprinting.risk import extract_normalized_products
 from app.scanner.config import (
     AUTO_TARGET_SENTINEL,
     build_effective_scanner_config,
@@ -31,12 +33,14 @@ from app.scanner.models import (
 )
 from app.scanner.pipeline import (
     ScanControlDecision,
+    _build_investigation_tasks,
     _build_control_interrupt,
     _build_partial_results,
     _call_persist_results,
     _call_scan_hosts,
     _extract_probe_hostname,
     _get_offline_ips,
+    _port_details_for_host,
     _progress_payload,
     _resolve_hostname_from_probes,
     _run_ai_investigation,
@@ -44,6 +48,7 @@ from app.scanner.pipeline import (
 from app.scanner.probes import http as http_probe
 from app.scanner.probes import tls as tls_probe
 from app.scanner.probes import upnp as upnp_probe
+from app.scanner.stages import deep_probe
 from app.scanner.stages.discovery import _merge_discovery_results
 from app.workers.tasks import (
     _apply_interrupt_result,
@@ -187,6 +192,15 @@ def test_progress_payload_includes_summary_counters_and_extra_fields():
     assert payload["data"]["message"] == "hello"
 
 
+def test_port_details_for_host_returns_empty_defaults_when_missing():
+    ports, os_fp, nmap_hostname, nmap_vendor = _port_details_for_host({}, "10.0.0.99")
+
+    assert ports == []
+    assert os_fp.os_name is None
+    assert nmap_hostname is None
+    assert nmap_vendor is None
+
+
 def test_extract_probe_hostname_supports_dns_mdns_and_snmp():
     dns_probe = SimpleNamespace(success=True, probe_type="dns", data={"hostname": "switch.lan"})
     mdns_probe = SimpleNamespace(success=True, probe_type="mdns", data={"services": [{"host": "printer.local"}]})
@@ -240,6 +254,41 @@ async def test_run_ai_investigation_sets_analysis_and_broadcasts_event():
 
 
 @pytest.mark.asyncio
+async def test_build_investigation_tasks_uses_port_map_details(monkeypatch):
+    host = DiscoveredHost(ip_address="10.0.0.20", discovery_method="arp")
+    port_map = {
+        "10.0.0.20": (
+            [PortResult(port=22, protocol="tcp", state="open", service="ssh")],
+            SimpleNamespace(),
+            "router.local",
+            "Ubiquiti",
+        )
+    }
+
+    async def fake_investigate_host(**kwargs):
+        return kwargs
+
+    semaphore = asyncio.Semaphore(1)
+    monkeypatch.setattr("app.scanner.pipeline._investigate_host", fake_investigate_host)
+    tasks = _build_investigation_tasks(
+        [host],
+        port_map,
+        ScanProfile.BALANCED,
+        analyst=None,
+        run_deep_probes=True,
+        deep_probe_timeout_seconds=6,
+        semaphore=semaphore,
+        broadcast_fn=None,
+        job_id="job-build",
+    )
+    result = await tasks[0]
+
+    assert result["nmap_hostname"] == "router.local"
+    assert result["nmap_vendor"] == "Ubiquiti"
+    assert result["ports"][0].port == 22
+
+
+@pytest.mark.asyncio
 async def test_get_offline_ips_respects_mark_missing_offline_flag():
     db = _FakeOfflineDb([("10.0.0.10",), ("10.0.0.11",)])
 
@@ -259,6 +308,71 @@ def test_merge_discovery_results_ignores_failed_method_and_prefers_mac_addresses
 
     assert merged["10.0.0.5"].mac_address == "AA:BB:CC:DD:EE:FF"
     assert set(merged_from_exception) == {"10.0.0.5", "10.0.0.6"}
+
+
+@pytest.mark.asyncio
+async def test_deep_probe_run_builds_expected_probe_mix(monkeypatch):
+    async def fake_dns_probe(_ip):
+        return ProbeResult(probe_type="dns", success=True)
+
+    async def fake_http_probe(_ip, port, use_https):
+        return ProbeResult(probe_type="https" if use_https else "http", target_port=port, success=True)
+
+    async def fake_tls_probe(_ip, port):
+        return ProbeResult(probe_type="tls", target_port=port, success=True)
+
+    async def fake_ssh_probe(_ip, port):
+        return ProbeResult(probe_type="ssh", target_port=port, success=True)
+
+    async def fake_snmp_probe(_ip):
+        return ProbeResult(probe_type="snmp", target_port=161, success=True)
+
+    async def fake_mdns_probe(_ip):
+        return ProbeResult(probe_type="mdns", success=True)
+
+    async def fake_upnp_probe(_ip):
+        return ProbeResult(probe_type="upnp", target_port=1900, success=True)
+
+    async def fake_smb_probe(_ip, port):
+        return ProbeResult(probe_type="smb", target_port=port, success=True)
+
+    monkeypatch.setattr(deep_probe, "_dns_probe", fake_dns_probe)
+    monkeypatch.setattr(deep_probe, "_http_probe", fake_http_probe)
+    monkeypatch.setattr(deep_probe, "_tls_probe", fake_tls_probe)
+    monkeypatch.setattr(deep_probe, "_ssh_probe", fake_ssh_probe)
+    monkeypatch.setattr(deep_probe, "_snmp_probe", fake_snmp_probe)
+    monkeypatch.setattr(deep_probe, "_mdns_probe", fake_mdns_probe)
+    monkeypatch.setattr(deep_probe, "_upnp_probe", fake_upnp_probe)
+    monkeypatch.setattr(deep_probe, "_smb_probe", fake_smb_probe)
+
+    host = DiscoveredHost(ip_address="10.0.0.50", discovery_method="arp")
+    ports = [
+        PortResult(port=80, protocol="tcp", state="open", service="http"),
+        PortResult(port=443, protocol="tcp", state="open", service="https"),
+        PortResult(port=22, protocol="tcp", state="open", service="ssh"),
+        PortResult(port=445, protocol="tcp", state="open", service="microsoft-ds"),
+    ]
+
+    results = await deep_probe.run(host, ports, ["snmp", "mdns", "upnp"], timeout_seconds=4)
+
+    probe_types = [result.probe_type for result in results]
+    assert probe_types.count("tls") == 1
+    assert "dns" in probe_types
+    assert "http" in probe_types
+    assert "https" in probe_types
+    assert "ssh" in probe_types
+    assert "snmp" in probe_types
+    assert "mdns" in probe_types
+    assert "upnp" in probe_types
+    assert "smb" in probe_types
+
+
+def test_deep_probe_timeout_helpers_normalize_and_default():
+    assert deep_probe._normalize_probe_timeout(None) is None
+    assert deep_probe._normalize_probe_timeout(0.2) == 1.0
+    assert deep_probe._normalize_probe_timeout(99) == 30.0
+    assert deep_probe._resolve_probe_timeout("tls", None) == deep_probe.PROBE_TIMEOUTS["tls"]
+    assert deep_probe._resolve_probe_timeout("http", 4.5) == 4.5
 
 
 def test_split_scan_targets_breaks_large_networks_and_groups_ips():
@@ -415,6 +529,42 @@ def test_build_effective_scanner_config_prefers_explicit_targets(monkeypatch):
 
     assert effective.detected_targets == "10.88.0.0/24"
     assert effective.effective_targets == "10.55.0.0/24"
+
+
+def test_extract_normalized_products_deduplicates_product_cpe_and_detected_app():
+    evidence = [
+        EvidenceItem(
+            source="nmap_service",
+            category="service",
+            key="443/tcp",
+            value="https",
+            confidence=0.9,
+            details={"product": "OpenSSL", "version": "1.0.1f", "cpe": "cpe:/a:openssl:openssl:1.0.1f"},
+        ),
+        EvidenceItem(
+            source="nmap_service",
+            category="service",
+            key="443/tcp",
+            value="https",
+            confidence=0.9,
+            details={"product": " OpenSSL ", "version": "1.0.1f", "cpe": "cpe:/a:openssl:openssl:1.0.1f"},
+        ),
+        EvidenceItem(
+            source="probe_http",
+            category="identity",
+            key="detected_app",
+            value="Proxmox Virtual Environment",
+            confidence=0.9,
+            details={"cpe": "not-a-cpe"},
+        ),
+    ]
+
+    products = extract_normalized_products(evidence)
+
+    assert [(product.product, product.version, product.source) for product in products] == [
+        ("openssl", "1.0.1f", "nmap_service"),
+        ("proxmox virtual environment", None, "probe_http"),
+    ]
 
 
 def test_http_apply_main_response_sets_redirect_host_only_for_external_host():
