@@ -276,7 +276,7 @@ function buildScanRowState(scan: ScanJob): ScanRowState {
   const summary = (scan.result_summary as Record<string, unknown> | undefined) ?? {}
   return {
     duration: getScanDurationSeconds(scan),
-    targets: Array.isArray(scan.targets) ? scan.targets.join(', ') : scan.targets ?? '—',
+    targets: formatScanTargets(scan.targets),
     canExpand: canExpandScan(scan.status),
     details: buildScanDetails(scan),
     hostsFound: readSummaryValue(summary, 'hosts_found', '—'),
@@ -285,9 +285,7 @@ function buildScanRowState(scan: ScanJob): ScanRowState {
     changedAssets: typeof summary.changed_assets === 'number' ? summary.changed_assets : 0,
     stageText: formatSummaryStage(summary),
     messageText: typeof summary.message === 'string' ? summary.message : null,
-    triggeredByClass: scan.triggered_by === 'schedule'
-      ? 'bg-purple-500/10 text-purple-600 dark:text-purple-400'
-      : 'bg-sky-500/10 text-sky-600 dark:text-sky-400',
+    triggeredByClass: triggeredByBadgeClass(scan.triggered_by),
   }
 }
 
@@ -313,7 +311,7 @@ function buildScanDetails(scan: ScanJob): string[] {
   return [
     `[job] ${shortId(scan.id)} ${scan.status}`,
     `[queue] ${queuePosition}`,
-    `[targets] ${Array.isArray(scan.targets) ? scan.targets.join(', ') : scan.targets ?? '—'}`,
+    `[targets] ${formatScanTargets(scan.targets)}`,
     `[profile] ${scan.scan_type}`,
     `[stage] ${String(stage)}`,
     `[progress] ${progress}`,
@@ -326,6 +324,20 @@ function buildScanDetails(scan: ScanJob): string[] {
     `[changes] new=${newAssets} changed=${changedAssets} offline=${offlineAssets}`,
     `[errors] ${errors}`,
   ]
+}
+
+function formatScanTargets(targets: ScanJob['targets']): string {
+  if (Array.isArray(targets)) {
+    return targets.join(', ')
+  }
+  return targets ?? '—'
+}
+
+function triggeredByBadgeClass(triggeredBy: ScanJob['triggered_by']): string {
+  if (triggeredBy === 'schedule') {
+    return 'bg-purple-500/10 text-purple-600 dark:text-purple-400'
+  }
+  return 'bg-sky-500/10 text-sky-600 dark:text-sky-400'
 }
 
 function stringifySummaryValue(value: unknown, fallback: string): string {

@@ -130,6 +130,35 @@ function buildEnrichmentHandler(
   }
 }
 
+function sortAssets(left: AssetView, right: AssetView, sortKey: SortKey, sortDirection: SortDirection): number {
+  const direction = sortDirection === 'asc' ? 1 : -1
+  switch (sortKey) {
+    case 'ip':
+      return compareIp(left.asset.ip_address, right.asset.ip_address) * direction
+    case 'hostname':
+      return left.hostnameLabel.localeCompare(right.hostnameLabel) * direction
+    case 'vendor':
+      return left.vendorLabel.localeCompare(right.vendorLabel) * direction
+    case 'type':
+      return left.deviceClass.localeCompare(right.deviceClass) * direction
+    case 'confidence':
+      return (left.confidenceValue - right.confidenceValue) * direction
+    case 'ports':
+      return (left.openPorts - right.openPorts) * direction
+    case 'status':
+      return left.statusLabel.localeCompare(right.statusLabel) * direction
+    case 'last_seen':
+      return (new Date(left.asset.last_seen).getTime() - new Date(right.asset.last_seen).getTime()) * direction
+  }
+}
+
+function filterMenuButtonClass(selectedValue: string): string {
+  if (selectedValue) {
+    return 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400'
+  }
+  return 'border-gray-200 dark:border-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'
+}
+
 export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('ip')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
@@ -211,27 +240,7 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
     desc: <ArrowDown className="w-3.5 h-3.5" />,
   } satisfies Record<SortDirection, ReactNode>
 
-  const sortedViews = [...filteredViews].sort((left, right) => {
-    const direction = sortDirection === 'asc' ? 1 : -1
-    switch (sortKey) {
-      case 'ip':
-        return compareIp(left.asset.ip_address, right.asset.ip_address) * direction
-      case 'hostname':
-        return left.hostnameLabel.localeCompare(right.hostnameLabel) * direction
-      case 'vendor':
-        return left.vendorLabel.localeCompare(right.vendorLabel) * direction
-      case 'type':
-        return left.deviceClass.localeCompare(right.deviceClass) * direction
-      case 'confidence':
-        return (left.confidenceValue - right.confidenceValue) * direction
-      case 'ports':
-        return (left.openPorts - right.openPorts) * direction
-      case 'status':
-        return left.statusLabel.localeCompare(right.statusLabel) * direction
-      case 'last_seen':
-        return (new Date(left.asset.last_seen).getTime() - new Date(right.asset.last_seen).getTime()) * direction
-    }
-  })
+  const sortedViews = [...filteredViews].sort((left, right) => sortAssets(left, right, sortKey, sortDirection))
   let tableRows: ReactNode = sortedViews.map((view) => (
     <AssetRow
       key={view.asset.id}
@@ -340,10 +349,6 @@ function ColumnFilterMenu({ column, filters, openFilter, setOpenFilter, setFilte
     setOpenFilter(null)
   }
 
-  const filterButtonClass = filters[filterKey]
-    ? 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400'
-    : 'border-gray-200 dark:border-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'
-
   return (
     <div className="relative">
       <button
@@ -351,7 +356,7 @@ function ColumnFilterMenu({ column, filters, openFilter, setOpenFilter, setFilte
         onClick={() => setOpenFilter((current) => (current === filterKey ? null : filterKey))}
         className={cn(
           'inline-flex items-center gap-1 rounded-md border px-1.5 py-1 normal-case',
-          filterButtonClass,
+          filterMenuButtonClass(filters[filterKey]),
         )}
       >
         <ChevronDown className="w-3.5 h-3.5" />

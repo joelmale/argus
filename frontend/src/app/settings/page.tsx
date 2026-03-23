@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, type ComponentProps, type ReactNode } from 'react'
+import { useId, useState, type ComponentProps, type ReactNode } from 'react'
 import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
@@ -98,6 +98,20 @@ type SettingsSectionProps = Readonly<{
   description?: string
   children: ReactNode
 }>
+type TplinkTestResult = {
+  client_count?: number
+  device_count?: number
+  status?: string
+  auth_username?: string
+}
+type TplinkSavedResult = {
+  last_client_count?: number
+}
+type TplinkSyncResult = {
+  ingested_assets?: number
+  client_count?: number
+  device_count?: number
+}
 
 function describeTplinkActionError(error: unknown) {
   if (!axios.isAxiosError(error)) {
@@ -117,29 +131,43 @@ function describeTplinkActionError(error: unknown) {
 }
 
 function buildTplinkTestMessage(
-  result: { client_count?: number; device_count?: number; status?: string; auth_username?: string } | undefined,
-  saved: { last_client_count?: number } | undefined,
+  result: TplinkTestResult | undefined,
+  saved: TplinkSavedResult | undefined,
 ) {
   const clientCount = result?.client_count ?? saved?.last_client_count
-  const deviceSummary = typeof result?.device_count === 'number' ? `, ${result.device_count} Deco nodes detected` : ''
+  const deviceSummary = buildTplinkDeviceSummary(result?.device_count)
   let clientSummary = ''
   if (typeof clientCount === 'number') {
-    const connector = typeof result?.device_count === 'number' ? ' and' : ','
+    const connector = buildTplinkClientConnector(result?.device_count, ',')
     clientSummary = `${connector} ${clientCount} clients detected`
   }
   const authSummary = result?.auth_username ? ` using hidden username ${result.auth_username}` : ''
   return `Connection test ${result?.status ?? 'completed'}${deviceSummary}${clientSummary}${authSummary}.`
 }
 
-function buildTplinkSyncMessage(result: { ingested_assets?: number; client_count?: number; device_count?: number } | undefined) {
+function buildTplinkSyncMessage(result: TplinkSyncResult | undefined) {
   const assetSummary = typeof result?.ingested_assets === 'number' ? `, ${result.ingested_assets} assets updated` : ''
   const nodeSummary = typeof result?.device_count === 'number' ? ` from ${result.device_count} Deco nodes` : ''
   let clientSummary = ''
   if (typeof result?.client_count === 'number') {
-    const clientPrefix = typeof result?.device_count === 'number' ? ' and' : ' from'
+    const clientPrefix = buildTplinkClientConnector(result?.device_count, ' from')
     clientSummary = `${clientPrefix} ${result.client_count} Deco clients`
   }
   return `Sync completed${assetSummary}${nodeSummary}${clientSummary}.`
+}
+
+function buildTplinkDeviceSummary(deviceCount: number | undefined): string {
+  if (typeof deviceCount !== 'number') {
+    return ''
+  }
+  return `, ${deviceCount} Deco nodes detected`
+}
+
+function buildTplinkClientConnector(deviceCount: number | undefined, fallback: string): string {
+  if (typeof deviceCount === 'number') {
+    return ' and'
+  }
+  return fallback
 }
 
 function getEnvVarLineClass(line: string) {
@@ -150,6 +178,84 @@ function getEnvVarLineClass(line: string) {
     return ''
   }
   return 'text-emerald-400'
+}
+
+function formatDateOrFallback(value: string | null | undefined, fallback = 'never'): string {
+  if (!value) {
+    return fallback
+  }
+  return new Date(value).toLocaleString()
+}
+
+function inputClassName(className?: string): string {
+  return [
+    'w-full rounded-lg border border-gray-200 bg-gray-50 px-3 py-2 text-sm dark:border-zinc-700 dark:bg-zinc-800',
+    className ?? '',
+  ].join(' ').trim()
+}
+
+function CheckboxField({
+  label,
+  checked,
+  onChange,
+  disabled,
+}: Readonly<{
+  label: string
+  checked: boolean
+  onChange: ComponentProps<'input'>['onChange']
+  disabled?: boolean
+}>) {
+  return (
+    <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
+      <input type="checkbox" checked={checked} onChange={onChange} disabled={disabled} />
+      <span>{label}</span>
+    </label>
+  )
+}
+
+function TextInputField({
+  label,
+  className,
+  ...props
+}: Readonly<{ label: string; className?: string } & Omit<ComponentProps<'input'>, 'className'>>) {
+  const id = useId()
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="block text-xs font-medium text-zinc-500">{label}</label>
+      <input id={id} className={inputClassName(className)} {...props} />
+    </div>
+  )
+}
+
+function SelectField({
+  label,
+  className,
+  children,
+  ...props
+}: Readonly<{ label: string; className?: string; children: ReactNode } & Omit<ComponentProps<'select'>, 'className'>>) {
+  const id = useId()
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="block text-xs font-medium text-zinc-500">{label}</label>
+      <select id={id} className={inputClassName(className)} {...props}>
+        {children}
+      </select>
+    </div>
+  )
+}
+
+function TextareaField({
+  label,
+  className,
+  ...props
+}: Readonly<{ label: string; className?: string } & Omit<ComponentProps<'textarea'>, 'className'>>) {
+  const id = useId()
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="block text-xs font-medium text-zinc-500">{label}</label>
+      <textarea id={id} className={inputClassName(className)} {...props} />
+    </div>
+  )
 }
 
 function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: BackupPolicyFormProps) {
@@ -165,16 +271,13 @@ function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: Back
       </CardHeader>
       <CardBody className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={backupEnabled} onChange={(event) => setBackupEnabled(event.target.checked)} />
-            <span>Enable scheduled backups</span>
-          </label>
-          <input value={backupTag} onChange={(event) => setBackupTag(event.target.value)} placeholder="Tag filter" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
-          <input value={backupInterval} type="number" onChange={(event) => setBackupInterval(Number(event.target.value) || 720)} placeholder="Interval minutes" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
-          <input value={backupRetention} type="number" onChange={(event) => setBackupRetention(Number(event.target.value) || 5)} placeholder="Retention count" className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+          <CheckboxField label="Enable scheduled backups" checked={backupEnabled} onChange={(event) => setBackupEnabled(event.target.checked)} />
+          <TextInputField label="Tag filter" value={backupTag} onChange={(event) => setBackupTag(event.target.value)} placeholder="infrastructure" />
+          <TextInputField label="Interval minutes" value={backupInterval} type="number" onChange={(event) => setBackupInterval(Number(event.target.value) || 720)} placeholder="720" />
+          <TextInputField label="Retention count" value={backupRetention} type="number" onChange={(event) => setBackupRetention(Number(event.target.value) || 5)} placeholder="5" />
         </div>
         <p className="text-xs text-zinc-500">
-          Last scheduled run: {backupPolicy?.last_run_at ? new Date(backupPolicy.last_run_at).toLocaleString() : 'never'}
+          Last scheduled run: {formatDateOrFallback(backupPolicy?.last_run_at)}
         </p>
         <button
           type="button"
@@ -221,132 +324,44 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
       </CardHeader>
       <CardBody className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={scannerEnabled} onChange={(event) => setScannerEnabled(event.target.checked)} />
-            <span>Enable scheduled scans</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={autoDetectTargets} onChange={(event) => setAutoDetectTargets(event.target.checked)} />
-            <span>Auto-detect local subnet when no explicit target is set</span>
-          </label>
-          <input
+          <CheckboxField label="Enable scheduled scans" checked={scannerEnabled} onChange={(event) => setScannerEnabled(event.target.checked)} />
+          <CheckboxField label="Auto-detect local subnet when no explicit target is set" checked={autoDetectTargets} onChange={(event) => setAutoDetectTargets(event.target.checked)} />
+          <TextInputField
+            label="Default targets"
             value={defaultTargets}
             onChange={(event) => setDefaultTargets(event.target.value)}
             placeholder={autoDetectTargets ? 'Optional override, e.g. 192.168.96.0/20' : 'Required, e.g. 192.168.96.0/20'}
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
           />
-          <select
-            value={defaultProfile}
-            onChange={(event) => setDefaultProfile(event.target.value)}
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          >
+          <SelectField label="Default profile" value={defaultProfile} onChange={(event) => setDefaultProfile(event.target.value)}>
             <option value="quick">Quick</option>
             <option value="balanced">Balanced</option>
             <option value="deep_enrichment">Deep Enrichment</option>
-          </select>
-          <input
-            value={scanInterval}
-            type="number"
-            min={1}
-            onChange={(event) => setScanInterval(Number(event.target.value) || 60)}
-            placeholder="Scan interval minutes"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
-            value={concurrentHosts}
-            type="number"
-            min={1}
-            max={128}
-            onChange={(event) => setConcurrentHosts(Number(event.target.value) || 10)}
-            placeholder="Concurrent hosts"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
-            value={hostChunkSize}
-            type="number"
-            min={1}
-            max={256}
-            onChange={(event) => setHostChunkSize(Number(event.target.value) || 64)}
-            placeholder="Host chunk size"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
-            value={topPortsCount}
-            type="number"
-            min={10}
-            max={65535}
-            onChange={(event) => setTopPortsCount(Number(event.target.value) || 1000)}
-            placeholder="Top ports count"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
-            value={deepProbeTimeoutSeconds}
-            type="number"
-            min={1}
-            max={30}
-            onChange={(event) => setDeepProbeTimeoutSeconds(Number(event.target.value) || 6)}
-            placeholder="Deep probe timeout seconds"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={aiAfterScanEnabled} onChange={(event) => setAiAfterScanEnabled(event.target.checked)} />
-            <span>Enable AI after-scan investigation</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
-            <span>Enable Ollama fingerprint synthesis</span>
-          </label>
-          <input
-            value={fingerprintAiModel}
-            onChange={(event) => setFingerprintAiModel(event.target.value)}
-            placeholder="Ollama model"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
-            value={fingerprintAiMinConfidence}
-            type="number"
-            min={0}
-            max={1}
-            step={0.05}
-            onChange={(event) => setFingerprintAiMinConfidence(Number(event.target.value) || 0.75)}
-            placeholder="Fingerprint AI minimum confidence"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={internetLookupEnabled} onChange={(event) => setInternetLookupEnabled(event.target.checked)} />
-            <span>Enable internet lookup for unresolved assets</span>
-          </label>
-          <input
-            value={internetLookupBudget}
-            type="number"
-            min={1}
-            max={10}
-            onChange={(event) => setInternetLookupBudget(Number(event.target.value) || 3)}
-            placeholder="Lookup budget"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
-            value={internetLookupTimeoutSeconds}
-            type="number"
-            min={1}
-            max={30}
-            onChange={(event) => setInternetLookupTimeoutSeconds(Number(event.target.value) || 5)}
-            placeholder="Lookup timeout seconds"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
+          </SelectField>
+          <TextInputField label="Scan interval minutes" value={scanInterval} type="number" min={1} onChange={(event) => setScanInterval(Number(event.target.value) || 60)} placeholder="60" />
+          <TextInputField label="Concurrent hosts" value={concurrentHosts} type="number" min={1} max={128} onChange={(event) => setConcurrentHosts(Number(event.target.value) || 10)} placeholder="10" />
+          <TextInputField label="Host chunk size" value={hostChunkSize} type="number" min={1} max={256} onChange={(event) => setHostChunkSize(Number(event.target.value) || 64)} placeholder="64" />
+          <TextInputField label="Top ports count" value={topPortsCount} type="number" min={10} max={65535} onChange={(event) => setTopPortsCount(Number(event.target.value) || 1000)} placeholder="1000" />
+          <TextInputField label="Deep probe timeout seconds" value={deepProbeTimeoutSeconds} type="number" min={1} max={30} onChange={(event) => setDeepProbeTimeoutSeconds(Number(event.target.value) || 6)} placeholder="6" />
+          <CheckboxField label="Enable AI after-scan investigation" checked={aiAfterScanEnabled} onChange={(event) => setAiAfterScanEnabled(event.target.checked)} />
+          <CheckboxField label="Enable Ollama fingerprint synthesis" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
+          <TextInputField label="Ollama model" value={fingerprintAiModel} onChange={(event) => setFingerprintAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+          <TextInputField label="Fingerprint AI minimum confidence" value={fingerprintAiMinConfidence} type="number" min={0} max={1} step={0.05} onChange={(event) => setFingerprintAiMinConfidence(Number(event.target.value) || 0.75)} placeholder="0.75" />
+          <CheckboxField label="Enable internet lookup for unresolved assets" checked={internetLookupEnabled} onChange={(event) => setInternetLookupEnabled(event.target.checked)} />
+          <TextInputField label="Lookup budget" value={internetLookupBudget} type="number" min={1} max={10} onChange={(event) => setInternetLookupBudget(Number(event.target.value) || 3)} placeholder="3" />
+          <TextInputField label="Lookup timeout seconds" value={internetLookupTimeoutSeconds} type="number" min={1} max={30} onChange={(event) => setInternetLookupTimeoutSeconds(Number(event.target.value) || 5)} placeholder="5" />
         </div>
-        <textarea
+        <TextareaField
+          label="Fingerprint AI prompt suffix"
           value={fingerprintAiPromptSuffix}
           onChange={(event) => setFingerprintAiPromptSuffix(event.target.value)}
           rows={3}
           placeholder="Optional extra instructions for fingerprint synthesis"
-          className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
         />
-        <input
+        <TextInputField
+          label="Allowed internet lookup domains"
           value={internetLookupAllowedDomains}
           onChange={(event) => setInternetLookupAllowedDomains(event.target.value)}
           placeholder="Allowed domains, comma separated"
-          className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
         />
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Effective target</p>
@@ -357,7 +372,7 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             <p className="text-xs text-zinc-500">Auto-detected subnet: {scannerConfig.detected_targets}</p>
           )}
           <p className="text-xs text-zinc-500">
-            Last scheduled run: {scannerConfig?.last_scheduled_scan_at ? new Date(scannerConfig.last_scheduled_scan_at).toLocaleString() : 'never'}
+            Last scheduled run: {formatDateOrFallback(scannerConfig?.last_scheduled_scan_at)}
           </p>
         </div>
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1 text-xs text-zinc-500">
@@ -424,7 +439,7 @@ function FingerprintDatasetsCard({
                     <span className="rounded-full border border-gray-200 px-2 py-0.5 dark:border-zinc-700">{dataset.category}</span>
                     <span className="rounded-full border border-gray-200 px-2 py-0.5 dark:border-zinc-700">{dataset.status}</span>
                     <span>records: {dataset.record_count ?? '—'}</span>
-                    <span>updated: {dataset.last_updated_at ? new Date(dataset.last_updated_at).toLocaleString() : 'never'}</span>
+                    <span>updated: {formatDateOrFallback(dataset.last_updated_at)}</span>
                   </div>
                   {dataset.upstream_last_modified && (
                     <p className="mt-1 text-[11px] text-zinc-500">Upstream last modified: {dataset.upstream_last_modified}</p>
@@ -500,8 +515,8 @@ function TplinkDecoModuleCard({
     try {
       // Save the current form first so test runs against what the user can see,
       // not an older persisted password or portal URL.
-      const saved = await onSave(buildPayload()) as { last_client_count?: number } | undefined
-      const result = await onTest() as { client_count?: number; device_count?: number; status?: string; auth_username?: string } | undefined
+      const saved = await onSave(buildPayload()) as TplinkSavedResult | undefined
+      const result = await onTest() as TplinkTestResult | undefined
       setActionMessage(buildTplinkTestMessage(result, saved))
     } catch (error) {
       setActionError(describeTplinkActionError(error))
@@ -513,7 +528,7 @@ function TplinkDecoModuleCard({
     setActionError(null)
     try {
       await onSave(buildPayload())
-      const result = await onSync() as { ingested_assets?: number; client_count?: number; device_count?: number } | undefined
+      const result = await onSync() as TplinkSyncResult | undefined
       setActionMessage(buildTplinkSyncMessage(result))
     } catch (error) {
       setActionError(describeTplinkActionError(error))
@@ -531,51 +546,20 @@ function TplinkDecoModuleCard({
         </p>
 
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
-            <span>Enable Deco module</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={fetchConnectedClients} onChange={(event) => setFetchConnectedClients(event.target.checked)} />
-            <span>Pull connected clients</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={fetchPortalLogs} onChange={(event) => setFetchPortalLogs(event.target.checked)} />
-            <span>Pull portal logs</span>
-          </label>
-          <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-            <input type="checkbox" checked={verifyTls} onChange={(event) => setVerifyTls(event.target.checked)} />
-            <span>Verify TLS</span>
-          </label>
-          <input
-            value={baseUrl}
-            onChange={(event) => setBaseUrl(event.target.value)}
-            placeholder="http://tplinkdeco.net"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
-            type="password"
-            value={ownerPassword}
-            onChange={(event) => setOwnerPassword(event.target.value)}
-            placeholder="Owner password from tplinkdeco.net"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
-          <input
-            type="number"
-            min={3}
-            max={60}
-            value={requestTimeoutSeconds}
-            onChange={(event) => setRequestTimeoutSeconds(Number(event.target.value) || 10)}
-            placeholder="Timeout seconds"
-            className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-          />
+          <CheckboxField label="Enable Deco module" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+          <CheckboxField label="Pull connected clients" checked={fetchConnectedClients} onChange={(event) => setFetchConnectedClients(event.target.checked)} />
+          <CheckboxField label="Pull portal logs" checked={fetchPortalLogs} onChange={(event) => setFetchPortalLogs(event.target.checked)} />
+          <CheckboxField label="Verify TLS" checked={verifyTls} onChange={(event) => setVerifyTls(event.target.checked)} />
+          <TextInputField label="Portal base URL" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://tplinkdeco.net" />
+          <TextInputField label="Owner password" type="password" value={ownerPassword} onChange={(event) => setOwnerPassword(event.target.value)} placeholder="Owner password from tplinkdeco.net" />
+          <TextInputField label="Request timeout seconds" type="number" min={3} max={60} value={requestTimeoutSeconds} onChange={(event) => setRequestTimeoutSeconds(Number(event.target.value) || 10)} placeholder="10" />
         </div>
 
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Module health</p>
           <p className="text-xs text-zinc-500">Status: {moduleConfig?.last_status ?? 'idle'}</p>
-          <p className="text-xs text-zinc-500">Last tested: {moduleConfig?.last_tested_at ? new Date(moduleConfig.last_tested_at).toLocaleString() : 'never'}</p>
-          <p className="text-xs text-zinc-500">Last sync: {moduleConfig?.last_sync_at ? new Date(moduleConfig.last_sync_at).toLocaleString() : 'never'}</p>
+          <p className="text-xs text-zinc-500">Last tested: {formatDateOrFallback(moduleConfig?.last_tested_at)}</p>
+          <p className="text-xs text-zinc-500">Last sync: {formatDateOrFallback(moduleConfig?.last_sync_at)}</p>
           <p className="text-xs text-zinc-500">Auth username: {moduleConfig?.effective_owner_username ?? 'admin'}</p>
           <p className="text-xs text-zinc-500">Last client count: {moduleConfig?.last_client_count ?? '—'}</p>
           {moduleConfig?.last_error && <p className="text-xs text-rose-500">{moduleConfig.last_error}</p>}
@@ -1091,27 +1075,12 @@ export default function SettingsPage() {
               </CardHeader>
               <CardBody className="space-y-5">
                 <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_140px_auto] gap-3">
-                  <input
-                    value={newUsername}
-                    onChange={(event) => setNewUsername(event.target.value)}
-                    placeholder="Username"
-                    className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-                  />
-                  <input
-                    type="password"
-                    value={newPassword}
-                    onChange={(event) => setNewPassword(event.target.value)}
-                    placeholder="Temporary password"
-                    className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-                  />
-                  <select
-                    value={newRole}
-                    onChange={(event) => setNewRole(event.target.value as 'admin' | 'viewer')}
-                    className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
-                  >
+                  <TextInputField label="Username" value={newUsername} onChange={(event) => setNewUsername(event.target.value)} placeholder="Username" />
+                  <TextInputField label="Temporary password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="Temporary password" />
+                  <SelectField label="Role" value={newRole} onChange={(event) => setNewRole(event.target.value as 'admin' | 'viewer')}>
                     <option value="viewer">Viewer</option>
                     <option value="admin">Admin</option>
-                  </select>
+                  </SelectField>
                   <button
                     type="submit"
                     disabled={isCreatingUser || !newUsername.trim() || !newPassword}
@@ -1167,11 +1136,12 @@ export default function SettingsPage() {
               </CardHeader>
               <CardBody className="space-y-4">
                 <form onSubmit={handleCreateApiKey} className="flex flex-col md:flex-row gap-3">
-                  <input
+                  <TextInputField
+                    label="API key name"
                     value={apiKeyName}
                     onChange={(event) => setApiKeyName(event.target.value)}
                     placeholder="CLI key"
-                    className="flex-1 px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+                    className="flex-1"
                   />
                   <button
                     type="submit"
@@ -1305,15 +1275,13 @@ export default function SettingsPage() {
                       <p className="text-sm text-zinc-500">
                         Clear the discovered asset inventory if a bad scan polluted the database. This removes assets, ports, history, topology, findings, and config backup records.
                       </p>
-                      <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
-                        <input type="checkbox" checked={includeScanHistory} onChange={(event) => setIncludeScanHistory(event.target.checked)} />
-                        <span>Also delete scan job history</span>
-                      </label>
-                      <input
+                      <CheckboxField label="Also delete scan job history" checked={includeScanHistory} onChange={(event) => setIncludeScanHistory(event.target.checked)} />
+                      <TextInputField
+                        label="Confirmation phrase"
                         value={inventoryConfirm}
                         onChange={(event) => setInventoryConfirm(event.target.value)}
                         placeholder="Type: reset inventory"
-                        className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-red-200 dark:border-red-900"
+                        className="border-red-200 dark:border-red-900"
                       />
                       <button
                         type="button"
