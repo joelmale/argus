@@ -3,7 +3,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import ipaddress
+import socket
 from datetime import datetime, timezone
+from contextlib import asynccontextmanager
 from types import SimpleNamespace
 
 import httpx
@@ -46,10 +48,12 @@ from app.scanner.pipeline import (
     _run_ai_investigation,
 )
 from app.scanner.probes import http as http_probe
+from app.scanner.probes import mdns as mdns_probe
 from app.scanner.probes import tls as tls_probe
 from app.scanner.probes import upnp as upnp_probe
+from app.scanner.enrichment import dns_lookup
 from app.scanner.stages import deep_probe
-from app.scanner.stages.discovery import _merge_discovery_results
+from app.scanner.stages.discovery import _merge_discovered_host, _merge_discovery_results, _parse_ping_sweep_xml
 from app.workers.tasks import (
     _apply_interrupt_result,
     _build_control_fn,
@@ -310,6 +314,36 @@ def test_merge_discovery_results_ignores_failed_method_and_prefers_mac_addresses
     assert set(merged_from_exception) == {"10.0.0.5", "10.0.0.6"}
 
 
+def test_merge_discovered_host_only_replaces_when_mac_is_better():
+    merged = {"10.0.0.5": DiscoveredHost(ip_address="10.0.0.5", discovery_method="ping")}
+
+    _merge_discovered_host(merged, DiscoveredHost(ip_address="10.0.0.5", discovery_method="arp", mac_address="AA:BB"))
+    _merge_discovered_host(merged, DiscoveredHost(ip_address="10.0.0.5", discovery_method="ping"))
+
+    assert merged["10.0.0.5"].mac_address == "AA:BB"
+
+
+def test_parse_ping_sweep_xml_ignores_invalid_ttl_and_missing_ipv4():
+    xml = """<?xml version="1.0"?>
+<nmaprun>
+  <host>
+    <status state="up" reason_ttl="not-a-number"/>
+    <address addr="printer.local" addrtype="mac"/>
+  </host>
+  <host>
+    <status state="up" reason_ttl="not-a-number"/>
+    <address addr="10.0.0.8" addrtype="ipv4"/>
+  </host>
+</nmaprun>
+"""
+
+    hosts = _parse_ping_sweep_xml(xml)
+
+    assert len(hosts) == 1
+    assert hosts[0].ip_address == "10.0.0.8"
+    assert hosts[0].ttl is None
+
+
 @pytest.mark.asyncio
 async def test_deep_probe_run_builds_expected_probe_mix(monkeypatch):
     async def fake_dns_probe(_ip):
@@ -373,6 +407,101 @@ def test_deep_probe_timeout_helpers_normalize_and_default():
     assert deep_probe._normalize_probe_timeout(99) == 30.0
     assert deep_probe._resolve_probe_timeout("tls", None) == deep_probe.PROBE_TIMEOUTS["tls"]
     assert deep_probe._resolve_probe_timeout("http", 4.5) == 4.5
+
+
+@pytest.mark.asyncio
+async def test_mdns_probe_returns_success_when_services_found(monkeypatch):
+    async def fake_query(_ip):
+        return mdns_probe.MdnsProbeData(
+            services=[{"type": "_googlecast._tcp.local", "name": "Living Room", "host": "tv.local", "port": 8009, "properties": {"fn": "TV"}}]
+        )
+
+    monkeypatch.setattr(mdns_probe, "_query_mdns", fake_query)
+
+    result = await mdns_probe.probe("10.0.0.15")
+
+    assert result.success is True
+    assert "Living Room" in (result.raw or "")
+
+
+@pytest.mark.asyncio
+async def test_mdns_probe_handles_timeout_and_import_errors(monkeypatch):
+    async def fake_query_timeout(_ip):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(mdns_probe, "_query_mdns", fake_query_timeout)
+    timeout_result = await mdns_probe.probe("10.0.0.15")
+    assert timeout_result.success is False
+    assert timeout_result.error == "No mDNS services found for this host"
+
+    async def fake_query_import(_ip):
+        raise ImportError("missing zeroconf")
+
+    monkeypatch.setattr(mdns_probe, "_query_mdns", fake_query_import)
+    import_result = await mdns_probe.probe("10.0.0.15")
+    assert import_result.success is False
+    assert "zeroconf not installed" in (import_result.error or "")
+
+
+@pytest.mark.asyncio
+async def test_query_mdns_filters_to_target_ip_and_decodes_properties(monkeypatch):
+    class Info:
+        name = "Kitchen._http._tcp.local."
+        server = "kitchen.local."
+        port = 80
+        properties = {b"fn": b"Kitchen Display", "model": "Nest Hub"}
+
+        def parsed_scoped_addresses(self):
+            return ["10.0.0.10"]
+
+    class FakeZeroconf:
+        async def async_get_service_info(self, _svc_type, _name, timeout=1000):
+            return Info()
+
+        async def async_close(self):
+            return None
+
+    monkeypatch.setattr("zeroconf.asyncio.AsyncZeroconf", lambda: FakeZeroconf())
+
+    data = await mdns_probe._query_mdns("10.0.0.10")
+
+    assert data.services[0]["host"] == "kitchen.local."
+    assert data.services[0]["properties"]["fn"] == "Kitchen Display"
+    assert data.services[0]["properties"]["model"] == "Nest Hub"
+
+
+@pytest.mark.asyncio
+async def test_dns_reverse_lookup_filters_placeholders_and_handles_errors(monkeypatch):
+    monkeypatch.setattr(socket, "gethostbyaddr", lambda _ip: ("broadcasthost", [], []))
+    assert await dns_lookup.reverse_lookup("10.0.0.8") is None
+
+    def raise_herror(_ip):
+        raise socket.herror()
+
+    monkeypatch.setattr(socket, "gethostbyaddr", raise_herror)
+    assert await dns_lookup.reverse_lookup("10.0.0.8") is None
+
+
+@pytest.mark.asyncio
+async def test_dns_forward_lookup_deduplicates_addresses_and_handles_failures(monkeypatch):
+    monkeypatch.setattr(
+        socket,
+        "getaddrinfo",
+        lambda _host, _port: [
+            (None, None, None, None, ("10.0.0.5", 0)),
+            (None, None, None, None, ("10.0.0.5", 0)),
+            (None, None, None, None, ("fe80::1", 0)),
+        ],
+    )
+
+    result = await dns_lookup.forward_lookup("nas.local")
+    assert set(result) == {"10.0.0.5", "fe80::1"}
+
+    def raise_error(_host, _port):
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(socket, "getaddrinfo", raise_error)
+    assert await dns_lookup.forward_lookup("nas.local") == []
 
 
 def test_split_scan_targets_breaks_large_networks_and_groups_ips():
@@ -618,6 +747,49 @@ async def test_http_collect_interesting_paths_filters_404_and_errors(monkeypatch
     assert "/admin (200)" in paths
     assert "/manager/ (500)" in paths
     assert all("404" not in item for item in paths)
+
+
+@pytest.mark.asyncio
+async def test_upnp_probe_uses_common_paths_when_ssdp_misses(monkeypatch):
+    @asynccontextmanager
+    async def fake_timeout(_seconds):
+        yield
+
+    async def fake_ssdp_discover(_ip, timeout):
+        return None
+
+    async def fake_try_common_paths(_ip):
+        return "http://10.0.0.15:5000/rootDesc.xml"
+
+    async def fake_fetch_description(_location, timeout):
+        return upnp_probe.UpnpProbeData(friendly_name="Media Server", manufacturer="MiniDLNA")
+
+    monkeypatch.setattr(upnp_probe, "_ssdp_discover", fake_ssdp_discover)
+    monkeypatch.setattr(upnp_probe, "_try_common_paths", fake_try_common_paths)
+    monkeypatch.setattr(upnp_probe, "_fetch_description", fake_fetch_description)
+    monkeypatch.setattr(upnp_probe.asyncio, "timeout", fake_timeout, raising=False)
+
+    result = await upnp_probe.probe("10.0.0.15")
+
+    assert result.success is True
+    assert result.data["friendly_name"] == "Media Server"
+
+
+@pytest.mark.asyncio
+async def test_upnp_fetch_description_returns_none_on_non_200(monkeypatch):
+    class FakeClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def get(self, _location):
+            return SimpleNamespace(status_code=404, text="")
+
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: FakeClient())
+
+    assert await upnp_probe._fetch_description("http://10.0.0.15:5000/rootDesc.xml", timeout=1.0) is None
 
 
 def test_tls_parse_cert_handles_invalid_dates_and_populates_fields():
