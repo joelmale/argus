@@ -149,7 +149,7 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "3030:3000"
+      - "3008:3000"
     healthcheck:
       test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:3000 >/dev/null 2>&1 || exit 1"]
       interval: 15s
