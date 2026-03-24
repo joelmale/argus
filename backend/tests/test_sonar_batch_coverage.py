@@ -47,8 +47,12 @@ from app.db.upsert import (
 from app.fingerprinting.evidence import extract_evidence
 from app.modules import tplink_deco
 from app.scanner import config as scanner_config
+from app.scanner.agent import anthropic_analyst as anthropic_mod
+from app.scanner.agent import ollama_analyst as ollama_mod
+from app.scanner.agent import tools as agent_tools
 from app.scanner.config import ScannerConfigUpdateInput
 from app.scanner.models import AIAnalysis, DeviceClass, DiscoveredHost, HostScanResult, OSFingerprint, PortResult, ProbeResult, ScanProfile, ScanSummary
+from app.scanner.probes import http as http_probe
 from app.scanner.probes import smb as smb_probe
 from app.scanner import topology as topology_mod
 from app.scanner.pipeline import (
@@ -70,6 +74,7 @@ from app.scanner.pipeline import (
 )
 from app.scanner.stages import deep_probe
 from app.scanner.stages.fingerprint import DeviceHint, probe_priority
+from app.workers import tasks as worker_tasks
 
 
 class _ScalarResult:
@@ -1482,6 +1487,476 @@ def test_netbios_name_query_covers_parse_and_failure(monkeypatch):
 
     monkeypatch.setattr(socket, "socket", lambda *args, **kwargs: _BadSocket())
     assert smb_probe._netbios_name_query("192.168.1.30") is None
+
+
+@pytest.mark.asyncio
+async def test_agent_backends_cover_anthropic_ollama_and_tool_dispatch(monkeypatch):
+    hint = SimpleNamespace(device_class=DeviceClass.ROUTER, confidence=0.8, reason="gateway traits")
+    result = HostScanResult(host=DiscoveredHost(ip_address="192.168.1.50"), ports=[PortResult(port=443, protocol="tcp", state="open")])
+
+    anthropic = object.__new__(anthropic_mod.AnthropicAnalyst)
+    anthropic.client = SimpleNamespace()
+    anthropic.model = "claude-test"
+    monkeypatch.setattr(anthropic, "_build_investigation_seed", lambda res: (hint, "seed-context"))
+    tool_calls = [SimpleNamespace(type="tool_use", name="probe_http", input={"port": 443}, id="tool-1")]
+    final_tool_call = SimpleNamespace(type="tool_use", name="final_analysis", input={"device_class": "router", "confidence": 0.9, "investigation_notes": "done"}, id="tool-2")
+    messages = iter(
+        [
+            SimpleNamespace(content=tool_calls, stop_reason="tool_use"),
+            SimpleNamespace(content=[final_tool_call], stop_reason="end_turn"),
+        ]
+    )
+
+    class _AnthropicStream:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def get_final_message(self):
+            return next(messages)
+
+    anthropic.client.messages = SimpleNamespace(stream=lambda **kwargs: _AnthropicStream())
+    monkeypatch.setattr(anthropic_mod, "execute", lambda name, args, ip: _completed_task("http ok"))
+    analysis = await anthropic.investigate(result)
+    assert analysis.ai_backend == "anthropic"
+    assert analysis.model_used == "claude-test"
+    assert analysis.device_class == DeviceClass.ROUTER
+    assert analysis.agent_steps == 2
+
+    anthropic_fallback = object.__new__(anthropic_mod.AnthropicAnalyst)
+    anthropic_fallback.client = SimpleNamespace(messages=SimpleNamespace(stream=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("boom"))))
+    anthropic_fallback.model = "claude-test"
+    monkeypatch.setattr(anthropic_fallback, "_build_investigation_seed", lambda res: (hint, "seed-context"))
+    fallback = await anthropic_fallback.investigate(result)
+    assert fallback.ai_backend == "anthropic"
+    assert "Heuristic" in fallback.investigation_notes
+
+    tool_results = await anthropic._handle_tool_calls([SimpleNamespace(name="probe_http", input={"port": 443}, id="tool-1")], "192.168.1.50")
+    assert tool_results[0] is None
+    assert tool_results[1][0]["type"] == "tool_result"
+    anthropic_messages = []
+    anthropic._request_final_analysis(anthropic_messages, 3)
+    assert anthropic_messages[-1]["content"] == "Please call final_analysis now."
+
+    ollama = object.__new__(ollama_mod.OllamaAnalyst)
+    ollama.client = SimpleNamespace()
+    ollama.model = "qwen-test"
+    monkeypatch.setattr(ollama, "_build_investigation_seed", lambda res: (hint, "seed-context"))
+    responses = iter(
+        [
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="", tool_calls=[SimpleNamespace(id="1", function=SimpleNamespace(name="probe_http", arguments='{"port": 443}'))]))]),
+            SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content="", tool_calls=[SimpleNamespace(id="2", function=SimpleNamespace(name="final_analysis", arguments='{"device_class":"router","confidence":0.91,"investigation_notes":"done"}'))]))]),
+        ]
+    )
+    ollama.client.chat = SimpleNamespace(completions=SimpleNamespace(create=lambda **kwargs: _completed_task(next(responses))))
+    monkeypatch.setattr(ollama_mod, "execute", lambda name, args, ip: _completed_task("tool ok"))
+    ollama_analysis = await ollama.investigate(result)
+    assert ollama_analysis.ai_backend == "ollama"
+    assert ollama_analysis.model_used == "qwen-test"
+    assert ollama_analysis.agent_steps == 2
+
+    assert ollama._parse_tool_args('{"a":1}') == {"a": 1}
+    assert ollama._parse_tool_args("{bad") == {}
+    ollama_messages = []
+    final_args = await ollama._handle_tool_calls(
+        ollama_messages,
+        [SimpleNamespace(id="f", function=SimpleNamespace(name="final_analysis", arguments='{"device_class":"router"}'))],
+        "192.168.1.50",
+    )
+    assert final_args == {"device_class": "router"}
+    ollama._request_final_analysis(ollama_messages, 3)
+    assert "Please call final_analysis now" in ollama_messages[-1]["content"]
+
+    monkeypatch.setattr(agent_tools, "_TOOL_EXECUTORS", {
+        "probe_http": lambda ip, args: _completed_task(ProbeResult(probe_type="http", success=True, raw="raw http", data={"ok": True})),
+        "probe_tls": lambda ip, args: (_ for _ in ()).throw(RuntimeError("tls failed")),
+    })
+    assert await agent_tools.execute("probe_http", {"port": 80}, "192.168.1.50") == "raw http"
+    assert "tls failed" in await agent_tools.execute("probe_tls", {}, "192.168.1.50")
+    assert await agent_tools.execute("unknown", {}, "192.168.1.50") == "Unknown tool: unknown"
+
+
+@pytest.mark.asyncio
+async def test_http_probe_helpers_cover_success_and_error_branches(monkeypatch):
+    body = "<html><title>Home Assistant</title><body>dashboard</body></html>"
+    resp = httpx.Response(
+        200,
+        text=body,
+        headers={"content-type": "text/html", "server": "nginx", "x-powered-by": "Home Assistant"},
+        request=httpx.Request("GET", "http://192.168.1.60:8123/"),
+    )
+    data = http_probe.HttpProbeData(url="http://192.168.1.60:8123")
+    http_probe._apply_main_response(data, resp, "192.168.1.60")
+    http_probe._apply_response_body(data, body)
+    assert data.status_code == 200
+    assert data.title == "Home Assistant"
+    assert data.detected_app == "Home Assistant"
+
+    redirect_resp = httpx.Response(
+        200,
+        text="ok",
+        headers={},
+        request=httpx.Request("GET", "http://192.168.1.60:80/"),
+        history=[httpx.Response(302, headers={"location": "https://router.local"}, request=httpx.Request("GET", "http://192.168.1.60:80/"))],
+    )
+    redirect_resp._request = httpx.Request("GET", "https://router.local/")
+    redirect_resp._content = b"ok"
+    http_probe._apply_main_response(data, redirect_resp, "192.168.1.60")
+    assert data.redirect_host == "router.local"
+    assert http_probe._detect_app("Apache", None, None, None, "Proxmox VE login") == "Proxmox VE"
+
+    class _Client:
+        async def get(self, url, **kwargs):
+            if url.endswith("/favicon.ico"):
+                return httpx.Response(200, content=b"icon", headers={"content-type": "image/x-icon"}, request=httpx.Request("GET", url))
+            if url.endswith("/admin"):
+                return httpx.Response(403, request=httpx.Request("GET", url))
+            if url.endswith("/manager/"):
+                raise RuntimeError("boom")
+            return httpx.Response(200, text=body, headers={"content-type": "text/html", "server": "nginx"}, request=httpx.Request("GET", url))
+
+    favicon_hash = await http_probe._fetch_favicon_hash(_Client(), "http://192.168.1.60:8123")
+    assert favicon_hash is not None
+    interesting = await http_probe._collect_interesting_paths(_Client(), "http://192.168.1.60:8123")
+    assert any("/admin" in item for item in interesting)
+    assert await http_probe._probe_path(_Client(), "http://192.168.1.60:8123", "/manager/") == 0
+
+    async def fake_populate(client, base_url, ip, data_obj, raw_parts):
+        data_obj.title = "Router"
+        raw_parts.append("GET / -> 200")
+
+    class _AsyncHttpClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    monkeypatch.setattr(http_probe.httpx, "AsyncClient", lambda **kwargs: _AsyncHttpClient())
+    monkeypatch.setattr(http_probe, "_populate_probe_data", fake_populate)
+    success = await http_probe.probe("192.168.1.60", 80, use_https=False)
+    assert success.success is True
+    assert success.probe_type == "http"
+
+    async def raise_connect(awaitable, timeout):
+        awaitable.close()
+        raise httpx.ConnectError("refused")
+
+    async def raise_timeout(awaitable, timeout):
+        awaitable.close()
+        raise httpx.TimeoutException("slow")
+
+    async def raise_runtime(awaitable, timeout):
+        awaitable.close()
+        raise RuntimeError("explode")
+
+    monkeypatch.setattr(http_probe, "_await_with_deadline", raise_connect)
+    assert (await http_probe.probe("192.168.1.60", 80)).error == "Connection refused"
+    monkeypatch.setattr(http_probe, "_await_with_deadline", raise_timeout)
+    assert (await http_probe.probe("192.168.1.60", 80)).error == "Timeout"
+    monkeypatch.setattr(http_probe, "_await_with_deadline", raise_runtime)
+    assert "explode" in (await http_probe.probe("192.168.1.60", 80)).error
+
+
+@pytest.mark.asyncio
+async def test_worker_task_helpers_cover_control_queue_and_publish_paths(monkeypatch):
+    active_map = {
+        "worker-a": [
+            {"name": "app.workers.tasks.run_scan_job", "id": "task-1", "args": ["job-1"]},
+            {"name": "other.task", "id": "task-2", "args": ["job-1"]},
+        ]
+    }
+    monkeypatch.setattr(worker_tasks.celery_app.control, "inspect", lambda: SimpleNamespace(active=lambda: active_map))
+    task_ids = worker_tasks._get_active_scan_task_ids("job-1")
+    assert task_ids == ["task-1"]
+    revoked = []
+    monkeypatch.setattr(worker_tasks.celery_app.control, "revoke", lambda task_id, **kwargs: revoked.append(task_id))
+    assert worker_tasks.revoke_active_scan_job("job-1") is True
+    assert revoked == ["task-1"]
+
+    assert worker_tasks._extract_scan_job_id({"args": ["job-x"], "kwargs": {}}, "job-x") == "job-x"
+    assert worker_tasks._extract_scan_job_id({"args": "job-x payload", "kwargs": {}}, "job-x") == "job-x"
+    assert worker_tasks._get_scan_task_id({"name": "other", "id": "t", "args": ["job-1"]}, "job-1") is None
+    assert worker_tasks._prepare_scan_job_targets(SimpleNamespace(targets="raw"), lambda v: f"mat:{v}", lambda v: None) is None
+    assert worker_tasks._scan_config_value(SimpleNamespace(ai_after_scan_enabled=False), "ai_after_scan_enabled", True) is False
+
+    child = SimpleNamespace(status="pending", started_at=None, finished_at=None, result_summary=None, chunk_index=1, chunk_count=2)
+    worker_tasks._mark_child_running(child)
+    assert child.status == "running"
+    worker_tasks._mark_child_done(child, SimpleNamespace(model_dump=lambda mode=None: {"hosts_scanned": 1}))
+    assert child.status == "done"
+    job = SimpleNamespace(result_summary={})
+    summary = SimpleNamespace(model_dump=lambda mode=None: {"hosts_scanned": 1})
+    worker_tasks._record_parent_chunk_progress(job, child, summary)
+    assert job.result_summary["chunk_index"] == 1
+
+    decision_type = lambda **kwargs: SimpleNamespace(**kwargs)
+    pause_job = SimpleNamespace(control_action="pause", control_mode="preserve_discovery", resume_after=datetime.now(timezone.utc))
+    assert worker_tasks._scan_control_decision_from_job(pause_job, decision_type).action == "pause"
+    requeue_job = SimpleNamespace(control_action="requeue", control_mode=None, resume_after=None)
+    assert worker_tasks._scan_control_decision_from_job(requeue_job, decision_type).mode == "requeue"
+    cancel_job = SimpleNamespace(control_action="cancel", control_mode=None, resume_after=None)
+    assert worker_tasks._scan_control_decision_from_job(cancel_job, decision_type).action == "cancel"
+    assert worker_tasks._scan_control_decision_from_job(SimpleNamespace(control_action=None), decision_type) is None
+
+    interrupted = SimpleNamespace(control_mode="requeue", status="running", started_at=datetime.now(timezone.utc), finished_at=None)
+    worker_tasks._apply_interrupt_status(interrupted, "paused")
+    assert interrupted.status == "pending"
+    assert worker_tasks._interrupt_stage("pending", "paused") == "queued"
+    assert worker_tasks._interrupt_stage("running", "paused") == "paused"
+    assert worker_tasks._interrupt_stage("running", "cancelled") == "cancelled"
+
+    now = datetime.now(timezone.utc)
+    paused_job = SimpleNamespace(control_action="pause", control_mode="preserve_discovery", resume_after=now, result_summary={})
+    worker_tasks._resume_paused_job(paused_job, now)
+    assert paused_job.status == "pending"
+    assert paused_job.queue_position == 1
+    assert paused_job.result_summary["resumed_at"] == now.isoformat()
+
+    parent = SimpleNamespace(id=uuid4(), result_summary={}, queue_position=None)
+    progress_state = {"last_flush": 0.0, "last_stage": None}
+    db = _FakeDb()
+    monkeypatch.setattr(worker_tasks, "_publish_event", lambda payload: _completed_task(None))
+    broadcast = worker_tasks._build_parent_chunk_broadcast_fn(db, parent, progress_state, chunk_index=2, chunk_count=4)
+    await broadcast({"event": "scan_progress", "data": {"job_id": "child", "progress": 0.5, "stage": "investigation", "message": "Scanning"}})
+    assert parent.result_summary["chunk_index"] == 2
+    assert db.committed is True
+
+    progress_job = SimpleNamespace(result_summary={})
+    await worker_tasks._record_job_progress(db, progress_job, {"event": "scan_progress", "data": {"stage": "ports", "progress": 0.2}}, {"last_flush": 0.0, "last_stage": None})
+    assert progress_job.result_summary["stage"] == "ports"
+
+    published = []
+    fake_redis = SimpleNamespace(
+        publish=lambda channel, payload: published.append((channel, payload)),
+        close=lambda: published.append(("closed", None)),
+    )
+    monkeypatch.setitem(sys.modules, "redis", SimpleNamespace(from_url=lambda url: fake_redis))
+    worker_tasks._publish_event_sync({"event": "scan_progress"})
+    assert published[0][0] == "argus:events"
+
+
+@pytest.mark.asyncio
+async def test_worker_task_helpers_cover_job_state_and_queue_management(monkeypatch):
+    now = datetime.now(timezone.utc)
+    summary_parent = SimpleNamespace(
+        hosts_scanned=1,
+        hosts_up=1,
+        total_open_ports=2,
+        new_assets=1,
+        changed_assets=0,
+        offline_assets=0,
+        ai_analyses_completed=1,
+        duration_seconds=1.5,
+    )
+    summary_child = SimpleNamespace(
+        hosts_scanned=2,
+        hosts_up=2,
+        total_open_ports=3,
+        new_assets=0,
+        changed_assets=1,
+        offline_assets=1,
+        ai_analyses_completed=0,
+        duration_seconds=2.25,
+    )
+    worker_tasks._merge_scan_summary(summary_parent, summary_child)
+    assert summary_parent.hosts_scanned == 3
+    assert summary_parent.duration_seconds == 3.75
+
+    child_done = SimpleNamespace(status="done", finished_at=None, control_action="pause", control_mode="x", result_summary=None)
+    child_pending = SimpleNamespace(status="pending", finished_at=None, control_action="pause", control_mode="x", result_summary={})
+
+    class _ChildDb(_FakeDb):
+        async def execute(self, stmt):
+            return _ScalarResult([child_done, child_pending])
+
+    child_db = _ChildDb()
+    assert await worker_tasks._has_child_jobs(child_db, "parent") is True
+    assert await worker_tasks._list_child_jobs(child_db, "parent") == [child_done, child_pending]
+    await worker_tasks._cancel_remaining_child_jobs(child_db, "parent", message="stop")
+    assert child_pending.status == "cancelled"
+    assert child_pending.result_summary["message"] == "stop"
+    assert child_db.committed is True
+
+    runnable_job = SimpleNamespace(status="pending")
+    assert await worker_tasks._get_runnable_job(_FakeDb(get_result=runnable_job), "job-1") is runnable_job
+    assert await worker_tasks._get_runnable_job(_FakeDb(get_result=None), "missing") is None
+    assert await worker_tasks._get_runnable_job(_FakeDb(get_result=SimpleNamespace(status="cancelled")), "cancelled") is None
+    assert await worker_tasks._get_runnable_job(_FakeDb(get_result=SimpleNamespace(status="paused")), "paused") is None
+
+    published = []
+    monkeypatch.setattr(worker_tasks, "_publish_event", lambda payload: _completed_task(published.append(payload)))
+    monkeypatch.setattr(worker_tasks, "_dispatch_next_scan_if_idle", lambda db: _completed_task(published.append({"event": "dispatch"})))
+    failed_job = SimpleNamespace(status="pending", finished_at=None, control_action="pause", control_mode="x", resume_after=now, result_summary=None)
+    await worker_tasks._fail_scan_job(_FakeDb(), failed_job, "job-1", "bad targets")
+    assert failed_job.status == "failed"
+    assert published[0]["data"]["status"] == "failed"
+
+    running_job = SimpleNamespace(status="pending", queue_position=2, control_action="pause", started_at=None, result_summary=None, targets="192.168.1.0/24")
+    db = _FakeDb()
+    await worker_tasks._mark_job_running(db, running_job)
+    assert running_job.status == "running"
+    assert running_job.queue_position is None
+    assert db.committed is True
+
+    worker_tasks._resolve_scan_profile("polite", ScanProfile)
+    assert worker_tasks._resolve_scan_profile("polite", ScanProfile) == ScanProfile.QUICK
+    assert worker_tasks._resolve_scan_profile("missing", ScanProfile) == ScanProfile.BALANCED
+
+    completed_job = SimpleNamespace(status="running", finished_at=None, result_summary=None)
+    summary = SimpleNamespace(model_dump=lambda mode=None: {"hosts_scanned": 2})
+    await worker_tasks._complete_scan_job(_FakeDb(), completed_job, "job-2", summary)
+    assert completed_job.status == "done"
+    assert completed_job.result_summary["hosts_scanned"] == 2
+
+
+@pytest.mark.asyncio
+async def test_worker_task_helpers_cover_interrupt_failure_and_dispatch_paths(monkeypatch):
+    now = datetime.now(timezone.utc)
+    queue_job = SimpleNamespace(
+        status="running",
+        control_mode="requeue",
+        result_summary={"existing": True},
+        resume_after=None,
+        queue_position=None,
+        control_action="pause",
+    )
+    summary = SimpleNamespace(model_dump=lambda mode=None: {"hosts_scanned": 4})
+    monkeypatch.setattr(worker_tasks, "_next_queue_position", lambda db: _completed_task(3))
+    exc = SimpleNamespace(status="paused", message="operator pause", resume_after=now.isoformat(), scanned_ips={"1.1.1.1"})
+    await worker_tasks._apply_interrupt_result(_FakeDb(), queue_job, exc, summary)
+    assert queue_job.status == "pending"
+    assert queue_job.queue_position == 3
+    assert queue_job.result_summary["stage"] == "queued"
+    assert queue_job.control_action is None
+
+    paused_job = SimpleNamespace(status="running", control_mode="preserve_discovery", result_summary={}, resume_after=None, queue_position=None, control_action="pause")
+    await worker_tasks._apply_interrupt_result(_FakeDb(), paused_job, exc, summary)
+    assert paused_job.status == "paused"
+    assert paused_job.resume_after == now
+
+    persist_calls = []
+    published = []
+    monkeypatch.setattr(worker_tasks, "_publish_event", lambda payload: _completed_task(published.append(payload)))
+    monkeypatch.setattr(worker_tasks, "_apply_interrupt_result", lambda db, job, exc_obj, summary_obj: _completed_task(persist_calls.append(("apply", exc_obj.status))))
+    interrupt = SimpleNamespace(
+        status="paused",
+        message="pause requested",
+        resume_after=now.isoformat(),
+        scanned_ips={"1.1.1.1"},
+        partial_results=[HostScanResult(host=DiscoveredHost(ip_address="1.1.1.1"))],
+        mark_missing_offline=False,
+        summary=summary,
+    )
+    await worker_tasks._handle_scan_interrupt(
+        _FakeDb(),
+        SimpleNamespace(id=uuid4()),
+        "job-3",
+        interrupt,
+        summary,
+        lambda *args, **kwargs: _completed_task(persist_calls.append(("persist", kwargs["allow_discovery_only"]))),
+    )
+    assert ("persist", True) in persist_calls
+    assert published[0]["data"]["status"] == "paused"
+
+    failed_job = SimpleNamespace(status="running", finished_at=None, result_summary=None)
+    failure_events = []
+    monkeypatch.setattr(worker_tasks, "_publish_event", lambda payload: _completed_task(failure_events.append(payload)))
+    await worker_tasks._publish_scan_failure(_FakeDb(), failed_job, "job-4", RuntimeError("boom"))
+    assert failed_job.status == "failed"
+    assert failure_events[0]["data"]["error"] == "boom"
+
+    queued_a = SimpleNamespace(id=uuid4(), status="pending", queue_position=2, created_at=now)
+    queued_b = SimpleNamespace(id=uuid4(), status="pending", queue_position=None, created_at=now + timedelta(seconds=1))
+
+    class _QueueDb(_FakeDb):
+        async def execute(self, stmt):
+            return _ScalarResult([queued_a, queued_b])
+
+    queue_db = _QueueDb()
+    assert await worker_tasks._next_queue_position(queue_db) == 3
+    await worker_tasks._normalize_pending_queue(queue_db)
+    assert queued_a.queue_position == 1
+    assert queued_b.queue_position == 2
+    next_job = await worker_tasks._get_next_queued_job(queue_db)
+    assert next_job is queued_a
+
+    started = []
+    monkeypatch.setattr(worker_tasks, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(worker_tasks, "_get_next_queued_job", lambda db: _completed_task(SimpleNamespace(id=uuid4(), queue_position=1)))
+    monkeypatch.setattr(worker_tasks.run_scan_job, "delay", lambda job_id: started.append(job_id))
+    await worker_tasks._dispatch_next_scan_if_idle(_FakeDb())
+    assert started
+
+
+@pytest.mark.asyncio
+async def test_worker_task_helpers_cover_scheduled_and_resume_entrypoints(monkeypatch):
+    now = datetime.now(timezone.utc)
+    config = SimpleNamespace(default_profile="balanced", last_scheduled_scan_at=None)
+    run_calls = []
+
+    class _Session:
+        def __init__(self):
+            self.db = SimpleNamespace(
+                added=[],
+                committed=False,
+                refreshed=[],
+                execute=lambda stmt: _completed_task(_ScalarResult([])),
+                flush=lambda: _completed_task(None),
+                commit=lambda: _completed_task(None),
+                refresh=lambda obj: _completed_task(None),
+                add=lambda obj: self.db.added.append(obj),
+            )
+
+        async def __aenter__(self):
+            return self.db
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    fake_engine = SimpleNamespace(dispose=lambda: _completed_task(None))
+    monkeypatch.setattr(sys.modules["sqlalchemy.ext.asyncio"], "create_async_engine", lambda *args, **kwargs: fake_engine)
+    monkeypatch.setattr(sys.modules["sqlalchemy.ext.asyncio"], "async_sessionmaker", lambda *args, **kwargs: (lambda: _Session()))
+    monkeypatch.setattr(sys.modules["app.scanner.config"], "get_or_create_scanner_config", lambda db: _completed_task(config))
+    monkeypatch.setattr(sys.modules["app.scanner.config"], "should_enqueue_scheduled_scan", lambda cfg: True)
+    monkeypatch.setattr(sys.modules["app.scanner.config"], "resolve_scan_targets", lambda cfg, req: "192.168.1.0/24")
+    monkeypatch.setattr(sys.modules["app.scanner.config"], "split_scan_targets", lambda targets: [targets])
+    monkeypatch.setattr(worker_tasks, "_next_queue_position", lambda db: _completed_task(1))
+    monkeypatch.setattr(worker_tasks, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(worker_tasks.run_scan_job, "delay", lambda job_id: run_calls.append(job_id))
+    await worker_tasks._enqueue_scheduled_scan()
+    assert run_calls
+
+    jobs = [
+        SimpleNamespace(id=uuid4(), status="paused", resume_after=now - timedelta(minutes=1), control_action="pause", control_mode="preserve_discovery", result_summary={}),
+    ]
+
+    class _ResumeDb:
+        def __init__(self):
+            self.committed = False
+
+        async def execute(self, stmt):
+            return _ScalarResult(jobs)
+
+        async def commit(self):
+            self.committed = True
+
+    class _ResumeSession:
+        async def __aenter__(self):
+            return _ResumeDb()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    monkeypatch.setattr(sys.modules["sqlalchemy.ext.asyncio"], "async_sessionmaker", lambda *args, **kwargs: (lambda: _ResumeSession()))
+    monkeypatch.setattr(worker_tasks, "_normalize_pending_queue", lambda db: _completed_task(None))
+    monkeypatch.setattr(worker_tasks, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(worker_tasks, "_get_next_queued_job", lambda db: _completed_task(SimpleNamespace(id=uuid4())))
+    run_calls.clear()
+    await worker_tasks._resume_paused_scans_async()
+    assert run_calls
 
 
 @pytest.mark.asyncio
