@@ -1,8 +1,22 @@
 import axios from "axios";
 import type { ConfigBackupPolicy, ConfigBackupTarget, ScannerConfig, TplinkDecoConfig } from "@/types";
 
+function getApiBaseUrl() {
+  return process.env.NEXT_PUBLIC_API_URL ?? "";
+}
+
+function getWsBaseUrl() {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL;
+  }
+  if (typeof globalThis.window === "object") {
+    return globalThis.location.origin.replace(/^http/i, "ws");
+  }
+  return "";
+}
+
 export const api = axios.create({
-  baseURL: process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:8000",
+  baseURL: getApiBaseUrl(),
   timeout: 15_000,
 });
 
@@ -133,7 +147,7 @@ export const topologyApi = {
 
 // ─── WebSocket helper ───────────────────────────────────────────
 export function createWsConnection(onMessage: (e: MessageEvent) => void): WebSocket {
-  const baseWsUrl = process.env.NEXT_PUBLIC_WS_URL ?? "ws://localhost:8000";
+  const baseWsUrl = getWsBaseUrl();
   const token = getBrowserStorageToken();
   const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
   const wsUrl = `${baseWsUrl}/ws/events${tokenQuery}`;

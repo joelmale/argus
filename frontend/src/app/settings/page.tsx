@@ -982,7 +982,7 @@ export default function SettingsPage() {
                             {homeAssistantExport ? `${homeAssistantExport.entities.length} entities available` : 'Loading entity export…'}
                           </p>
                           <a
-                            href="http://localhost:8000/api/v1/system/integrations/home-assistant/entities"
+                            href="/api/v1/system/integrations/home-assistant/entities"
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-2 text-xs text-sky-500 hover:text-sky-600"
@@ -996,7 +996,7 @@ export default function SettingsPage() {
                             Read-only normalized JSON snapshot for external systems.
                           </p>
                           <a
-                            href="http://localhost:8000/api/v1/system/integrations/inventory-sync"
+                            href="/api/v1/system/integrations/inventory-sync"
                             target="_blank"
                             rel="noreferrer"
                             className="inline-flex items-center gap-2 text-xs text-sky-500 hover:text-sky-600"
@@ -1041,7 +1041,7 @@ export default function SettingsPage() {
                         <FileText className="w-4 h-4" /> Open HTML inventory report
                       </button>
                       <a
-                        href="http://localhost:8000/metrics"
+                        href="/metrics"
                         target="_blank"
                         rel="noreferrer"
                         className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-800"

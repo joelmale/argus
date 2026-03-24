@@ -6,7 +6,16 @@ import { useAppStore, processWsEvent } from '@/store'
 import type { WsEvent } from '@/types'
 
 const RECONNECT_DELAY_MS = 3000
-const WS_URL = process.env.NEXT_PUBLIC_WS_URL ?? 'ws://localhost:8000'
+
+function getWsBaseUrl() {
+  if (process.env.NEXT_PUBLIC_WS_URL) {
+    return process.env.NEXT_PUBLIC_WS_URL
+  }
+  if (typeof globalThis.window === 'object') {
+    return globalThis.location.origin.replace(/^http/i, 'ws')
+  }
+  return ''
+}
 
 function getStoredToken() {
   if (typeof globalThis.window === 'undefined') {
@@ -31,7 +40,7 @@ export function useWebSocket(enabled = true) {
     const token = getStoredToken()
     if (!token) return
 
-    const ws = new WebSocket(`${WS_URL}/ws/events?token=${encodeURIComponent(token)}`)
+    const ws = new WebSocket(`${getWsBaseUrl()}/ws/events?token=${encodeURIComponent(token)}`)
     wsRef.current = ws
 
     ws.onopen = () => {

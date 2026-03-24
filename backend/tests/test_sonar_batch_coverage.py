@@ -7,6 +7,7 @@ from uuid import uuid4
 
 import pytest
 import pytest_asyncio
+import httpx
 from fastapi import HTTPException
 from starlette.requests import Request
 
@@ -38,6 +39,7 @@ from app.db.upsert import (
     _upsert_internet_lookup,
     _upsert_ports,
     _upsert_single_port,
+    upsert_scan_result,
     mark_offline,
 )
 from app.fingerprinting.evidence import extract_evidence
@@ -75,6 +77,11 @@ class _ScalarResult:
 
     def scalar_one_or_none(self):
         return self._rows[0] if self._rows else None
+
+    def scalar_one(self):
+        if not self._rows:
+            raise LookupError("No rows")
+        return self._rows[0]
 
     def scalars(self):
         return self
@@ -903,6 +910,249 @@ def test_scanner_config_scheduling_and_evidence_helpers():
     assert scanner_config.has_meaningful_scan_evidence(rich) is True
 
 
+def test_scanner_config_network_detection_and_route_parsing_helpers(monkeypatch):
+    class _Sock:
+        def fileno(self):
+            return 7
+
+        def close(self):
+            return None
+
+    monkeypatch.setattr(scanner_config.socket, "socket", lambda *args, **kwargs: _Sock())
+    monkeypatch.setattr(
+        scanner_config.fcntl,
+        "ioctl",
+        lambda fd, request, packed: (b"\x00" * 20) + scanner_config.socket.inet_aton("192.168.1.10") + (b"\x00" * 8),
+    )
+    assert scanner_config._ioctl_ipv4("eth0", scanner_config._SIOCGIFADDR) == "192.168.1.10"
+
+    monkeypatch.setattr(scanner_config, "_ioctl_ipv4", lambda ifname, request: {"addr": "192.168.1.10", "mask": "255.255.255.0"}["addr" if request == scanner_config._SIOCGIFADDR else "mask"])
+    assert scanner_config._get_ipv4_network("eth0") == "192.168.1.0/24"
+
+    monkeypatch.setattr(scanner_config, "_ioctl_ipv4", lambda ifname, request: None)
+    assert scanner_config._get_ipv4_network("eth0") is None
+
+    monkeypatch.setattr(scanner_config, "_get_ipv4_network", lambda ifname: "10.0.0.0/24" if ifname == "eth0" else None)
+    monkeypatch.setattr(scanner_config.socket, "if_nameindex", lambda: [(1, "lo"), (2, "eth0")])
+
+    from io import StringIO
+
+    def fake_open_success(*args, **kwargs):
+        return StringIO("Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\neth0\t00000000\t0101A8C0\t0003\t0\t0\t0\t00FFFFFF\t0\t0\t0\n")
+
+    monkeypatch.setattr("builtins.open", fake_open_success)
+    assert scanner_config.detect_local_ipv4_cidr() == "10.0.0.0/24"
+
+    def fake_open_error(*args, **kwargs):
+        raise OSError("no route file")
+
+    monkeypatch.setattr("builtins.open", fake_open_error)
+    assert scanner_config.detect_local_ipv4_cidr() == "10.0.0.0/24"
+
+    monkeypatch.setattr(
+        "builtins.open",
+        lambda *args, **kwargs: StringIO(
+            "Iface\tDestination\tGateway\tFlags\tRefCnt\tUse\tMetric\tMask\n"
+            "eth0\t0001A8C0\t00000000\t0001\t0\t0\t0\t00FFFFFF\t0\t0\t0\n"
+            "docker0\t000011AC\t00000000\t0001\t0\t0\t0\t0000FFFF\t0\t0\t0\n"
+            "eth1\tBAD\t00000000\t0001\t0\t0\t0\tBAD\t0\t0\t0\n"
+        ),
+    )
+    routes = scanner_config._iter_ipv4_route_networks()
+    assert [str(route) for route in routes] == ["192.168.1.0/24"]
+
+    monkeypatch.setattr(scanner_config, "_get_ipv4_network", lambda ifname: "192.168.1.0/24")
+    assert scanner_config._default_route_network("eth0 00000000 0101A8C0 0003 0 0 0 00FFFFFF 0 0 0") == "192.168.1.0/24"
+    assert scanner_config._default_route_network("eth0 BAD 0101A8C0 ZZZZ 0 0 0 00FFFFFF 0 0 0") is None
+    assert scanner_config._default_route_network("lo 00000000 0101A8C0 0003 0 0 0 00FFFFFF 0 0 0") is None
+    assert scanner_config._target_is_routable("192.168.1.5", [scanner_config.ipaddress.ip_network("0.0.0.0/0")]) is True
+    assert scanner_config._target_is_routable("not-a-target", [scanner_config.ipaddress.ip_network("192.168.1.0/24")]) is False
+
+    chunks = []
+    assert scanner_config._append_ip_group(chunks, [], "192.168.1.1", 1) == []
+    assert chunks == ["192.168.1.1"]
+    chunks = []
+    ip_group = scanner_config._append_split_target(chunks, [], "10.0.0.0/24", max_network_prefix=24, max_ip_group_size=2)
+    assert ip_group == ["10.0.0.0/24"]
+    ip_group = scanner_config._append_split_target(chunks, ip_group, "bogus", max_network_prefix=24, max_ip_group_size=2)
+    assert ip_group == []
+    assert chunks[-1] == "10.0.0.0/24 bogus"
+
+
+@pytest.mark.asyncio
+async def test_scanner_config_bootstrap_create_update_and_effective_helpers(monkeypatch):
+    monkeypatch.setattr(scanner_config.settings, "SCANNER_DEFAULT_TARGETS", "192.168.50.0/24")
+    assert scanner_config._bootstrap_targets_from_env() == ("192.168.50.0/24", False)
+    monkeypatch.setattr(scanner_config.settings, "SCANNER_DEFAULT_TARGETS", scanner_config.DEFAULT_TARGET_PLACEHOLDER)
+    assert scanner_config._bootstrap_targets_from_env() == (None, True)
+
+    monkeypatch.setattr(scanner_config.settings, "SCANNER_DEFAULT_PROFILE", "balanced")
+    monkeypatch.setattr(scanner_config.settings, "SCANNER_INTERVAL_MINUTES", 45)
+    monkeypatch.setattr(scanner_config.settings, "SCANNER_CONCURRENT_HOSTS", 6)
+    monkeypatch.setattr(scanner_config.settings, "AI_ENABLE_PER_SCAN", True)
+    monkeypatch.setattr(scanner_config.settings, "SCANNER_PASSIVE_ARP", True)
+    monkeypatch.setattr(scanner_config.settings, "SCANNER_PASSIVE_ARP_INTERFACE", "eth9")
+    monkeypatch.setattr(scanner_config.settings, "SNMP_VERSION", "3")
+    monkeypatch.setattr(scanner_config.settings, "SNMP_COMMUNITY", "public")
+    monkeypatch.setattr(scanner_config.settings, "SNMP_TIMEOUT", 9)
+    monkeypatch.setattr(scanner_config.settings, "SNMP_V3_USERNAME", "snmp-user")
+    monkeypatch.setattr(scanner_config.settings, "SNMP_V3_AUTH_KEY", "auth")
+    monkeypatch.setattr(scanner_config.settings, "SNMP_V3_PRIV_KEY", "priv")
+    monkeypatch.setattr(scanner_config.settings, "SNMP_V3_AUTH_PROTOCOL", "sha")
+    monkeypatch.setattr(scanner_config.settings, "SNMP_V3_PRIV_PROTOCOL", "aes")
+    monkeypatch.setattr(scanner_config.settings, "OLLAMA_MODEL", "qwen-test")
+
+    db_existing = _FakeDb(execute_result=_ScalarResult([SimpleNamespace(id=1)]))
+    assert (await scanner_config.get_or_create_scanner_config(db_existing)).id == 1
+
+    db_new = _FakeDb(execute_result=_ScalarResult([]))
+    created = await scanner_config.get_or_create_scanner_config(db_new)
+    assert created.default_profile == "balanced"
+    assert created.interval_minutes == 45
+    assert created.passive_arp_interface == "eth9"
+    assert db_new.added[-1] is created
+
+    config = SimpleNamespace(
+        enabled=True,
+        default_targets=None,
+        auto_detect_targets=True,
+        default_profile="fast",
+        interval_minutes=60,
+        concurrent_hosts=4,
+        host_chunk_size=32,
+        top_ports_count=100,
+        deep_probe_timeout_seconds=5,
+        ai_after_scan_enabled=False,
+        passive_arp_enabled=True,
+        passive_arp_interface="eth0",
+        snmp_enabled=True,
+        snmp_version="3",
+        snmp_community="public",
+        snmp_timeout=5,
+        snmp_v3_username=None,
+        snmp_v3_auth_key=None,
+        snmp_v3_priv_key=None,
+        snmp_v3_auth_protocol="sha",
+        snmp_v3_priv_protocol="aes",
+        fingerprint_ai_enabled=True,
+        fingerprint_ai_model=None,
+        fingerprint_ai_min_confidence=0.8,
+        fingerprint_ai_prompt_suffix=None,
+        internet_lookup_enabled=True,
+        internet_lookup_allowed_domains=None,
+        internet_lookup_budget=2,
+        internet_lookup_timeout_seconds=3,
+        last_scheduled_scan_at=None,
+    )
+    monkeypatch.setattr(scanner_config, "detect_local_ipv4_cidr", lambda: "192.168.88.0/24")
+    effective = scanner_config.build_effective_scanner_config(config)
+    assert effective.detected_targets == "192.168.88.0/24"
+    assert effective.effective_targets == "192.168.88.0/24"
+    assert effective.fingerprint_ai_model == "qwen-test"
+    assert effective.snmp_v3_username == ""
+
+    monkeypatch.setattr(scanner_config, "get_or_create_scanner_config", lambda db: _completed_task(config))
+    cfg, eff = await scanner_config.read_effective_scanner_config(_FakeDb())
+    assert cfg is config
+    assert eff.effective_targets == "192.168.88.0/24"
+
+    payload = ScannerConfigUpdateInput(
+        enabled=False,
+        default_targets=" 10.0.0.0/24 ",
+        auto_detect_targets=False,
+        default_profile="balanced",
+        interval_minutes=30,
+        concurrent_hosts=8,
+        host_chunk_size=999,
+        top_ports_count=70000,
+        deep_probe_timeout_seconds=0,
+        ai_after_scan_enabled=True,
+        passive_arp_enabled=False,
+        passive_arp_interface=" ",
+        snmp_enabled=True,
+        snmp_version="V3",
+        snmp_community=" private ",
+        snmp_timeout=0,
+        snmp_v3_username=" user ",
+        snmp_v3_auth_key=" auth ",
+        snmp_v3_priv_key=" priv ",
+        snmp_v3_auth_protocol="SHA",
+        snmp_v3_priv_protocol="AES",
+        fingerprint_ai_enabled=True,
+        fingerprint_ai_model=" ",
+        fingerprint_ai_min_confidence=-1.0,
+        fingerprint_ai_prompt_suffix=" suffix ",
+        internet_lookup_enabled=True,
+        internet_lookup_allowed_domains=" example.com ",
+        internet_lookup_budget=0,
+        internet_lookup_timeout_seconds=0,
+    )
+    updated, effective_updated = await scanner_config.update_scanner_config(_FakeDb(), payload)
+    assert updated.enabled is False
+    assert updated.default_targets == "10.0.0.0/24"
+    assert updated.host_chunk_size == 256
+    assert updated.top_ports_count == 65535
+    assert updated.deep_probe_timeout_seconds == 1
+    assert updated.snmp_community == "private"
+    assert updated.fingerprint_ai_min_confidence == 0.0
+    assert updated.internet_lookup_allowed_domains == "example.com"
+    assert effective_updated.effective_targets == "10.0.0.0/24"
+
+    with pytest.raises(ValueError):
+        await scanner_config.update_scanner_config(
+            _FakeDb(),
+            ScannerConfigUpdateInput(
+                enabled=True,
+                default_targets=" ",
+                auto_detect_targets=False,
+                default_profile="balanced",
+                interval_minutes=1,
+                concurrent_hosts=1,
+                host_chunk_size=1,
+                top_ports_count=10,
+                deep_probe_timeout_seconds=1,
+                ai_after_scan_enabled=False,
+                passive_arp_enabled=False,
+                passive_arp_interface="",
+                snmp_enabled=False,
+                snmp_version="2c",
+                snmp_community=None,
+                snmp_timeout=1,
+                snmp_v3_username=None,
+                snmp_v3_auth_key=None,
+                snmp_v3_priv_key=None,
+                snmp_v3_auth_protocol="sha",
+                snmp_v3_priv_protocol="aes",
+                fingerprint_ai_enabled=False,
+                fingerprint_ai_model=None,
+                fingerprint_ai_min_confidence=0.5,
+                fingerprint_ai_prompt_suffix=None,
+                internet_lookup_enabled=False,
+                internet_lookup_allowed_domains=None,
+                internet_lookup_budget=1,
+                internet_lookup_timeout_seconds=1,
+            ),
+        )
+
+
+def test_scanner_config_evidence_helper_additional_branches():
+    assert scanner_config.has_meaningful_scan_evidence(
+        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.3"), reverse_hostname="printer.lan")
+    ) is True
+    assert scanner_config.has_meaningful_scan_evidence(
+        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.4"), mac_vendor="Canon")
+    ) is True
+    assert scanner_config.has_meaningful_scan_evidence(
+        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.5"), open_ports=[PortResult(port=80, protocol="tcp", state="open")])
+    ) is True
+    assert scanner_config.has_meaningful_scan_evidence(
+        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.6"), probes=[ProbeResult(probe_type="dns", success=True, data={"ptr": "x"})])
+    ) is False
+    assert scanner_config.has_meaningful_scan_evidence(
+        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.7"), ai_analysis=AIAnalysis(device_class=DeviceClass.UNKNOWN, confidence=0.95))
+    ) is False
+
+
 @pytest.mark.asyncio
 async def test_scan_route_control_helpers_cover_pause_cancel_resume(monkeypatch):
     started = []
@@ -1152,3 +1402,868 @@ async def test_upsert_helper_ai_lookup_and_autopsy_paths(monkeypatch):
     await _upsert_fingerprint_hypothesis(db, asset, evidence_items)
     await _upsert_internet_lookup(db, asset, evidence_items)
     assert len(db.added) == 3
+
+
+@pytest.mark.asyncio
+async def test_pipeline_full_run_tallies_summary_and_persists(monkeypatch):
+    host = DiscoveredHost(ip_address="192.168.1.200", discovery_method="arp")
+    result = HostScanResult(
+        host=host,
+        ports=[PortResult(port=80, protocol="tcp", state="open", service="http")],
+        probes=[ProbeResult(probe_type="http", success=True, data={"title": "ok"})],
+        ai_analysis=AIAnalysis(device_class=DeviceClass.ROUTER, confidence=0.9),
+        scan_profile=ScanProfile.BALANCED,
+    )
+    broadcasts = []
+    persist_calls = []
+
+    async def fake_discovery(*args, **kwargs):
+        return [host]
+
+    async def fake_port_stage(*args, **kwargs):
+        return {host.ip_address: (result.ports, OSFingerprint(), None, None)}
+
+    monkeypatch.setattr("app.scanner.pipeline._run_discovery_stage", fake_discovery)
+    monkeypatch.setattr("app.scanner.pipeline._run_port_scan_stage", fake_port_stage)
+    monkeypatch.setattr("app.scanner.pipeline._build_investigation_tasks", lambda *args, **kwargs: [asyncio.create_task(_completed_task(result))])
+    monkeypatch.setattr("app.scanner.pipeline._broadcast_investigation_start", lambda *args, **kwargs: _completed_task(None))
+    monkeypatch.setattr("app.scanner.pipeline._collect_investigation_results", lambda *args, **kwargs: _completed_task(([result], 1, 1)))
+    monkeypatch.setattr("app.scanner.pipeline._check_control", lambda *args, **kwargs: _completed_task(None))
+
+    async def fake_persist_results(*args, **kwargs):
+        persist_calls.append((args, kwargs))
+
+    async def fake_broadcast(_broadcast_fn, payload):
+        broadcasts.append(payload["event"])
+
+    monkeypatch.setattr("app.scanner.pipeline._call_persist_results", fake_persist_results)
+    monkeypatch.setattr("app.scanner.pipeline._broadcast", fake_broadcast)
+
+    summary = await run_scan("job-100", "192.168.1.0/24", db_session="db", broadcast_fn=object())
+    assert summary.total_open_ports == 1
+    assert summary.ai_analyses_completed == 1
+    assert persist_calls
+    assert broadcasts[-1] == "scan_complete"
+
+
+@pytest.mark.asyncio
+async def test_upsert_scan_result_covers_new_updated_and_unchanged_paths(monkeypatch):
+    result = _sample_result("192.168.1.210")
+    new_db = _FakeDb(execute_result=_ScalarResult([]))
+
+    async def fake_create_asset(db, result_obj, now, *_args):
+        return Asset(id=uuid4(), ip_address=result_obj.host.ip_address, status="online", first_seen=now, last_seen=now)
+
+    monkeypatch.setattr("app.db.upsert._create_asset", fake_create_asset)
+    monkeypatch.setattr("app.db.upsert._persist_asset_context", lambda *args, **kwargs: _completed_task(None))
+    monkeypatch.setattr("app.db.upsert._upsert_ports", lambda *args, **kwargs: _completed_task({}))
+    asset, change = await upsert_scan_result(new_db, result)
+    assert change == "discovered"
+    assert asset.ip_address == "192.168.1.210"
+
+    unchanged_result = _sample_result("192.168.1.211")
+    existing = Asset(
+        id=uuid4(),
+        ip_address="192.168.1.211",
+        status="online",
+        hostname=unchanged_result.reverse_hostname,
+        vendor=unchanged_result.mac_vendor,
+        os_name="FreeBSD",
+        device_type="firewall",
+        device_type_source="ai",
+        mac_address=unchanged_result.host.mac_address,
+        first_seen=datetime.now(timezone.utc),
+        last_seen=datetime.now(timezone.utc),
+    )
+    unchanged_db = _FakeDb(execute_result=_ScalarResult([existing]))
+    monkeypatch.setattr("app.db.upsert._persist_asset_context", lambda *args, **kwargs: _completed_task(None))
+    monkeypatch.setattr("app.db.upsert._upsert_ports", lambda *args, **kwargs: _completed_task({}))
+    monkeypatch.setattr("app.db.upsert._apply_asset_updates", lambda *args, **kwargs: None)
+    _, unchanged = await upsert_scan_result(unchanged_db, unchanged_result)
+    assert unchanged == "unchanged"
+
+    updated = Asset(
+        id=uuid4(),
+        ip_address="192.168.1.212",
+        status="offline",
+        hostname="old",
+        first_seen=datetime.now(timezone.utc),
+        last_seen=datetime.now(timezone.utc),
+    )
+    updated_db = _FakeDb(execute_result=_ScalarResult([updated]))
+    monkeypatch.setattr("app.db.upsert._persist_asset_context", lambda *args, **kwargs: _completed_task(None))
+    monkeypatch.setattr("app.db.upsert._upsert_ports", lambda *args, **kwargs: _completed_task({"port_80/tcp": {"old": None, "new": "open"}}))
+    _, updated_change = await upsert_scan_result(updated_db, _sample_result("192.168.1.212"))
+    assert updated_change == "updated"
+    assert any(getattr(entry, "change_type", "").endswith("_changed") or getattr(entry, "change_type", "") == "status_change" for entry in updated_db.added)
+
+
+@pytest.mark.asyncio
+async def test_scans_routes_cover_ingest_get_scan_control_and_reorder(monkeypatch):
+    observed = [
+        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.10", mac_address="AA"), reverse_hostname="router"),
+        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.11", mac_address="BB"), reverse_hostname="nas"),
+    ]
+    assets = [
+        SimpleNamespace(ip_address="192.168.1.10", mac_address="AA", hostname="router", effective_device_type="router"),
+        SimpleNamespace(ip_address="192.168.1.11", mac_address="BB", hostname="nas", effective_device_type="nas"),
+    ]
+    changes = iter(["discovered", "updated"])
+    notifications = []
+    passive = []
+    monkeypatch.setattr(scans_routes, "parse_dns_dhcp_logs", lambda content: observed)
+    monkeypatch.setattr(scans_routes, "upsert_scan_result", lambda db, row: _completed_task((assets[len(passive)], next(changes))))
+    monkeypatch.setattr(scans_routes, "record_passive_observation", lambda *args, **kwargs: _completed_task(passive.append(kwargs)))
+    monkeypatch.setattr(scans_routes, "notify_new_device", lambda payload: _completed_task(notifications.append(payload)))
+    ingest_db = _FakeDb()
+    ingest = await scans_routes.ingest_logs(scans_routes.IngestLogsRequest(content="lease"), ingest_db, object())
+    assert ingest == {"records_parsed": 2, "new_assets": 1, "changed_assets": 1}
+    assert len(notifications) == 1
+    assert ingest_db.committed is True
+
+    parent = ScanJob(id=uuid4(), status="running", created_at=datetime.now(timezone.utc))
+    child = ScanJob(id=uuid4(), parent_id=parent.id, status="pending", created_at=datetime.now(timezone.utc), chunk_index=1)
+
+    class _GetScanDb(_FakeDb):
+        async def execute(self, stmt):
+            return _ScalarResult([child])
+
+    get_db = _GetScanDb(get_result=parent)
+    parent_scan = await scans_routes.get_scan(parent.id, get_db, object())
+    assert len(parent_scan["child_jobs"]) == 1
+
+    published = []
+    started = []
+    monkeypatch.setattr(scans_routes, "_cancel_scan_job", lambda job, mode, db: _completed_task((True, False)))
+    monkeypatch.setattr(scans_routes, "_publish_event", lambda payload: _completed_task(published.append(payload)))
+    monkeypatch.setattr(scans_routes, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(scans_routes, "_get_next_queued_job", lambda db: _completed_task(SimpleNamespace(id=uuid4())))
+    class _Runner:
+        @staticmethod
+        def delay(job_id: str):
+            started.append(job_id)
+    monkeypatch.setattr(scans_routes, "run_scan_job", _Runner())
+    control_db = _FakeDb(get_result=parent)
+    control = await scans_routes.control_scan(parent.id, scans_routes.ScanControlRequest(action="cancel", mode="discard"), control_db, object())
+    assert control["status"] == parent.status
+    assert published and started
+
+    queue_items = [
+        ScanJob(id=uuid4(), status="pending", created_at=datetime.now(timezone.utc), queue_position=1),
+        ScanJob(id=uuid4(), status="pending", created_at=datetime.now(timezone.utc), queue_position=2),
+    ]
+    reorder_target = queue_items[1]
+
+    class _ReorderDb(_FakeDb):
+        async def execute(self, stmt):
+            return _ScalarResult(queue_items)
+
+    reorder_db = _ReorderDb(get_result=reorder_target)
+    monkeypatch.setattr(scans_routes, "_normalize_pending_queue", lambda db: _completed_task(None))
+    monkeypatch.setattr(scans_routes, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(scans_routes, "_get_next_queued_job", lambda db: _completed_task(reorder_target))
+    reordered = await scans_routes.reorder_scan_queue(reorder_target.id, scans_routes.ScanQueueRequest(action="start_now"), reorder_db, object())
+    assert reordered["status"] == "ok"
+    assert reordered["action"] == "start_now"
+
+
+@pytest.mark.asyncio
+async def test_assets_routes_cover_update_tags_backups_and_reports(monkeypatch):
+    now = datetime.now(timezone.utc)
+    asset = Asset(id=uuid4(), ip_address="192.168.1.220", status="online", first_seen=now, last_seen=now, hostname="edge")
+    asset.tags = [AssetTag(tag="core")]
+    asset.ports = []
+    asset.ai_analysis = None
+    asset.evidence = []
+    asset.probe_runs = []
+    asset.observations = []
+    asset.fingerprint_hypotheses = []
+    asset.internet_lookup_results = []
+    asset.lifecycle_records = []
+    asset.autopsy = None
+
+    class _AssetOpsDb(_FakeDb):
+        async def execute(self, stmt):
+            return _ScalarResult([asset])
+
+    ops_db = _AssetOpsDb(get_result=asset)
+    updated = await assets_routes.update_asset(asset.id, {"hostname": "new-edge", "device_type": "router"}, ops_db, object())
+    assert updated["hostname"] == "new-edge"
+    assert asset.device_type_override == "router"
+
+    with pytest.raises(HTTPException):
+        await assets_routes.update_asset(asset.id, {"device_type": "bad-type"}, ops_db, object())
+
+    history_db = _AssetOpsDb(get_result=asset)
+    history = await assets_routes.get_asset_history(asset.id, history_db, object())
+    assert history[0] is asset
+    ports = await assets_routes.get_asset_ports(asset.id, history_db, object())
+    assert ports[0] is asset
+
+    blank_tag_db = _FakeDb(get_result=asset, execute_result=_ScalarResult([]))
+    with pytest.raises(HTTPException):
+        await assets_routes.add_asset_tag(asset.id, assets_routes.AssetTagRequest(tag=" "), blank_tag_db, object())
+
+    existing_tag_db = _FakeDb(get_result=asset, execute_result=_ScalarResult([AssetTag(tag="core")]))
+    with pytest.raises(HTTPException):
+        await assets_routes.add_asset_tag(asset.id, assets_routes.AssetTagRequest(tag="core"), existing_tag_db, object())
+
+    fresh_tag_db = _FakeDb(get_result=asset, execute_result=_ScalarResult([]))
+    tag = await assets_routes.add_asset_tag(asset.id, assets_routes.AssetTagRequest(tag=" NewTag "), fresh_tag_db, object())
+    assert tag.tag == "newtag"
+
+    delete_tag_db = _FakeDb(execute_result=_ScalarResult([AssetTag(asset_id=asset.id, tag="core")]))
+    await assets_routes.delete_asset_tag(asset.id, "CORE", delete_tag_db, object())
+    assert delete_tag_db.committed is True
+
+    monkeypatch.setattr(assets_routes, "get_backup_target", lambda db, asset_id: _completed_task(None))
+    assert await assets_routes.read_config_backup_target(asset.id, _FakeDb(get_result=asset), object()) is None
+
+    backup_target = SimpleNamespace(
+        id=1, asset_id=asset.id, driver="ssh", username="admin", password_env_var="PW", port=22, host_override=None, enabled=True,
+        created_at=now, updated_at=now,
+    )
+    monkeypatch.setattr(assets_routes, "upsert_backup_target", lambda *args, **kwargs: _completed_task(backup_target))
+    written = await assets_routes.write_config_backup_target(
+        asset.id,
+        assets_routes.ConfigBackupTargetRequest(driver="ssh", username=" admin ", password_env_var=" PW ", host_override=" ", enabled=True),
+        _FakeDb(get_result=asset),
+        object(),
+    )
+    assert written["driver"] == "ssh"
+
+    monkeypatch.setattr(assets_routes, "list_backup_snapshots", lambda db, asset_id: _completed_task([SimpleNamespace(
+        id=1, asset_id=asset.id, target_id=1, status="done", driver="ssh", command="show run", content="cfg", error=None, captured_at=now,
+    )]))
+    backups = await assets_routes.get_config_backups(asset.id, _FakeDb(get_result=asset), object())
+    assert backups[0]["status"] == "done"
+
+    monkeypatch.setattr(assets_routes, "capture_backup_for_asset", lambda db, asset_id: _completed_task(SimpleNamespace(
+        id=1, asset_id=asset.id, target_id=1, status="done", driver="ssh", command="show run", content="cfg", error=None, captured_at=now,
+    )))
+    captured = await assets_routes.trigger_config_backup(asset.id, _FakeDb(), object())
+    assert captured["id"] == 1
+
+    monkeypatch.setattr(assets_routes, "capture_backup_for_asset", lambda db, asset_id: (_ for _ in ()).throw(LookupError("missing")))
+    with pytest.raises(HTTPException):
+        await assets_routes.trigger_config_backup(asset.id, _FakeDb(), object())
+
+    monkeypatch.setattr(assets_routes, "get_backup_snapshot", lambda db, asset_id, snapshot_id: _completed_task(SimpleNamespace(content="cfg")))
+    downloaded = await assets_routes.download_config_backup(asset.id, 1, _FakeDb(), object())
+    assert downloaded.body == b"cfg"
+
+    monkeypatch.setattr(assets_routes, "generate_backup_diff", lambda *args, **kwargs: _completed_task(""))
+    diff = await assets_routes.diff_config_backup(asset.id, 1, None, _FakeDb(), object())
+    assert diff.body == b"No diff\n"
+
+    monkeypatch.setattr(assets_routes, "generate_restore_assist", lambda *args, **kwargs: _completed_task({"steps": ["restore"]}))
+    restore = await assets_routes.get_restore_assist(asset.id, 1, _FakeDb(), object())
+    assert restore["steps"] == ["restore"]
+
+
+@pytest.mark.asyncio
+async def test_pipeline_persistence_helpers_cover_offline_ai_and_broadcast_paths(monkeypatch):
+    summary = ScanSummary(job_id="job-300", targets="x", profile=ScanProfile.BALANCED)
+    result = _sample_result("192.168.1.230")
+    offline_asset = Asset(
+        id=uuid4(),
+        ip_address="192.168.1.250",
+        hostname="old-host",
+        status="offline",
+        first_seen=datetime.now(timezone.utc),
+        last_seen=datetime.now(timezone.utc),
+    )
+    events = []
+    topology = []
+    notifications = []
+
+    async def fake_broadcast(_payload):
+        events.append(_payload)
+
+    monkeypatch.setattr("app.scanner.pipeline._broadcast", lambda fn, payload: fake_broadcast(payload))
+
+    from app.scanner import pipeline as pipeline_mod
+
+    assert pipeline_mod._resolve_hostname_from_probes([
+        ProbeResult(probe_type="dns", success=True, data={"hostname": "dns-host"}),
+    ]) == "dns-host"
+    assert pipeline_mod._resolve_hostname_from_probes([
+        ProbeResult(probe_type="mdns", success=True, data={"services": [{"host": "mdns-host"}]}),
+    ]) == "mdns-host"
+    assert pipeline_mod._resolve_hostname_from_probes([
+        ProbeResult(probe_type="snmp", success=True, data={"sys_name": "snmp-host"}),
+    ]) == "snmp-host"
+    assert pipeline_mod._extract_probe_hostname(ProbeResult(probe_type="http", success=True, data={})) is None
+
+    analyst = SimpleNamespace(investigate=lambda row: _completed_task(AIAnalysis(device_class=DeviceClass.ROUTER, confidence=0.8, vendor="Cisco")))
+    host_result = HostScanResult(host=DiscoveredHost(ip_address="192.168.1.240"))
+    await pipeline_mod._run_ai_investigation(analyst, host_result, object(), "job-300", "192.168.1.240")
+    assert host_result.ai_analysis is not None
+
+    weak = HostScanResult(host=DiscoveredHost(ip_address="192.168.1.241"))
+    await pipeline_mod._persist_result(
+        "db",
+        weak,
+        summary,
+        object(),
+        "job-300",
+        "investigation",
+        False,
+        lambda row: False,
+        lambda db, row: _completed_task((offline_asset, "discovered")),
+        lambda *args, **kwargs: _completed_task(None),
+        lambda *args, **kwargs: _completed_task(None),
+    )
+    assert summary.new_assets == 0
+
+    async def fake_upsert(_db, _result):
+        return offline_asset, "discovered"
+
+    async def fake_topology(_db, _asset, data):
+        topology.append(data)
+
+    async def fake_notify(_db, payload):
+        notifications.append(payload)
+
+    snmp_result = HostScanResult(
+        host=DiscoveredHost(ip_address="192.168.1.242"),
+        reverse_hostname="edge",
+        probes=[ProbeResult(probe_type="snmp", success=True, data={"sys_name": "edge"})],
+        ai_analysis=AIAnalysis(device_class=DeviceClass.ROUTER, confidence=0.9),
+    )
+    await pipeline_mod._persist_result(
+        "db",
+        snmp_result,
+        summary,
+        object(),
+        "job-300",
+        "investigation",
+        True,
+        lambda row: True,
+        fake_upsert,
+        fake_topology,
+        fake_notify,
+    )
+    assert summary.new_assets == 1
+    assert topology == [{"sys_name": "edge"}]
+    assert notifications
+    assert events[-1]["event"] == "device_discovered"
+
+    await pipeline_mod._update_summary(summary, object(), "job-300", snmp_result, "updated", "db", fake_notify, "investigation")
+    assert summary.changed_assets == 1
+    assert events[-1]["event"] == "device_updated"
+
+    assert pipeline_mod._offline_notification_payload(offline_asset)["hostname"] == "old-host"
+
+    offline_notifications = []
+    await pipeline_mod._persist_offline_assets(
+        "db",
+        ["192.168.1.250"],
+        summary,
+        True,
+        lambda db, ips: _completed_task((1, [offline_asset])),
+        lambda db, payloads: _completed_task(offline_notifications.extend(payloads)),
+    )
+    assert summary.offline_assets == 1
+    assert offline_notifications[0]["ip"] == "192.168.1.250"
+
+    class _SelectStub:
+        def where(self, *_args, **_kwargs):
+            return self
+
+    assert await pipeline_mod._get_offline_ips(
+        SimpleNamespace(execute=lambda stmt: _completed_task(_ScalarResult([("192.168.1.1",), ("192.168.1.2",)]))),
+        lambda value: _SelectStub(),
+        SimpleNamespace(ip_address="ip_address", status="status"),
+        {"192.168.1.2"},
+        True,
+    ) == ["192.168.1.1"]
+
+
+@pytest.mark.asyncio
+async def test_scanner_config_clear_inventory_counts_and_audits(monkeypatch):
+    audit_calls = []
+    scalar_values = iter([5, 2])
+
+    class _ClearDb(_FakeDb):
+        async def scalar(self, stmt):
+            return next(scalar_values)
+
+    async def fake_audit(*args, **kwargs):
+        audit_calls.append(kwargs)
+
+    monkeypatch.setattr(scanner_config, "log_audit_event", fake_audit)
+    db = _ClearDb()
+    result = await scanner_config.clear_inventory(db, include_scan_history=True, actor=SimpleNamespace(id=uuid4()))
+    assert result == {"assets_deleted": 5, "scans_deleted": 2}
+    assert len(db.executed) >= 7
+    assert audit_calls
+
+
+def test_tplink_deco_normalizers_and_log_helpers_cover_more_branches():
+    client = tplink_deco.normalize_deco_client(
+        {
+            "mac_addr": "aa-bb-cc-dd-ee-ff",
+            "client_ip": "192.168.1.50",
+            "host_name": "VGVzdCBDbGllbnQ=",
+            "alias": "Laptop",
+            "brand": "MacBook",
+            "connect_type": "wireless",
+            "slave_name": "Deco Office",
+        }
+    )
+    assert client.mac == "AA:BB:CC:DD:EE:FF"
+    assert client.hostname == "Test Client"
+    assert client.nickname == "Laptop"
+    assert client.access_point_name == "Deco Office"
+
+    device = tplink_deco.normalize_deco_device(
+        {
+            "mac_addr": "11-22-33-44-55-66",
+            "device_ip": "192.168.1.2",
+            "custom_nickname": "RGVjbyBPZmZpY2U=",
+            "device_model": "Deco X55",
+            "role": "ap",
+            "software_ver": "1.0",
+            "hardware_ver": "2.0",
+        }
+    )
+    assert device.mac == "11:22:33:44:55:66"
+    assert device.hostname == "Deco Office"
+    assert device.model == "Deco X55"
+
+    assert tplink_deco._normalize_mac("bad-mac") is None
+    assert tplink_deco._coalesce_str({"a": " ", "b": "x"}, ["a", "b"]) == "x"
+    assert tplink_deco._md5_hex("abc")
+    assert tplink_deco._parse_cookie_sysauth(httpx.Headers({"set-cookie": "sysauth=token123; Path=/"})) == "token123"
+
+    issue_map, macs = tplink_deco._collect_deco_log_matches(
+        [
+            "Cannot find aa:bb:cc:dd:ee:ff in apinfo list",
+            "Invalid message len: 12 bytes",
+            "AP-STA-CONNECTED AA:BB:CC:DD:EE:11",
+        ],
+        tplink_deco._deco_log_pattern_catalog(),
+    )
+    issues, penalty = tplink_deco._build_deco_issues(issue_map)
+    recs = tplink_deco._build_deco_recommendations(issues)
+    assert macs
+    assert penalty > 0
+    assert recs
+
+    assert tplink_deco._augment_logs_with_summary(None) is None
+    assert "# Parsed Deco Log Summary" in tplink_deco._augment_logs_with_summary("AP-STA-CONNECTED AA:BB:CC:DD:EE:11")
+
+
+@pytest.mark.asyncio
+async def test_tplink_deco_sync_helpers_cover_serializers_fetch_and_finalize(monkeypatch):
+    now = datetime.now(timezone.utc)
+    config = SimpleNamespace(
+        id=1,
+        enabled=True,
+        base_url="http://tplinkdeco.net",
+        owner_username=" ",
+        owner_password="secret",
+        fetch_connected_clients=True,
+        fetch_portal_logs=True,
+        request_timeout_seconds=10,
+        verify_tls=False,
+        last_tested_at=now,
+        last_sync_at=now,
+        last_status="healthy",
+        last_error=None,
+        last_client_count=2,
+        created_at=now,
+        updated_at=now,
+    )
+    serialized = tplink_deco.serialize_tplink_deco_config(config)
+    assert serialized["effective_owner_username"] == "admin"
+
+    run = SimpleNamespace(
+        id=9,
+        status="done",
+        client_count=2,
+        clients_payload=[{"a": 1}],
+        logs_excerpt="log",
+        log_analysis={"health_score": 90},
+        error=None,
+        started_at=now,
+        finished_at=now,
+    )
+    assert tplink_deco.serialize_tplink_deco_sync_run(run)["id"] == 9
+
+    html_response = httpx.Response(200, text="plain log text")
+    json_ok = httpx.Response(200, json={"error_code": 0, "foo": "bar"})
+    json_error = httpx.Response(200, json={"error_code": 1})
+    assert tplink_deco._parse_log_export_response(html_response) == "plain log text"
+    assert '"foo": "bar"' in tplink_deco._parse_log_export_response(json_ok)
+    assert tplink_deco._parse_log_export_response(json_error) is None
+
+    fake_client = object.__new__(tplink_deco.TplinkDecoClient)
+    fake_client.stok = "stok"
+    fake_client.sysauth = "sysauth"
+    pages = iter([
+        tplink_deco.DecoLogPage(entries=["a", "b"], total_pages=2, current_index=0),
+        tplink_deco.DecoLogPage(entries=["b", "c"], total_pages=2, current_index=1),
+    ])
+
+    async def fake_page(*args, **kwargs):
+        return next(pages)
+
+    async def fake_save():
+        return None
+
+    fake_client._fetch_feedback_log_page = fake_page
+    fake_client._attempt_save_log_export = fake_save
+    assembled = await tplink_deco.TplinkDecoClient.fetch_portal_logs(fake_client)
+    assert assembled == "a\nb\nc"
+
+    run_model = SimpleNamespace(status="running", client_count=0, clients_payload=None, logs_excerpt=None, log_analysis=None, finished_at=None, id=7)
+    config_state = SimpleNamespace(last_sync_at=None, last_status=None, last_error="oops", last_client_count=0, owner_username=None)
+    clients = [tplink_deco.DecoClientRecord(mac=None, ip="192.168.1.5", hostname="laptop", nickname=None, device_model=None, connection_type=None, access_point_name=None, raw={"a": 1})]
+    log_analysis = {"health_score": 88, "issues": [{"key": "x"}]}
+    tplink_deco._finalize_tplink_sync_run(run_model, config_state, clients, "logs", log_analysis)
+    result = tplink_deco._serialize_tplink_sync_result(run_model, config_state, [], clients, 1, log_analysis)
+    assert result["status"] == "done"
+    assert result["health_score"] == 88
+
+
+@pytest.mark.asyncio
+async def test_tplink_deco_asset_enrichment_helpers_cover_tags_and_records(monkeypatch):
+    asset = Asset(id=uuid4(), ip_address="192.168.1.60", status="offline", custom_fields={})
+    client = tplink_deco.DecoClientRecord(
+        mac="AA:BB:CC:DD:EE:FF",
+        ip="192.168.1.60",
+        hostname="laptop",
+        nickname="macbook",
+        device_model="MacBook",
+        connection_type="wireless",
+        access_point_name="Deco Office",
+        raw={"client": True},
+    )
+    device = tplink_deco.DecoDeviceRecord(
+        mac="11:22:33:44:55:66",
+        ip="192.168.1.2",
+        hostname="Deco Office",
+        nickname="Office",
+        model="Deco X55",
+        role="ap",
+        software_version="1.0",
+        hardware_version="2.0",
+        raw={"device": True},
+    )
+    observed = []
+    monkeypatch.setattr(tplink_deco, "record_passive_observation", lambda *args, **kwargs: _completed_task(observed.append(kwargs)))
+    monkeypatch.setattr(tplink_deco, "_existing_asset_tags", lambda db, asset_obj: _completed_task(set()))
+    db = _FakeDb()
+    await tplink_deco._enrich_asset_from_client(db, asset, client)
+    await tplink_deco._enrich_asset_from_deco_device(db, asset, device)
+    assert asset.status == "online"
+    assert asset.custom_fields["tplink_deco"]["access_point_name"] == "Deco Office"
+    assert asset.custom_fields["tplink_deco_device"]["model"] == "Deco X55"
+    assert any(isinstance(item, AssetTag) for item in db.added)
+    assert len(observed) == 2
+
+
+def test_tplink_deco_crypto_and_misc_helpers_cover_roundtrips():
+    private_key = tplink_deco.rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    numbers = private_key.public_key().public_numbers()
+    modulus_hex = format(numbers.n, "x")
+    exponent_hex = format(numbers.e, "x")
+
+    encrypted_hex = tplink_deco._rsa_encrypt_pkcs1_v15_hex(modulus_hex, exponent_hex, "secret")
+    decrypted = private_key.decrypt(bytes.fromhex(encrypted_hex), tplink_deco.asym_padding.PKCS1v15()).decode("utf-8")
+    assert decrypted == "secret"
+
+    payload = {"hello": "world", "count": 2}
+    encrypted = tplink_deco._aes_encrypt_base64("0123456789abcdef", "abcdef0123456789", '{"hello":"world","count":2}')
+    assert tplink_deco._aes_decrypt_json("0123456789abcdef", "abcdef0123456789", encrypted.decode("utf-8")) == payload
+
+    assert len(tplink_deco._rand16()) == 16
+    assert tplink_deco._normalize_base_url("   ") == "http://tplinkdeco.net"
+    assert tplink_deco._normalize_base_url(None) == "http://tplinkdeco.net"
+    assert tplink_deco._decode_deco_label("") is None
+    assert tplink_deco._empty_log_analysis()["health_score"] == 100
+
+
+@pytest.mark.asyncio
+async def test_tplink_deco_client_request_helpers_cover_bootstrap_and_wrappers(monkeypatch):
+    calls = []
+
+    class _Response:
+        def __init__(self, payload, *, status_code=200, headers=None, text=None):
+            self._payload = payload
+            self.status_code = status_code
+            self.headers = httpx.Headers(headers or {})
+            self.text = payload if isinstance(payload, str) else (text or "")
+
+        def raise_for_status(self):
+            if self.status_code >= 400:
+                raise httpx.HTTPStatusError("boom", request=httpx.Request("POST", "http://tplinkdeco.net"), response=httpx.Response(self.status_code))
+
+        def json(self):
+            return self._payload
+
+    class _AsyncClient:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+
+        async def post(self, path, **kwargs):
+            calls.append((path, kwargs))
+            form = (kwargs.get("params") or {}).get("form")
+            if form == "keys":
+                return _Response({"result": {"password": ["mod-pass", "10001"]}, "error_code": 0})
+            if form == "auth":
+                return _Response({"result": {"key": ["mod-req", "10001"], "seq": "7"}, "error_code": 0})
+            if form == "login":
+                return _Response({"data": "enc-login"}, headers={"set-cookie": "sysauth=cookie-token; Path=/"})
+            if form == "client_list":
+                return _Response({"data": "enc-clients"})
+            if form == "device_list":
+                return _Response({"data": "enc-devices"})
+            if form == "feedback_log":
+                return _Response(
+                    {
+                        "error_code": 0,
+                        "logList": [{"content": " first "}, {"content": ""}, "skip"],
+                        "totalNum": "2",
+                        "currentIndex": "1",
+                    }
+                )
+            if form == "save_log":
+                data = kwargs.get("data") or {}
+                if data.get("operation") == "save":
+                    return _Response("exported text", text="exported text")
+            if form == "logout":
+                return _Response({})
+            raise AssertionError(f"Unexpected form: {form}")
+
+        async def aclose(self):
+            self.closed = True
+
+    decrypt_values = iter(
+        [
+            {"result": {"stok": "stok-1"}},
+            {"result": {"client_list": [{"mac": "aa:bb:cc:dd:ee:ff", "ip": "192.168.1.7"}]}, "error_code": 0},
+            {"result": {"device_list": [{"mac": "11:22:33:44:55:66", "ip": "192.168.1.2"}]}, "error_code": 0},
+        ]
+    )
+
+    monkeypatch.setattr(tplink_deco.httpx, "AsyncClient", _AsyncClient)
+    monkeypatch.setattr(tplink_deco, "_rand16", lambda: "0123456789abcdef")
+    monkeypatch.setattr(tplink_deco, "_rsa_encrypt_pkcs1_v15_hex", lambda *args, **kwargs: "RSA")
+    monkeypatch.setattr(tplink_deco, "_aes_encrypt_base64", lambda *args, **kwargs: b"ciphertext")
+    monkeypatch.setattr(tplink_deco, "_aes_decrypt_json", lambda *args, **kwargs: next(decrypt_values))
+
+    client = tplink_deco.TplinkDecoClient(base_url="tplinkdeco.net", owner_username=" ", owner_password="secret", timeout_seconds=1, verify_tls=True)
+    assert client.base_url == "http://tplinkdeco.net"
+    assert client.owner_username == "admin"
+    assert client.timeout_seconds == 3
+
+    await client.bootstrap()
+    sign, payload = client._build_login_payload()
+    assert sign == "RSARSA"
+    assert payload == b"ciphertext"
+
+    login_payload = await client.login()
+    assert login_payload["result"]["stok"] == "stok-1"
+    assert client.stok == "stok-1"
+    assert client.sysauth == "cookie-token"
+
+    clients = await client.fetch_connected_clients()
+    devices = await client.fetch_deco_devices()
+    assert clients[0].ip == "192.168.1.7"
+    assert devices[0].ip == "192.168.1.2"
+
+    page = await client._fetch_feedback_log_page()
+    assert page.entries == ["first"]
+    assert page.total_pages == 2
+
+    exported = await client._attempt_save_log_export()
+    assert exported == "exported text"
+
+    assert await client.__aenter__() is client
+    await client.logout()
+    assert client.stok is None
+    await client.__aexit__(None, None, None)
+    assert client._client.closed is True
+
+
+@pytest.mark.asyncio
+async def test_tplink_deco_config_and_resolution_helpers_cover_crud_and_asset_resolution(monkeypatch):
+    created_config = tplink_deco.TplinkDecoConfig(created_at=datetime.now(timezone.utc), updated_at=datetime.now(timezone.utc))
+    db_existing = _FakeDb(execute_result=_ScalarResult([created_config]))
+    assert await tplink_deco.get_or_create_tplink_deco_config(db_existing) is created_config
+
+    db_new = _FakeDb(execute_result=_ScalarResult([]))
+    new_config = await tplink_deco.get_or_create_tplink_deco_config(db_new)
+    assert isinstance(new_config, tplink_deco.TplinkDecoConfig)
+    assert db_new.added[-1] is new_config
+
+    run_one = SimpleNamespace(id=1)
+    run_two = SimpleNamespace(id=2)
+    listed = await tplink_deco.list_recent_tplink_deco_sync_runs(_FakeDb(execute_result=_ScalarResult([run_one, run_two])), limit=2)
+    assert listed == [run_one, run_two]
+
+    holder = SimpleNamespace(
+        enabled=False,
+        base_url=None,
+        owner_username="",
+        owner_password="",
+        fetch_connected_clients=False,
+        fetch_portal_logs=False,
+        request_timeout_seconds=0,
+        verify_tls=False,
+    )
+    monkeypatch.setattr(tplink_deco, "get_or_create_tplink_deco_config", lambda db: _completed_task(holder))
+    updated = await tplink_deco.update_tplink_deco_config(
+        _FakeDb(),
+        enabled=True,
+        base_url="tplinkdeco.net",
+        owner_username=" owner ",
+        owner_password=" pass ",
+        fetch_connected_clients=True,
+        fetch_portal_logs=True,
+        request_timeout_seconds=1,
+        verify_tls=True,
+    )
+    assert updated.enabled is True
+    assert updated.base_url == "http://tplinkdeco.net"
+    assert updated.owner_username == "owner"
+    assert updated.owner_password == "pass"
+    assert updated.request_timeout_seconds == 3
+
+    existing_asset = Asset(id=uuid4(), ip_address="192.168.1.50", mac_address="AA:BB:CC:DD:EE:FF", status="offline")
+    pending_results = iter([_ScalarResult([existing_asset]), _ScalarResult([]), _ScalarResult([existing_asset])])
+
+    class _ResolveDb(_FakeDb):
+        async def execute(self, stmt):
+            self.executed.append(stmt)
+            return next(pending_results)
+
+    resolve_db = _ResolveDb()
+    client_with_mac = tplink_deco.DecoClientRecord(mac="AA:BB:CC:DD:EE:FF", ip="192.168.1.51", hostname="host", nickname=None, device_model=None, connection_type=None, access_point_name=None, raw={})
+    assert await tplink_deco._resolve_asset_for_client(resolve_db, client_with_mac) is existing_asset
+
+    client_new = tplink_deco.DecoClientRecord(mac=None, ip="192.168.1.60", hostname="new-host", nickname="nick", device_model=None, connection_type=None, access_point_name=None, raw={})
+    created_asset = await tplink_deco._resolve_asset_for_client(resolve_db, client_new)
+    assert created_asset.ip_address == "192.168.1.60"
+    assert created_asset.hostname == "new-host"
+
+    device_with_ip = tplink_deco.DecoDeviceRecord(mac=None, ip="192.168.1.50", hostname="deco", nickname=None, model=None, role=None, software_version=None, hardware_version=None, raw={})
+    assert await tplink_deco._resolve_asset_for_deco_device(resolve_db, device_with_ip) is existing_asset
+
+    device_none = tplink_deco.DecoDeviceRecord(mac=None, ip=None, hostname=None, nickname=None, model=None, role=None, software_version=None, hardware_version=None, raw={})
+    assert await tplink_deco._resolve_asset_for_deco_device(resolve_db, device_none) is None
+
+    assert str(tplink_deco.func_lower("ABC")).lower().find("lower") >= 0
+    assert await tplink_deco._existing_asset_tags(_FakeDb(execute_result=_ScalarResult([SimpleNamespace(tag="wifi")])), Asset(id=uuid4())) == {"wifi"}
+    tag_names = {"wifi"}
+    tag_db = _FakeDb()
+    tplink_deco._ensure_asset_tag(tag_db, Asset(id=uuid4()), "wifi", tag_names)
+    tplink_deco._ensure_asset_tag(tag_db, Asset(id=uuid4()), "tplink-deco", tag_names)
+    assert len(tag_db.added) == 1
+
+
+@pytest.mark.asyncio
+async def test_tplink_deco_top_level_wrappers_cover_connection_sync_and_audit(monkeypatch):
+    config = SimpleNamespace(
+        id=7,
+        enabled=True,
+        base_url="http://tplinkdeco.net",
+        owner_username="owner",
+        owner_password="secret",
+        fetch_connected_clients=True,
+        fetch_portal_logs=True,
+        request_timeout_seconds=5,
+        verify_tls=False,
+        last_tested_at=None,
+        last_sync_at=None,
+        last_status=None,
+        last_error="old",
+        last_client_count=0,
+    )
+
+    class _CtxClient:
+        def __init__(self, **kwargs):
+            self.logged_out = False
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+        async def login(self):
+            return {"ok": True}
+
+        async def fetch_deco_devices(self):
+            return [tplink_deco.DecoDeviceRecord(mac=None, ip="192.168.1.2", hostname="Deco", nickname=None, model=None, role=None, software_version=None, hardware_version=None, raw={})]
+
+        async def fetch_connected_clients(self):
+            return [tplink_deco.DecoClientRecord(mac=None, ip="192.168.1.5", hostname="Laptop", nickname=None, device_model=None, connection_type=None, access_point_name=None, raw={"client": True})]
+
+        async def fetch_portal_logs(self):
+            return "AP-STA-CONNECTED AA:BB:CC:DD:EE:11"
+
+        async def logout(self):
+            self.logged_out = True
+
+    audit_calls = []
+
+    async def fake_audit(*args, **kwargs):
+        audit_calls.append(kwargs)
+
+    monkeypatch.setattr(tplink_deco, "TplinkDecoClient", _CtxClient)
+    monkeypatch.setattr(tplink_deco, "get_or_create_tplink_deco_config", lambda db: _completed_task(config))
+    monkeypatch.setattr(tplink_deco, "log_audit_event", fake_audit)
+
+    db = _FakeDb()
+    connection_result = await tplink_deco.test_tplink_deco_connection(db)
+    assert connection_result["status"] == "healthy"
+    assert connection_result["client_count"] == 1
+    assert config.last_status == "healthy"
+
+    async def fake_fetch_payload(cfg):
+        return (
+            [tplink_deco.DecoDeviceRecord(mac=None, ip="192.168.1.2", hostname="Deco", nickname=None, model=None, role=None, software_version=None, hardware_version=None, raw={})],
+            [tplink_deco.DecoClientRecord(mac=None, ip="192.168.1.8", hostname="Phone", nickname=None, device_model=None, connection_type=None, access_point_name=None, raw={"client": True})],
+            "AP-STA-CONNECTED AA:BB:CC:DD:EE:11",
+        )
+
+    async def fake_ingest(db_obj, devices, clients):
+        return len(devices) + len(clients)
+
+    monkeypatch.setattr(tplink_deco, "_fetch_tplink_sync_payload", fake_fetch_payload)
+    monkeypatch.setattr(tplink_deco, "_ingest_tplink_records", fake_ingest)
+
+    sync_result = await tplink_deco.sync_tplink_deco_module(db)
+    assert sync_result["status"] == "done"
+    assert sync_result["ingested_assets"] == 2
+    assert sync_result["issue_count"] >= 0
+
+    config.enabled = False
+    with pytest.raises(ValueError):
+        await tplink_deco.sync_tplink_deco_module(db)
+    config.enabled = True
+    config.owner_password = None
+    with pytest.raises(ValueError):
+        await tplink_deco.test_tplink_deco_connection(db)
+    with pytest.raises(ValueError):
+        await tplink_deco.sync_tplink_deco_module(db)
+
+    config.owner_password = "secret"
+    failing_db = _FakeDb()
+
+    async def boom_fetch(cfg):
+        raise RuntimeError("sync failed")
+
+    monkeypatch.setattr(tplink_deco, "_fetch_tplink_sync_payload", boom_fetch)
+    with pytest.raises(RuntimeError):
+        await tplink_deco.sync_tplink_deco_module(failing_db)
+    assert any(isinstance(item, tplink_deco.TplinkDecoSyncRun) for item in failing_db.added)
+    assert config.last_status == "error"
+    assert config.last_error == "sync failed"
+
+    await tplink_deco.audit_tplink_config_change(_FakeDb(), user=SimpleNamespace(id=uuid4()), config=SimpleNamespace(id=9, enabled=True, base_url="http://tplinkdeco.net"))
+    assert audit_calls[0]["action"] == "module.tplink_deco.updated"

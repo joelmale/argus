@@ -9,7 +9,8 @@ import { useCurrentUser, useInitializeFirstAdmin, useLogin, useSetupStatus } fro
 type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>
 
 function getLoginErrorMessage(error: unknown) {
-  const apiUrl = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:8000'
+  const apiUrl = process.env.NEXT_PUBLIC_API_URL
+    ?? (typeof globalThis.window === 'object' ? `${globalThis.location.origin}/api` : '/api')
 
   if (!axios.isAxiosError(error)) {
     return 'Sign-in failed before the server returned a usable response. Try again and check the browser console if it repeats.'
