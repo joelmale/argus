@@ -54,6 +54,7 @@ redis_data/
 .coverage
 htmlcov/
 coverage/
+backend/coverage.xml
 
 # Local export tooling and generated reports
 scripts/export_sonar_findings.py

@@ -51,7 +51,6 @@ module.exports = {
           title: 'Project',
           items: [
             { label: 'Main README', href: 'https://github.com/joelmale/argus/blob/main/README.md' },
-            { label: 'Planning', href: 'https://github.com/joelmale/argus/blob/main/docs/PLANNING.md' },
           ],
         },
       ],

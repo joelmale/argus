@@ -6,7 +6,7 @@ sidebar_position: 3
 
 # Getting Started
 
-This guide covers the recommended development workflow for Argus using Docker Compose.
+This guide covers the recommended local development workflow for Argus using Docker Compose.
 
 ## Prerequisites
 
@@ -36,14 +36,7 @@ cp .env.example .env
 npm run setup
 ```
 
-The setup flow:
-
-- creates `.env` if missing
-- builds the services
-- starts Postgres and Redis
-- waits for health checks
-- runs backend migrations
-- starts frontend, backend, and scanner services
+The setup flow bootstraps the local environment, starts the required services, and runs the initial backend migration.
 
 ## Starting the Dev Stack
 
@@ -77,11 +70,7 @@ Check service state:
 npm run dev:ps
 ```
 
-## Rebuilding
-
-Normal dev startup does not force a rebuild.
-
-Build explicitly:
+Normal dev startup does not force a rebuild. Build explicitly when Dockerfiles or dependencies change:
 
 ```bash
 npm run dev:build
@@ -101,33 +90,11 @@ Once the stack is running:
 - backend API: `http://localhost:8000`
 - OpenAPI docs: `http://localhost:8000/docs`
 
-Default bootstrap login:
-
-- username: `admin`
-- password: `changeme`
+If there are no users yet, the login page will prompt you to create the initial admin account.
 
 ## Compose Files
 
-### `docker-compose.yml`
-
-Base stack:
-
-- Postgres
-- Redis
-- backend
-- scanner
-- frontend
-- reads defaults from `.env.production`
-
-### `docker-compose.dev.yml`
-
-Development overrides:
-
-- backend dev image with test tooling
-- source-code mounts
-- frontend dev mode
-- scanner host networking
-- local `.env` still applies for development workflows
+`docker-compose.yml` is the production-oriented base stack. `docker-compose.dev.yml` adds source mounts, frontend dev mode, backend test tooling, and scanner host networking for local development.
 
 ## Why the Scanner Uses Host Networking
 
@@ -222,6 +189,7 @@ Check:
 - `http://localhost:8000/health`
 - backend container health
 - browser console for CORS or transport errors
+- whether your browser is using same-origin `/api` routing or an outdated baked-in API URL
 
 ## Related Docs
 
