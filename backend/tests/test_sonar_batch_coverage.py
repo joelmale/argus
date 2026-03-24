@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import asyncio
+import sys
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
+from types import ModuleType
 from uuid import uuid4
 
 import pytest
@@ -15,7 +17,7 @@ from app.api import deps
 from app.api.routes import assets as assets_routes
 from app.api.routes import scans as scans_routes
 from app.api.routes import system as system_routes
-from app.db.models import ApiKey, Asset, AssetTag, ProbeRun, ScanJob
+from app.db.models import ApiKey, Asset, AssetTag, Port, ProbeRun, ScanJob
 from app.db.upsert import (
     _ai_stage_trace,
     _best_device_type_confidence,
@@ -47,6 +49,8 @@ from app.modules import tplink_deco
 from app.scanner import config as scanner_config
 from app.scanner.config import ScannerConfigUpdateInput
 from app.scanner.models import AIAnalysis, DeviceClass, DiscoveredHost, HostScanResult, OSFingerprint, PortResult, ProbeResult, ScanProfile, ScanSummary
+from app.scanner.probes import smb as smb_probe
+from app.scanner import topology as topology_mod
 from app.scanner.pipeline import (
     ScanControlDecision,
     _check_control,
@@ -522,6 +526,38 @@ async def test_get_current_user_handles_invalid_token_and_api_key_success(monkey
     assert api_key.last_used_at is not None
 
 
+@pytest.mark.asyncio
+async def test_get_current_user_and_role_helpers_cover_remaining_auth_branches(monkeypatch):
+    bearer_request = _request_with_headers({"Authorization": "Bearer good-token"})
+    active_user = SimpleNamespace(id=uuid4(), is_active=True, role="admin")
+    inactive_user = SimpleNamespace(id=uuid4(), is_active=False, role="admin")
+
+    monkeypatch.setattr(deps, "decode_token", lambda token: active_user.id)
+    assert await deps.get_current_user(bearer_request, _FakeDb(get_result=active_user)) is active_user
+
+    monkeypatch.setattr(deps, "decode_token", lambda token: inactive_user.id)
+    with pytest.raises(HTTPException) as inactive_exc:
+        await deps.get_current_user(bearer_request, _FakeDb(get_result=inactive_user))
+    assert inactive_exc.value.detail == "User not found"
+
+    api_key_request = _request_with_headers({"X-API-Key": "bad-key"})
+    monkeypatch.setattr(deps, "api_key_prefix", lambda raw: "abc")
+    monkeypatch.setattr(deps, "verify_api_key", lambda raw, hashed: False)
+    with pytest.raises(HTTPException) as api_exc:
+        await deps.get_current_user(api_key_request, _FakeDb(execute_result=_ScalarResult([ApiKey(user_id=uuid4(), key_prefix="abc", hashed_key="hashed", is_active=True)])))
+    assert api_exc.value.detail == "Invalid API key"
+
+    with pytest.raises(HTTPException) as missing_auth:
+        await deps.get_current_user(_request_with_headers({}), _FakeDb())
+    assert missing_auth.value.detail == "Authentication required"
+
+    require_viewer = deps.require_role("viewer")
+    assert require_viewer(SimpleNamespace(role="viewer")) .role == "viewer"
+    with pytest.raises(HTTPException) as role_exc:
+        require_viewer(SimpleNamespace(role="admin"))
+    assert role_exc.value.status_code == 403
+
+
 def test_get_current_admin_rejects_non_admin():
     with pytest.raises(HTTPException) as exc:
         deps.get_current_admin(SimpleNamespace(role="viewer"))
@@ -775,6 +811,396 @@ async def test_route_units_cover_assets_exports_scan_errors_and_reset(monkeypatc
     assert db.committed is True
 
 
+@pytest.mark.asyncio
+async def test_system_routes_cover_tplink_datasets_integrations_and_backup_policy(monkeypatch):
+    now = datetime.now(timezone.utc)
+    dataset = SimpleNamespace(
+        id=1,
+        key="nmap-services",
+        name="Nmap Services",
+        category="fingerprint",
+        description="desc",
+        upstream_url="https://example.com",
+        local_path="/tmp/file",
+        update_mode="pull",
+        enabled=True,
+        status="ok",
+        last_checked_at=now,
+        last_updated_at=now,
+        upstream_last_modified="etag",
+        etag="abc",
+        sha256="deadbeef",
+        record_count=12,
+        error=None,
+        notes="ready",
+        created_at=now,
+        updated_at=now,
+    )
+    monkeypatch.setattr(system_routes, "list_backup_drivers", lambda: [{"id": "ssh"}])
+    monkeypatch.setattr(system_routes, "list_plugins", lambda: [{"name": "demo"}])
+    monkeypatch.setattr(system_routes, "list_integration_events", lambda: [{"event": "scan_complete"}])
+    monkeypatch.setattr(system_routes, "list_datasets", lambda db: _completed_task([dataset]))
+    monkeypatch.setattr(system_routes, "refresh_dataset", lambda db, key: _completed_task(dataset) if key == "nmap-services" else (_ for _ in ()).throw(ValueError("missing dataset")))
+    monkeypatch.setattr(system_routes, "log_audit_event", lambda *args, **kwargs: _completed_task(None))
+    monkeypatch.setattr(system_routes, "build_home_assistant_entities", lambda assets: {"entities": len(assets)})
+    monkeypatch.setattr(system_routes, "build_inventory_snapshot", lambda assets: {"assets": len(assets)})
+    monkeypatch.setattr(system_routes, "get_backup_policy", lambda db: _completed_task(SimpleNamespace(
+        id=3,
+        enabled=True,
+        interval_minutes=60,
+        tag_filter="gateway",
+        retention_count=5,
+        last_run_at=now,
+        created_at=now,
+        updated_at=now,
+    )))
+    monkeypatch.setattr(system_routes, "update_backup_policy", lambda db, **kwargs: _completed_task(SimpleNamespace(
+        id=4,
+        enabled=kwargs["enabled"],
+        interval_minutes=kwargs["interval_minutes"],
+        tag_filter=kwargs["tag_filter"],
+        retention_count=kwargs["retention_count"],
+        last_run_at=None,
+        created_at=now,
+        updated_at=now,
+    )))
+
+    class _SystemDb(_FakeDb):
+        async def execute(self, stmt):
+            self.executed.append(stmt)
+            return _ScalarResult([])
+
+    db = _SystemDb()
+    assert await system_routes.get_backup_drivers(object()) == [{"id": "ssh"}]
+    assert await system_routes.get_plugins(object()) == [{"name": "demo"}]
+    assert await system_routes.get_integration_events(object()) == [{"event": "scan_complete"}]
+    datasets = await system_routes.get_fingerprint_datasets(object(), db)
+    assert datasets[0]["key"] == "nmap-services"
+    assert db.committed is True
+
+    refreshed = await system_routes.refresh_fingerprint_dataset("nmap-services", SimpleNamespace(id=uuid4()), _FakeDb())
+    assert refreshed["record_count"] == 12
+    with pytest.raises(HTTPException) as refresh_exc:
+        await system_routes.refresh_fingerprint_dataset("missing", SimpleNamespace(id=uuid4()), _FakeDb())
+    assert refresh_exc.value.status_code == 404
+
+    ha = await system_routes.get_home_assistant_entities(object(), _SystemDb())
+    inventory = await system_routes.get_inventory_sync_export(object(), _SystemDb())
+    assert ha == {"entities": 0}
+    assert inventory["snapshot"] == {"assets": 0}
+
+    policy = await system_routes.read_backup_policy(object(), _FakeDb())
+    assert policy["tag_filter"] == "gateway"
+    updated_policy = await system_routes.write_backup_policy(
+        system_routes.BackupPolicyUpdateRequest(enabled=False, interval_minutes=30, tag_filter="lab", retention_count=3),
+        object(),
+        _FakeDb(),
+    )
+    assert updated_policy["enabled"] is False
+
+
+@pytest.mark.asyncio
+async def test_system_routes_cover_tplink_module_error_branches(monkeypatch):
+    now = datetime.now(timezone.utc)
+    config = SimpleNamespace(
+        id=8,
+        enabled=True,
+        base_url="http://tplinkdeco.net",
+        owner_username=None,
+        owner_password="secret",
+        fetch_connected_clients=True,
+        fetch_portal_logs=True,
+        request_timeout_seconds=10,
+        verify_tls=False,
+        last_tested_at=now,
+        last_sync_at=now,
+        last_status="healthy",
+        last_error=None,
+        last_client_count=1,
+        created_at=now,
+        updated_at=now,
+    )
+    run = SimpleNamespace(id=1, status="done", client_count=1, clients_payload=[], logs_excerpt=None, log_analysis={}, error=None, started_at=now, finished_at=now)
+    monkeypatch.setattr(system_routes, "get_or_create_tplink_deco_config", lambda db: _completed_task(config))
+    monkeypatch.setattr(system_routes, "list_recent_tplink_deco_sync_runs", lambda db: _completed_task([run]))
+    monkeypatch.setattr(system_routes, "update_tplink_deco_config", lambda db, **kwargs: _completed_task(config))
+    monkeypatch.setattr(system_routes, "audit_tplink_config_change", lambda *args, **kwargs: _completed_task(None))
+    monkeypatch.setattr(system_routes, "log_audit_event", lambda *args, **kwargs: _completed_task(None))
+
+    module_body = await system_routes.get_tplink_deco_module(object(), _FakeDb())
+    assert module_body["config"]["id"] == 8
+    assert module_body["recent_runs"][0]["id"] == 1
+
+    written = await system_routes.write_tplink_deco_module(
+        system_routes.TplinkDecoConfigUpdateRequest(enabled=True),
+        SimpleNamespace(id=uuid4()),
+        _FakeDb(),
+    )
+    assert written["id"] == 8
+
+    monkeypatch.setattr(system_routes, "test_tplink_deco_connection", lambda db: (_ for _ in ()).throw(ValueError("missing password")))
+    with pytest.raises(HTTPException) as test_bad_req:
+        await system_routes.test_tplink_deco_module(SimpleNamespace(id=uuid4()), _FakeDb())
+    assert test_bad_req.value.status_code == 400
+
+    monkeypatch.setattr(system_routes, "test_tplink_deco_connection", lambda db: (_ for _ in ()).throw(RuntimeError("connect failed")))
+    with pytest.raises(HTTPException) as test_bad_gateway:
+        await system_routes.test_tplink_deco_module(SimpleNamespace(id=uuid4()), _FakeDb())
+    assert test_bad_gateway.value.status_code == 502
+
+    monkeypatch.setattr(system_routes, "sync_tplink_deco_module", lambda db: (_ for _ in ()).throw(ValueError("disabled")))
+    with pytest.raises(HTTPException) as sync_bad_req:
+        await system_routes.run_tplink_deco_module_sync(SimpleNamespace(id=uuid4()), _FakeDb())
+    assert sync_bad_req.value.status_code == 400
+
+    monkeypatch.setattr(system_routes, "sync_tplink_deco_module", lambda db: (_ for _ in ()).throw(RuntimeError("boom")))
+    with pytest.raises(HTTPException) as sync_bad_gateway:
+        await system_routes.run_tplink_deco_module_sync(SimpleNamespace(id=uuid4()), _FakeDb())
+    assert sync_bad_gateway.value.status_code == 502
+
+
+@pytest.mark.asyncio
+async def test_assets_routes_cover_additional_exports_and_backup_error_paths(monkeypatch):
+    now = datetime.now(timezone.utc)
+    asset = Asset(
+        id=uuid4(),
+        ip_address="192.168.1.15",
+        hostname="nas",
+        status="offline",
+        first_seen=now,
+        last_seen=now,
+    )
+    asset.tags = [AssetTag(tag="storage")]
+    asset.ports = []
+    asset.ai_analysis = None
+
+    scalar_counts = iter([2, 5, 1, 2, 1])
+    history_entry = SimpleNamespace(asset_id=asset.id, change_type="updated", changed_at=now, diff={"field": "vendor"})
+
+    class _AssetsReportDb(_FakeDb):
+        async def execute(self, stmt):
+            self.executed.append(stmt)
+            text = str(stmt)
+            if "asset_history" in text.lower():
+                return _ScalarResult([history_entry])
+            return _ScalarResult([asset])
+
+        async def scalar(self, stmt):
+            self.executed.append(stmt)
+            return next(scalar_counts)
+
+    report_db = _AssetsReportDb()
+    monkeypatch.setattr(assets_routes, "render_ansible_inventory", lambda assets: "ansible")
+    monkeypatch.setattr(assets_routes, "render_terraform_inventory", lambda assets: '{"terraform":true}')
+    monkeypatch.setattr(assets_routes, "build_inventory_snapshot", lambda assets: {"count": len(assets)})
+
+    assert (await assets_routes.export_assets_ansible(report_db, object())).body.decode() == "ansible"
+    assert (await assets_routes.export_assets_terraform(report_db, object())).body.decode() == '{"terraform":true}'
+    assert await assets_routes.export_assets_inventory_json(report_db, object()) == {"count": 1}
+    report_json = await assets_routes.export_assets_report_json(report_db, object())
+    assert report_json["summary"]["total_findings"] == 5
+    assert report_json["recent_changes"][0]["change_type"] == "updated"
+    report_html = await assets_routes.export_assets_report_html(report_db, object())
+    assert "Argus Inventory Report" in report_html.body.decode()
+
+    with pytest.raises(HTTPException) as update_422:
+        await assets_routes.update_asset(asset.id, {"device_type": "not-real"}, _FakeDb(get_result=asset), object())
+    assert update_422.value.status_code == 422
+
+    missing_db = _FakeDb(get_result=None)
+    with pytest.raises(HTTPException) as history_missing:
+        await assets_routes.get_asset_history(uuid4(), missing_db, object())
+    assert history_missing.value.status_code == 404
+    with pytest.raises(HTTPException) as ports_missing:
+        await assets_routes.get_asset_ports(uuid4(), missing_db, object())
+    assert ports_missing.value.status_code == 404
+
+    existing_tag_db = _FakeDb(get_result=asset, execute_result=_ScalarResult([AssetTag(asset_id=asset.id, tag="storage")]))
+    with pytest.raises(HTTPException) as tag_conflict:
+        await assets_routes.add_asset_tag(asset.id, assets_routes.AssetTagRequest(tag="storage"), existing_tag_db, object())
+    assert tag_conflict.value.status_code == 409
+
+    read_target_db = _FakeDb(get_result=asset)
+    monkeypatch.setattr(assets_routes, "get_backup_target", lambda db, asset_id: _completed_task(None))
+    assert await assets_routes.read_config_backup_target(asset.id, read_target_db, object()) is None
+
+    monkeypatch.setattr(assets_routes, "upsert_backup_target", lambda *args, **kwargs: (_ for _ in ()).throw(ValueError("invalid driver")))
+    with pytest.raises(HTTPException) as backup_target_bad:
+        await assets_routes.write_config_backup_target(
+            asset.id,
+            assets_routes.ConfigBackupTargetRequest(driver="bad", username="user"),
+            _FakeDb(get_result=asset),
+            object(),
+        )
+    assert backup_target_bad.value.status_code == 400
+
+    monkeypatch.setattr(assets_routes, "capture_backup_for_asset", lambda db, asset_id: (_ for _ in ()).throw(LookupError("not found")))
+    with pytest.raises(HTTPException) as backup_lookup:
+        await assets_routes.trigger_config_backup(asset.id, _FakeDb(), object())
+    assert backup_lookup.value.status_code == 404
+
+    monkeypatch.setattr(assets_routes, "capture_backup_for_asset", lambda db, asset_id: (_ for _ in ()).throw(RuntimeError("capture failed")))
+    with pytest.raises(HTTPException) as backup_runtime:
+        await assets_routes.trigger_config_backup(asset.id, _FakeDb(), object())
+    assert backup_runtime.value.status_code == 400
+
+    monkeypatch.setattr(assets_routes, "get_backup_snapshot", lambda db, asset_id, snapshot_id: _completed_task(SimpleNamespace(content=None)))
+    with pytest.raises(HTTPException) as download_missing:
+        await assets_routes.download_config_backup(asset.id, 1, _FakeDb(), object())
+    assert download_missing.value.status_code == 404
+
+    monkeypatch.setattr(assets_routes, "generate_backup_diff", lambda *args, **kwargs: (_ for _ in ()).throw(LookupError("missing diff")))
+    with pytest.raises(HTTPException) as diff_missing:
+        await assets_routes.diff_config_backup(asset.id, 1, None, _FakeDb(), object())
+    assert diff_missing.value.status_code == 404
+
+    monkeypatch.setattr(assets_routes, "generate_restore_assist", lambda *args, **kwargs: (_ for _ in ()).throw(LookupError("missing restore")))
+    with pytest.raises(HTTPException) as restore_missing:
+        await assets_routes.get_restore_assist(asset.id, 1, _FakeDb(), object())
+    assert restore_missing.value.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_assets_routes_cover_success_paths_for_asset_views_and_backups(monkeypatch):
+    now = datetime.now(timezone.utc)
+    asset = Asset(
+        id=uuid4(),
+        ip_address="192.168.1.44",
+        hostname="edge-gw",
+        mac_address="AA:BB:CC:DD:EE:44",
+        vendor="Netgate",
+        status="online",
+        first_seen=now,
+        last_seen=now,
+    )
+    asset.tags = [AssetTag(tag="gateway")]
+    asset.ports = [Port(port_number=443, protocol="tcp", service="https", version="1.0", state="open")]
+    scan_ports = [PortResult(port=443, protocol="tcp", service="https", version="1.0", state="open")]
+    asset.history = []
+    asset.ai_analysis = None
+    asset.evidence = []
+    asset.probe_runs = []
+    asset.observations = []
+    asset.fingerprint_hypotheses = []
+    asset.internet_lookup_results = []
+    asset.lifecycle_records = []
+    asset.autopsy = None
+
+    snapshot = SimpleNamespace(
+        id=7,
+        asset_id=asset.id,
+        target_id=3,
+        status="done",
+        driver="ssh",
+        command="show run",
+        content="running-config",
+        error=None,
+        captured_at=now,
+    )
+    backup_target = SimpleNamespace(
+        id=4,
+        asset_id=asset.id,
+        driver="ssh",
+        username="admin",
+        password_env_var="BACKUP_PASSWORD",
+        port=22,
+        host_override="192.168.1.99",
+        enabled=True,
+        created_at=now,
+        updated_at=now,
+    )
+    association = SimpleNamespace(
+        id=11,
+        access_point_asset_id=asset.id,
+        client_asset_id=None,
+        client_mac="CC:DD:EE:FF:00:11",
+        client_ip="192.168.1.88",
+        ssid="Argus",
+        band="5GHz",
+        signal_dbm=-45,
+        source="snmp",
+        first_seen=now,
+        last_seen=now,
+    )
+
+    class _RichAssetDb(_FakeDb):
+        async def execute(self, stmt):
+            self.executed.append(stmt)
+            text = str(stmt).lower()
+            if "wireless_associations" in text:
+                return _ScalarResult([association])
+            if "asset_history" in text:
+                return _ScalarResult([SimpleNamespace(id=1, asset_id=asset.id, change_type="updated", changed_at=now)])
+            if "ports" in text and "from ports" in text:
+                return _ScalarResult(asset.ports)
+            return _ScalarResult([asset])
+
+    db = _RichAssetDb(get_result=asset)
+    monkeypatch.setattr(assets_routes, "get_backup_target", lambda db, asset_id: _completed_task(backup_target))
+    monkeypatch.setattr(assets_routes, "list_backup_snapshots", lambda db, asset_id: _completed_task([snapshot]))
+    monkeypatch.setattr(assets_routes, "capture_backup_for_asset", lambda db, asset_id: _completed_task(snapshot))
+    monkeypatch.setattr(assets_routes, "get_backup_snapshot", lambda db, asset_id, snapshot_id: _completed_task(snapshot))
+    monkeypatch.setattr(assets_routes, "generate_backup_diff", lambda *args, **kwargs: _completed_task(""))
+    monkeypatch.setattr(assets_routes, "generate_restore_assist", lambda *args, **kwargs: _completed_task({"steps": ["restore"]}))
+    monkeypatch.setattr(assets_routes.portscan, "scan_host", lambda host, profile: _completed_task((scan_ports, OSFingerprint(os_name="Linux"))))
+    monkeypatch.setattr(assets_routes, "_load_asset", lambda db, asset_id: _completed_task(asset))
+    monkeypatch.setattr("app.db.upsert.upsert_scan_result", lambda db, result: _completed_task(None))
+    monkeypatch.setattr(
+        assets_routes,
+        "_investigate_host",
+        lambda **kwargs: _completed_task(
+                HostScanResult(
+                    host=kwargs["host"],
+                    ports=scan_ports,
+                    os_fingerprint=kwargs["os_fp"],
+                    reverse_hostname="edge-gw",
+                    scan_profile=ScanProfile.BALANCED,
+            )
+        ),
+    )
+
+    serialized = await assets_routes.get_asset(asset.id, db, object())
+    assert serialized["ip_address"] == "192.168.1.44"
+    assert serialized["ports"][0]["port_number"] == 443
+    assert serialized["tags"][0]["tag"] == "gateway"
+    assert await assets_routes.get_asset_evidence(asset.id, db, object()) == []
+    assert await assets_routes.get_asset_probe_runs(asset.id, db, object()) == []
+
+    refreshed = await assets_routes.update_asset(asset.id, {"hostname": "edge", "device_type": "router"}, _FakeDb(get_result=asset, execute_result=_ScalarResult([asset])), object())
+    assert refreshed["hostname"] == "edge"
+
+    await assets_routes.delete_asset(asset.id, _FakeDb(get_result=asset), object())
+    history = await assets_routes.get_asset_history(asset.id, db, object())
+    ports = await assets_routes.get_asset_ports(asset.id, db, object())
+    wireless = await assets_routes.get_wireless_clients(asset.id, db, object())
+    assert history[0].change_type == "updated"
+    assert ports[0].port_number == 443
+    assert wireless[0]["ssid"] == "Argus"
+
+    tag_db = _FakeDb(get_result=asset, execute_result=_ScalarResult([]))
+    created_tag = await assets_routes.add_asset_tag(asset.id, assets_routes.AssetTagRequest(tag=" Core "), tag_db, object())
+    assert created_tag.tag == "core"
+    await assets_routes.delete_asset_tag(asset.id, "core", _FakeDb(execute_result=_ScalarResult([created_tag])), object())
+
+    read_target = await assets_routes.read_config_backup_target(asset.id, db, object())
+    backups = await assets_routes.get_config_backups(asset.id, db, object())
+    backup = await assets_routes.trigger_config_backup(asset.id, db, object())
+    download = await assets_routes.download_config_backup(asset.id, 7, db, object())
+    diff = await assets_routes.diff_config_backup(asset.id, 7, None, db, object())
+    restore = await assets_routes.get_restore_assist(asset.id, 7, db, object())
+    assert read_target["driver"] == "ssh"
+    assert backups[0]["id"] == 7
+    assert backup["status"] == "done"
+    assert download.body.decode() == "running-config"
+    assert diff.body.decode() == "No diff\n"
+    assert restore == {"steps": ["restore"]}
+
+    port_scan = await assets_routes.run_asset_port_scan(asset.id, db, object())
+    ai_refresh = await assets_routes.run_asset_ai_refresh(asset.id, db, object())
+    assert port_scan["ip_address"] == "192.168.1.44"
+    assert ai_refresh["hostname"] == "edge"
+
+
 def test_scanner_config_helpers_cover_normalization_and_routing(monkeypatch):
     config = SimpleNamespace(
         enabled=True,
@@ -908,6 +1334,296 @@ def test_scanner_config_scheduling_and_evidence_helpers():
     )
     assert scanner_config.has_meaningful_scan_evidence(empty) is False
     assert scanner_config.has_meaningful_scan_evidence(rich) is True
+
+
+@pytest.mark.asyncio
+async def test_smb_probe_async_wrapper_covers_success_and_error_paths(monkeypatch):
+    monkeypatch.setattr(
+        smb_probe,
+        "_smb_probe_sync",
+        lambda ip, port: smb_probe.SmbProbeData(
+            netbios_name="LABPC",
+            workgroup="WORKGROUP",
+            os_string="Windows 11",
+            smb_version="SMBv3.1.1",
+            signing_required=True,
+            shares=["IPC$", "Users"],
+            has_guest_access=False,
+        ),
+    )
+    success = await smb_probe.probe("192.168.1.20", port=445)
+    assert success.success is True
+    assert success.data["netbios_name"] == "LABPC"
+    assert "SMB Version: SMBv3.1.1" in success.raw
+
+    async def raise_timeout(awaitable, deadline_seconds):
+        raise asyncio.TimeoutError()
+
+    monkeypatch.setattr(smb_probe, "_await_with_deadline", raise_timeout)
+    timeout = await smb_probe.probe("192.168.1.20", port=445)
+    assert timeout.success is False
+    assert timeout.error == "Timeout"
+
+    async def raise_error(awaitable, deadline_seconds):
+        raise RuntimeError("broken smb")
+
+    monkeypatch.setattr(smb_probe, "_await_with_deadline", raise_error)
+    failed = await smb_probe.probe("192.168.1.20", port=445)
+    assert failed.success is False
+    assert failed.error == "broken smb"
+
+    async def return_none(awaitable, deadline_seconds):
+        return None
+
+    monkeypatch.setattr(smb_probe, "_await_with_deadline", return_none)
+    no_data = await smb_probe.probe("192.168.1.20", port=445)
+    assert no_data.success is False
+    assert no_data.error == "SMB probe returned no data"
+
+
+def test_smb_probe_sync_covers_impacket_and_netbios_fallback(monkeypatch):
+    class _Conn:
+        def __init__(self, remote_name, remote_host, sess_port, timeout):
+            self.closed = False
+
+        def getDialect(self):
+            return 0x0311
+
+        def isSigningRequired(self):
+            return True
+
+        def getServerName(self):
+            return "LABNAS"
+
+        def getServerOS(self):
+            return "Samba 4.19"
+
+        def getServerDomain(self):
+            return "WORKGROUP"
+
+        def login(self, user, password):
+            return None
+
+        def listShares(self):
+            return [{"shi1_netname": "IPC$\x00"}, {"shi1_netname": "Media\x00"}]
+
+        def close(self):
+            self.closed = True
+
+    impacket_mod = ModuleType("impacket")
+    smb_mod = ModuleType("impacket.smb")
+    smb_mod.SMB_DIALECT = 0x00
+    smb3_mod = ModuleType("impacket.smb3")
+    smb3_mod.SMB2_DIALECT_21 = 0x0210
+    smb3_mod.SMB2_DIALECT_30 = 0x0300
+    smb3_mod.SMB2_DIALECT_311 = 0x0311
+    smbconnection_mod = ModuleType("impacket.smbconnection")
+    smbconnection_mod.SMBConnection = _Conn
+    impacket_mod.smb = smb_mod
+    impacket_mod.smb3 = smb3_mod
+
+    monkeypatch.setitem(sys.modules, "impacket", impacket_mod)
+    monkeypatch.setitem(sys.modules, "impacket.smb", smb_mod)
+    monkeypatch.setitem(sys.modules, "impacket.smb3", smb3_mod)
+    monkeypatch.setitem(sys.modules, "impacket.smbconnection", smbconnection_mod)
+
+    data = smb_probe._smb_probe_sync("192.168.1.21", 445)
+    assert data.netbios_name == "LABNAS"
+    assert data.smb_version == "SMBv3.1.1"
+    assert data.shares == ["IPC$", "Media"]
+    assert data.has_guest_access is True
+
+    monkeypatch.delitem(sys.modules, "impacket.smbconnection", raising=False)
+    monkeypatch.delitem(sys.modules, "impacket.smb", raising=False)
+    monkeypatch.delitem(sys.modules, "impacket.smb3", raising=False)
+    monkeypatch.delitem(sys.modules, "impacket", raising=False)
+    monkeypatch.setattr(smb_probe, "_netbios_name_query", lambda ip: "FALLBACKHOST")
+    fallback = smb_probe._smb_probe_sync("192.168.1.22", 445)
+    assert fallback.netbios_name == "FALLBACKHOST"
+    monkeypatch.setattr(smb_probe, "_netbios_name_query", lambda ip: None)
+    assert smb_probe._smb_probe_sync("192.168.1.23", 445) is None
+
+
+def test_netbios_name_query_covers_parse_and_failure(monkeypatch):
+    import socket
+
+    workstation_name = b"WORKSTATION    "[:15]
+    response = (
+        b"\x00" * 56
+        + bytes([1])
+        + workstation_name
+        + bytes([0x00])
+        + b"\x00\x00"
+    )
+
+    class _UdpSocket:
+        def __init__(self, *args, **kwargs):
+            self.closed = False
+
+        def settimeout(self, value):
+            return None
+
+        def sendto(self, payload, addr):
+            self.payload = payload
+            self.addr = addr
+
+        def recvfrom(self, size):
+            return response, ("192.168.1.30", 137)
+
+        def close(self):
+            self.closed = True
+
+    monkeypatch.setattr(socket, "socket", lambda *args, **kwargs: _UdpSocket())
+    assert smb_probe._netbios_name_query("192.168.1.30") == "WORKSTATION"
+
+    class _BadSocket(_UdpSocket):
+        def recvfrom(self, size):
+            return b"short", ("192.168.1.30", 137)
+
+    monkeypatch.setattr(socket, "socket", lambda *args, **kwargs: _BadSocket())
+    assert smb_probe._netbios_name_query("192.168.1.30") is None
+
+
+@pytest.mark.asyncio
+async def test_topology_resolution_and_upsert_helpers_cover_core_paths():
+    source = Asset(id=uuid4(), ip_address="192.168.1.1", hostname="switch-a", mac_address="AA:AA:AA:AA:AA:AA", status="online")
+    target = Asset(id=uuid4(), ip_address="192.168.1.2", hostname="host-a", mac_address="BB:BB:BB:BB:BB:BB", status="online")
+
+    no_match_db = _FakeDb(execute_result=_ScalarResult([]))
+    assert await topology_mod._resolve_asset(no_match_db, []) is None
+
+    match_db = _FakeDb(execute_result=_ScalarResult([target]))
+    assert await topology_mod._resolve_asset_by_ip_or_mac(match_db, "192.168.1.2", None) is target
+    assert await topology_mod._resolve_asset_by_hostname_or_mac(match_db, None, "BB:BB:BB:BB:BB:BB") is target
+
+    link_db = _FakeDb(execute_result=_ScalarResult([]))
+    created = await topology_mod._upsert_topology_link(
+        link_db,
+        source.id,
+        target.id,
+        "snmp_arp",
+        {"source": "snmp_arp"},
+        vlan_id=10,
+    )
+    assert created == 1
+    assert any(isinstance(item, topology_mod.TopologyLink) for item in link_db.added)
+
+    existing_link = topology_mod.TopologyLink(
+        source_id=source.id,
+        target_id=target.id,
+        link_type="wifi",
+        vlan_id=None,
+        link_metadata={"old": True},
+    )
+    update_db = _FakeDb(execute_result=_ScalarResult([existing_link]))
+    created = await topology_mod._upsert_topology_link(
+        update_db,
+        source.id,
+        target.id,
+        "wifi",
+        {"source": "wifi", "ssid": "Lab"},
+        vlan_id=20,
+    )
+    assert created == 0
+    assert existing_link.vlan_id == 20
+    assert existing_link.link_metadata["ssid"] == "Lab"
+
+    association_db = _FakeDb(execute_result=_ScalarResult([]))
+    association, assoc_created = await topology_mod._upsert_wireless_association(
+        association_db,
+        source,
+        {"mac": "CC:CC:CC:CC:CC:CC", "ip": "192.168.1.30", "ssid": "Argus", "band": "5GHz", "signal_dbm": -54},
+        target,
+    )
+    assert assoc_created == 1
+    assert association.client_asset_id == target.id
+    assert any(isinstance(item, topology_mod.WirelessAssociation) for item in association_db.added)
+
+    existing_assoc = topology_mod.WirelessAssociation(
+        access_point_asset_id=source.id,
+        client_asset_id=None,
+        client_mac="CC:CC:CC:CC:CC:CC",
+        client_ip=None,
+        ssid=None,
+        band=None,
+        signal_dbm=None,
+        source="snmp",
+    )
+    update_assoc_db = _FakeDb(execute_result=_ScalarResult([existing_assoc]))
+    association, assoc_created = await topology_mod._upsert_wireless_association(
+        update_assoc_db,
+        source,
+        {"mac": "CC:CC:CC:CC:CC:CC", "ip": "192.168.1.31", "ssid": "Argus", "band": "2.4GHz", "signal_dbm": -60, "source": "controller"},
+        target,
+    )
+    assert assoc_created == 0
+    assert association.client_ip == "192.168.1.31"
+    assert association.source == "controller"
+
+
+@pytest.mark.asyncio
+async def test_topology_snmp_inference_covers_arp_neighbors_and_wireless(monkeypatch):
+    source = Asset(id=uuid4(), ip_address="192.168.1.1", hostname="switch-a", mac_address="AA:AA:AA:AA:AA:AA", status="online")
+    arp_target = Asset(id=uuid4(), ip_address="192.168.1.2", hostname="host-a", mac_address="BB:BB:BB:BB:BB:BB", status="online")
+    neighbor_target = Asset(id=uuid4(), ip_address="192.168.1.3", hostname="core-sw", mac_address="CC:CC:CC:CC:CC:CC", status="online")
+    wifi_target = Asset(id=uuid4(), ip_address="192.168.1.4", hostname="phone", mac_address="DD:DD:DD:DD:DD:DD", status="online")
+
+    async def fake_resolve_ip_or_mac(db, ip_address, mac_address):
+        if ip_address == "192.168.1.2":
+            return arp_target
+        if mac_address == "DD:DD:DD:DD:DD:DD":
+            return wifi_target
+        return None
+
+    async def fake_resolve_hostname_or_mac(db, hostname, mac_address):
+        if hostname == "core-sw" or mac_address == "CC:CC:CC:CC:CC:CC":
+            return neighbor_target
+        return None
+
+    link_calls = []
+    assoc_calls = []
+
+    async def fake_upsert_link(db, source_id, target_id, link_type, metadata, vlan_id=None):
+        link_calls.append((source_id, target_id, link_type, metadata, vlan_id))
+        return 1
+
+    async def fake_upsert_assoc(db, source_asset, client, client_asset):
+        assoc = SimpleNamespace(
+            source=client.get("source") or "snmp",
+            ssid=client.get("ssid"),
+            band=client.get("band"),
+            signal_dbm=client.get("signal_dbm"),
+        )
+        assoc_calls.append((client, client_asset))
+        return assoc, 1
+
+    monkeypatch.setattr(topology_mod, "_resolve_asset_by_ip_or_mac", fake_resolve_ip_or_mac)
+    monkeypatch.setattr(topology_mod, "_resolve_asset_by_hostname_or_mac", fake_resolve_hostname_or_mac)
+    monkeypatch.setattr(topology_mod, "_upsert_topology_link", fake_upsert_link)
+    monkeypatch.setattr(topology_mod, "_upsert_wireless_association", fake_upsert_assoc)
+
+    snmp_data = {
+        "arp_table": [
+            {"ip": "192.168.1.2", "mac": "BB:BB:BB:BB:BB:BB", "if_index": 7},
+            {"ip": "192.168.1.1", "mac": "AA:AA:AA:AA:AA:AA", "if_index": 7},
+        ],
+        "interfaces": [{"if_index": 7, "name": "uplink0", "vlan_id": 20}],
+        "neighbors": [
+            {"remote_name": "core-sw", "remote_mac": "CC:CC:CC:CC:CC:CC", "protocol": "lldp", "local_port": "Gi0/1", "remote_port": "Gi0/24", "remote_platform": "Cisco"}
+        ],
+        "wireless_clients": [
+            {"ip": "192.168.1.4", "mac": "DD:DD:DD:DD:DD:DD", "ssid": "Argus", "band": "5GHz", "signal_dbm": -48, "source": "ap"}
+        ],
+    }
+
+    created = await topology_mod.infer_topology_links_from_snmp(_FakeDb(), source, snmp_data)
+    assert created == 4
+    assert any(call[2] == "snmp_arp" and call[3]["interface"] == "uplink0" and call[4] == 20 for call in link_calls)
+    assert any(call[2] == "lldp" and call[3]["remote_platform"] == "Cisco" for call in link_calls)
+    assert any(call[2] == "wifi" and call[3]["ssid"] == "Argus" for call in link_calls)
+    assert assoc_calls
+
+    assert await topology_mod.infer_topology_links_from_snmp(_FakeDb(), source, {}) == 0
 
 
 def test_scanner_config_network_detection_and_route_parsing_helpers(monkeypatch):

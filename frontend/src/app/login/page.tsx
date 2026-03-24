@@ -115,7 +115,7 @@ export default function LoginPage() {
   const isBusy = isLoadingUser || isLoadingSetup || isPendingLogin || isPendingSetup
 
   return (
-    <main className="min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_35%),linear-gradient(180deg,_#f8fafc,_#e2e8f0)] dark:bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.24),_transparent_35%),linear-gradient(180deg,_#09090b,_#18181b)] flex items-center justify-center px-6">
+    <main className="relative min-h-screen bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.18),_transparent_35%),linear-gradient(180deg,_#f8fafc,_#e2e8f0)] dark:bg-[radial-gradient(circle_at_top,_rgba(14,165,233,0.24),_transparent_35%),linear-gradient(180deg,_#09090b,_#18181b)] flex items-center justify-center px-6">
       <div className="w-full max-w-md rounded-3xl border border-white/60 dark:border-zinc-800 bg-white/90 dark:bg-zinc-950/90 backdrop-blur-xl shadow-2xl shadow-sky-500/10 p-8">
         <div className="flex items-center gap-3 mb-8">
           <div className="w-11 h-11 rounded-2xl bg-sky-500 flex items-center justify-center shadow-lg shadow-sky-500/30">
@@ -265,6 +265,9 @@ export default function LoginPage() {
             </button>
           </form>
         )}
+      </div>
+      <div className="pointer-events-none absolute bottom-5 right-5 rounded-full border border-white/70 bg-white/80 px-3 py-1 text-[11px] font-medium tracking-[0.18em] text-zinc-500 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-400">
+        v1.1
       </div>
     </main>
   )
