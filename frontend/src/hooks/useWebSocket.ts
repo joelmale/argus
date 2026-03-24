@@ -18,7 +18,7 @@ function getWsBaseUrl() {
 }
 
 function getStoredToken() {
-  if (typeof globalThis.window === 'undefined') {
+  if (globalThis.window === undefined) {
     return null
   }
   return globalThis.localStorage.getItem('argus_token')

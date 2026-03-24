@@ -13,7 +13,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from contextlib import asynccontextmanager
 
 from app.scanner.models import DiscoveredHost, PortResult, ProbeResult, ScanProfile
 
@@ -230,43 +229,22 @@ def _resolve_probe_timeout(probe_type: str, timeout_seconds: float | None) -> fl
 
 # ── Probe wrappers ────────────────────────────────────────────────────────────
 
-@asynccontextmanager
-async def _probe_timeout_context(timeout_seconds: float):
-    timeout_context = getattr(asyncio, "timeout", None)
-    if timeout_context is not None:
-        async with timeout_context(timeout_seconds):
-            yield
-        return
-
-    task = asyncio.current_task()
-    if task is None:
-        yield
-        return
-
-    loop = asyncio.get_running_loop()
-    timed_out = False
-
-    def _cancel_current_task() -> None:
-        nonlocal timed_out
-        timed_out = True
-        task.cancel()
-
-    timeout_handle = loop.call_later(timeout_seconds, _cancel_current_task)
-    try:
-        yield
-    except asyncio.CancelledError as exc:
-        timeout_handle.cancel()
-        if timed_out:
-            raise asyncio.TimeoutError from exc
-        raise
-    finally:
-        timeout_handle.cancel()
-
-
 async def _with_timeout(coro, timeout_seconds: float, probe_type: str, port: int | None = None) -> ProbeResult:
     try:
-        async with _probe_timeout_context(timeout_seconds):
-            return await coro
+        timeout_context = getattr(asyncio, "timeout", None)
+        if timeout_context is not None:
+            async with timeout_context(timeout_seconds):
+                return await coro
+
+        task = asyncio.create_task(coro)
+        done, pending = await asyncio.wait({task}, timeout=timeout_seconds)
+        if task in done:
+            return await task
+
+        for pending_task in pending:
+            pending_task.cancel()
+        await asyncio.gather(*pending, return_exceptions=True)
+        raise asyncio.TimeoutError
     except asyncio.TimeoutError:
         return ProbeResult(
             probe_type=probe_type,
