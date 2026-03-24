@@ -98,13 +98,14 @@ services:
     image: ${ARGUS_SCANNER_IMAGE:-ghcr.io/joelmale/argus-scanner:main}
     container_name: argus_scanner
     restart: unless-stopped
+    network_mode: host
     env_file: .env.production
     environment:
       APP_ENV: ${APP_ENV:-production}
       APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-to-a-long-random-string}
       APP_DEBUG: ${APP_DEBUG:-false}
-      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:change-me-db-password@db:5432/argus}
-      REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379/0}
+      DATABASE_URL: ${SCANNER_DATABASE_URL:-postgresql+asyncpg://argus:change-me-db-password@127.0.0.1:5432/argus}
+      REDIS_URL: ${SCANNER_REDIS_URL:-redis://127.0.0.1:6379/0}
       SCANNER_DEFAULT_TARGETS: ${SCANNER_DEFAULT_TARGETS:-192.168.1.0/24}
       SCANNER_INTERVAL_MINUTES: ${SCANNER_INTERVAL_MINUTES:-60}
       SCANNER_DEFAULT_PROFILE: ${SCANNER_DEFAULT_PROFILE:-balanced}
