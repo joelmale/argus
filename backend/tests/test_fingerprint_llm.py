@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import pytest
+
 from app.fingerprinting.llm import build_fingerprint_prompt, parse_fingerprint_response
 
 
@@ -24,5 +26,5 @@ def test_parse_fingerprint_response_handles_json_fence():
     )
 
     assert parsed["device_type"] == "server"
-    assert parsed["confidence"] == 0.83
+    assert parsed["confidence"] == pytest.approx(0.83)
     assert parsed["supporting_evidence"] == ["http_title=Proxmox Virtual Environment"]

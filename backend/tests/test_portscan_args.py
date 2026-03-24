@@ -28,6 +28,7 @@ def test_portscan_forces_pn_for_discovered_hosts(monkeypatch):
     )
 
     assert fake.hosts == "192.168.100.4"
+    assert fake.arguments is not None
     assert "-Pn" in fake.arguments.split()
 
 
@@ -41,4 +42,5 @@ def test_portscan_does_not_duplicate_pn(monkeypatch):
         "-Pn -sV -T4",
     )
 
+    assert fake.arguments is not None
     assert fake.arguments.split().count("-Pn") == 1

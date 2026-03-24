@@ -255,6 +255,7 @@ async def _probe_timeout_context(timeout_seconds: float):
     try:
         yield
     except asyncio.CancelledError as exc:
+        timeout_handle.cancel()
         if timed_out:
             raise asyncio.TimeoutError from exc
         raise
