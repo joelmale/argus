@@ -1143,7 +1143,7 @@ def test_scanner_config_evidence_helper_additional_branches():
         HostScanResult(host=DiscoveredHost(ip_address="192.168.1.4"), mac_vendor="Canon")
     ) is True
     assert scanner_config.has_meaningful_scan_evidence(
-        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.5"), open_ports=[PortResult(port=80, protocol="tcp", state="open")])
+        HostScanResult(host=DiscoveredHost(ip_address="192.168.1.5"), ports=[PortResult(port=80, protocol="tcp", state="open")])
     ) is True
     assert scanner_config.has_meaningful_scan_evidence(
         HostScanResult(host=DiscoveredHost(ip_address="192.168.1.6"), probes=[ProbeResult(probe_type="dns", success=True, data={"ptr": "x"})])
