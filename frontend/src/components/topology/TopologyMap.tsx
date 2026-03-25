@@ -41,6 +41,10 @@ function deviceColor(deviceType: string | null): string {
   return DEVICE_COLORS[deviceType ?? 'unknown'] ?? DEVICE_COLORS.unknown
 }
 
+function edgeLineStyle(observed: boolean | undefined): 'solid' | 'dashed' {
+  return observed === false ? 'dashed' : 'solid'
+}
+
 const DEVICE_FILTER_OPTIONS = [
   { value: 'all', label: 'All types' },
   { value: 'router', label: 'Routers' },
@@ -102,10 +106,12 @@ export function TopologyMap() {
       .filter((e) => visibleIds.has(e.data.source) && visibleIds.has(e.data.target))
       .map((e) => ({
         data: {
-          id:        e.data.id,
-          source:    e.data.source,
-          target:    e.data.target,
-          link_type: e.data.link_type,
+          id:         e.data.id,
+          source:     e.data.source,
+          target:     e.data.target,
+          link_type:  e.data.link_type,
+          confidence: e.data.confidence ?? 0.5,
+          lineStyle:  edgeLineStyle(e.data.observed),
         },
       }))
 
@@ -153,10 +159,11 @@ export function TopologyMap() {
         {
           selector: 'edge',
           style: {
-            'width':            2,
+            'width':            'mapData(confidence, 0, 1, 1.5, 3.5)' as any,
             'line-color':       edgeColor,
             'curve-style':      'bezier',
-            'opacity':          0.7,
+            'opacity':          'mapData(confidence, 0, 1, 0.35, 0.9)' as any,
+            'line-style':       'data(lineStyle)' as any,
           },
         },
         {

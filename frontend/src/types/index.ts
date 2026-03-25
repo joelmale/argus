@@ -290,6 +290,98 @@ export interface TplinkDecoSyncRun {
   finished_at: string | null;
 }
 
+export interface UnifiConfig {
+  id: number
+  enabled: boolean
+  controller_url: string
+  username: string | null
+  password: string | null
+  site_id: string
+  verify_tls: boolean
+  request_timeout_seconds: number
+  fetch_clients: boolean
+  fetch_devices: boolean
+  last_tested_at: string | null
+  last_sync_at: string | null
+  last_status: string
+  last_error: string | null
+  last_client_count: number | null
+  last_device_count: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface UnifiSyncRun {
+  id: number
+  status: string
+  client_count: number | null
+  device_count: number | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+export interface PfsenseConfig {
+  id: number
+  enabled: boolean
+  base_url: string
+  flavor: string
+  api_key: string | null
+  api_secret: string | null
+  fauxapi_token: string | null
+  verify_tls: boolean
+  request_timeout_seconds: number
+  fetch_dhcp_leases: boolean
+  fetch_arp_table: boolean
+  fetch_interfaces: boolean
+  last_tested_at: string | null
+  last_sync_at: string | null
+  last_status: string
+  last_error: string | null
+  last_lease_count: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface PfsenseSyncRun {
+  id: number
+  status: string
+  lease_count: number | null
+  arp_count: number | null
+  interface_count: number | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+}
+
+export interface FirewallaConfig {
+  id: number
+  enabled: boolean
+  base_url: string
+  api_token: string | null
+  verify_tls: boolean
+  request_timeout_seconds: number
+  fetch_devices: boolean
+  fetch_alarms: boolean
+  last_tested_at: string | null
+  last_sync_at: string | null
+  last_status: string
+  last_error: string | null
+  last_device_count: number | null
+  created_at: string
+  updated_at: string
+}
+
+export interface FirewallaSyncRun {
+  id: number
+  status: string
+  device_count: number | null
+  alarm_count: number | null
+  error: string | null
+  started_at: string
+  finished_at: string | null
+}
+
 export interface HomeAssistantEntity {
   unique_id: string;
   name: string;
@@ -471,6 +563,11 @@ export interface TopologyNode {
     os: string | null;
     status: AssetStatus;
     device_type: DeviceType | null;
+    segment_cidr?: string | null;
+    segment_id?: number | null;
+    topology_role?: string | null;
+    topology_confidence?: number | null;
+    is_gateway?: boolean;
   };
 }
 
@@ -480,13 +577,32 @@ export interface TopologyEdge {
     source: string;
     target: string;
     link_type: string;
+    relationship_type?: string;
+    observed?: boolean;
+    confidence?: number;
+    source_kind?: string;
+    segment_id?: number | null;
+    local_interface?: string | null;
+    remote_interface?: string | null;
+    ssid?: string | null;
     vlan_id: number | null;
   };
+}
+
+export interface TopologySegment {
+  id: number;
+  cidr: string;
+  label: string;
+  vlan_id: number | null;
+  gateway_asset_id: string | null;
+  confidence: number;
+  source: string;
 }
 
 export interface TopologyGraph {
   nodes: TopologyNode[];
   edges: TopologyEdge[];
+  segments?: TopologySegment[];
 }
 
 export type WsEvent =

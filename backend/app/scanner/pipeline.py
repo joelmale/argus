@@ -830,6 +830,7 @@ async def _persist_results(
     from app.alerting import notify_devices_offline_if_enabled, notify_new_device_if_enabled
     from app.scanner.config import has_meaningful_scan_evidence
     from app.scanner.topology import infer_topology_links_from_snmp
+    from app.topology.segments import ensure_segment_for_asset
 
     # Find assets that were online before but not in this scan
     from sqlalchemy import select
@@ -848,6 +849,7 @@ async def _persist_results(
             has_meaningful_scan_evidence,
             upsert_scan_result,
             infer_topology_links_from_snmp,
+            ensure_segment_for_asset,
             notify_new_device_if_enabled,
         )
 
@@ -913,6 +915,7 @@ async def _persist_result(
     has_meaningful_scan_evidence,
     upsert_scan_result,
     infer_topology_links_from_snmp,
+    ensure_segment_for_asset,
     notify_new_device_if_enabled,
 ) -> None:
     if result is None:
@@ -923,6 +926,7 @@ async def _persist_result(
 
     try:
         asset, change_type = await upsert_scan_result(db_session, result)
+        await ensure_segment_for_asset(db_session, asset)
         await _persist_snmp_topology(db_session, asset, result, infer_topology_links_from_snmp)
         await _update_summary(summary, broadcast_fn, job_id, result, change_type, db_session, notify_new_device_if_enabled, stage)
     except Exception as exc:

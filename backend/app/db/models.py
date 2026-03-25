@@ -12,7 +12,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import (
-    Boolean, DateTime, ForeignKey, Integer, String, Text,
+    Boolean, DateTime, Float, ForeignKey, Integer, String, Text,
     UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB, UUID
@@ -284,10 +284,35 @@ class TopologyLink(Base):
     source_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"))
     target_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"))
     link_type: Mapped[str] = mapped_column(String(32), default="ethernet")  # ethernet | wifi | vlan | vpn
+    relationship_type: Mapped[str] = mapped_column(String(64), default="neighbor_l2")
+    observed: Mapped[bool] = mapped_column(Boolean, default=False)
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    source: Mapped[str] = mapped_column(String(64), default="inference")
+    evidence: Mapped[dict | None] = mapped_column(JSONB)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    segment_id: Mapped[int | None] = mapped_column(Integer, ForeignKey("network_segments.id", ondelete=SET_NULL))
+    local_interface: Mapped[str | None] = mapped_column(String(128))
+    remote_interface: Mapped[str | None] = mapped_column(String(128))
+    ssid: Mapped[str | None] = mapped_column(String(128))
     vlan_id: Mapped[int | None] = mapped_column(Integer)
     link_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
 
-    __table_args__ = (UniqueConstraint("source_id", "target_id", name="uq_topology_link"),)
+    __table_args__ = (UniqueConstraint("source_id", "target_id", "relationship_type", name="uq_topology_link"),)
+
+
+class NetworkSegment(Base):
+    __tablename__ = "network_segments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    cidr: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    label: Mapped[str] = mapped_column(String(128), nullable=False)
+    vlan_id: Mapped[int | None] = mapped_column(Integer)
+    gateway_asset_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete=SET_NULL))
+    source: Mapped[str] = mapped_column(String(64), default="heuristic_ipv4_24")
+    confidence: Mapped[float] = mapped_column(Float, default=0.5)
+    segment_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
 
 class ScanJob(Base):
@@ -537,6 +562,117 @@ class TplinkDecoSyncRun(Base):
     clients_payload: Mapped[list | None] = mapped_column(JSONB)
     logs_excerpt: Mapped[str | None] = mapped_column(Text)
     log_analysis: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class UnifiConfig(Base):
+    __tablename__ = "unifi_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    controller_url: Mapped[str] = mapped_column(String(255), default="https://192.168.1.1")
+    username: Mapped[str | None] = mapped_column(String(128))
+    password: Mapped[str | None] = mapped_column(String(256))
+    site_id: Mapped[str] = mapped_column(String(64), default="default")
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=False)
+    request_timeout_seconds: Mapped[int] = mapped_column(Integer, default=15)
+    fetch_clients: Mapped[bool] = mapped_column(Boolean, default=True)
+    fetch_devices: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str] = mapped_column(String(32), default="idle")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_client_count: Mapped[int | None] = mapped_column(Integer)
+    last_device_count: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class UnifiSyncRun(Base):
+    __tablename__ = "unifi_sync_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    client_count: Mapped[int | None] = mapped_column(Integer)
+    device_count: Mapped[int | None] = mapped_column(Integer)
+    clients_payload: Mapped[list | None] = mapped_column(JSONB)
+    devices_payload: Mapped[list | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class PfsenseConfig(Base):
+    __tablename__ = "pfsense_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    base_url: Mapped[str] = mapped_column(String(255), default="http://192.168.1.1")
+    flavor: Mapped[str] = mapped_column(String(16), default="opnsense")
+    api_key: Mapped[str | None] = mapped_column(String(256))
+    api_secret: Mapped[str | None] = mapped_column(String(256))
+    fauxapi_token: Mapped[str | None] = mapped_column(String(512))
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=False)
+    request_timeout_seconds: Mapped[int] = mapped_column(Integer, default=15)
+    fetch_dhcp_leases: Mapped[bool] = mapped_column(Boolean, default=True)
+    fetch_arp_table: Mapped[bool] = mapped_column(Boolean, default=True)
+    fetch_interfaces: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str] = mapped_column(String(32), default="idle")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_lease_count: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class PfsenseSyncRun(Base):
+    __tablename__ = "pfsense_sync_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    lease_count: Mapped[int | None] = mapped_column(Integer)
+    arp_count: Mapped[int | None] = mapped_column(Integer)
+    interface_count: Mapped[int | None] = mapped_column(Integer)
+    leases_payload: Mapped[list | None] = mapped_column(JSONB)
+    arp_payload: Mapped[list | None] = mapped_column(JSONB)
+    interfaces_payload: Mapped[dict | None] = mapped_column(JSONB)
+    error: Mapped[str | None] = mapped_column(Text)
+    started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+
+
+class FirewallaConfig(Base):
+    __tablename__ = "firewalla_configs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    enabled: Mapped[bool] = mapped_column(Boolean, default=False)
+    base_url: Mapped[str] = mapped_column(String(255), default="http://firewalla.lan")
+    api_token: Mapped[str | None] = mapped_column(String(512))
+    verify_tls: Mapped[bool] = mapped_column(Boolean, default=False)
+    request_timeout_seconds: Mapped[int] = mapped_column(Integer, default=15)
+    fetch_devices: Mapped[bool] = mapped_column(Boolean, default=True)
+    fetch_alarms: Mapped[bool] = mapped_column(Boolean, default=True)
+    last_tested_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_sync_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    last_status: Mapped[str] = mapped_column(String(32), default="idle")
+    last_error: Mapped[str | None] = mapped_column(Text)
+    last_device_count: Mapped[int | None] = mapped_column(Integer)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+
+class FirewallaSyncRun(Base):
+    __tablename__ = "firewalla_sync_runs"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    status: Mapped[str] = mapped_column(String(32), default="pending")
+    device_count: Mapped[int | None] = mapped_column(Integer)
+    alarm_count: Mapped[int | None] = mapped_column(Integer)
+    devices_payload: Mapped[list | None] = mapped_column(JSONB)
+    alarms_payload: Mapped[list | None] = mapped_column(JSONB)
     error: Mapped[str | None] = mapped_column(Text)
     started_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     finished_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))

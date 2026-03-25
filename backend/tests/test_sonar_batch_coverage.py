@@ -2999,6 +2999,7 @@ async def test_pipeline_persistence_helpers_cover_offline_ai_and_broadcast_paths
         lambda db, row: _completed_task((offline_asset, "discovered")),
         lambda *args, **kwargs: _completed_task(None),
         lambda *args, **kwargs: _completed_task(None),
+        lambda *args, **kwargs: _completed_task(None),
     )
     assert summary.new_assets == 0
 
@@ -3028,6 +3029,7 @@ async def test_pipeline_persistence_helpers_cover_offline_ai_and_broadcast_paths
         lambda row: True,
         fake_upsert,
         fake_topology,
+        lambda *args, **kwargs: _completed_task(None),
         fake_notify,
     )
     assert summary.new_assets == 1
