@@ -8,10 +8,11 @@ sidebar_position: 13
 
 Argus uses GitHub Actions to enforce quality and security gates before code reaches production images, and before production images are pulled by Dockhand.
 
+Static analysis with SonarQube is intended to run locally by the operator before pushing code, not as a GitHub-hosted gate.
+
 This pipeline is designed as a layered control system rather than a single pass/fail check. Each gate reduces a different class of delivery risk:
 
 - correctness risk: broken tests, failed builds, invalid docs
-- quality risk: maintainability regressions and unsafe code patterns
 - supply-chain risk: vulnerable OS or package layers inside published images
 - release integrity risk: unsigned or ambiguous images
 - deployment drift risk: Dockhand pulling mutable or locally built artifacts instead of versioned images
@@ -23,7 +24,6 @@ This pipeline is designed as a layered control system rather than a single pass/
 | backend tests and lint | functional regressions, unsafe refactors | pull request |
 | frontend lint, type-check, build | UI/runtime regressions | pull request |
 | docs build | broken operator guidance and deployment docs | pull request |
-| SonarQube analysis | code-quality debt and code-level security findings | pull request and `main` |
 | image build in CI | non-reproducible server-side builds | merge to `main` |
 | Trivy image scan | vulnerable packages in release artifacts | merge to `main` |
 | Cosign signing | image tampering and provenance ambiguity | merge to `main` |
@@ -35,8 +35,7 @@ This pipeline is designed as a layered control system rather than a single pass/
 ```mermaid
 flowchart LR
   PR[Pull Request] --> PRChecks[PR Checks]
-  PRChecks --> Sonar[SonarQube Analysis]
-  Sonar --> Merge[Merge to main]
+  PRChecks --> Merge[Merge to main]
   Merge --> Build[Build OCI Images]
   Build --> Trivy[Trivy Image Scan]
   Trivy --> Sign[Cosign Keyless Sign]
@@ -55,22 +54,15 @@ Pull requests run three classes of preventative controls:
 
 These are designed to catch delivery failures before they become deployment artifacts.
 
-## SonarQube Gate
+## Local SonarQube Workflow
 
-SonarQube runs on pull requests and on `main`.
-
-From a risk-management perspective, SonarQube is the code-level assurance gate. It complements tests by looking for:
-
-- maintainability degradation
-- suspicious control flow or unsafe patterns
-- code smells that increase future change risk
-- security hotspots and static-analysis findings that tests would not naturally exercise
+SonarQube is no longer part of the hosted GitHub Actions pipeline for this repo.
 
 The intended operating model is:
 
-- developers review Sonar findings during PRs
-- branch protection requires the Sonar workflow to pass before merge
-- the quality gate acts as a policy control, not just an informational report
+- developers run SonarQube locally before pushing
+- GitHub Actions remains focused on tests, builds, and release-image security gates
+- Sonar findings are reviewed as a local pre-push quality control step
 
 ## Release Artifact Controls
 
@@ -139,17 +131,7 @@ That separation is important for risk containment. If a deployment host is compr
 
 ## Required GitHub Configuration
 
-### Repository secrets
-
-- `SONAR_TOKEN`
-
-### Repository variables
-
-- `SONAR_PROJECT_KEY`
-- `SONAR_HOST_URL`
-- `SONAR_ORGANIZATION`
-
-`SONAR_ORGANIZATION` is mainly relevant for SonarQube Cloud / SonarCloud style setups. Self-hosted SonarQube Server deployments may not need it.
+No Sonar-specific GitHub repository secrets or variables are required by the hosted pipeline anymore.
 
 ## Required Dockhand Variables
 
@@ -174,7 +156,6 @@ If you use the floating `main` tag instead, deployments are simpler but rollback
 | merge breaks backend behavior | backend PR checks |
 | merge breaks frontend runtime | frontend PR checks |
 | docs drift from reality | docs build gate |
-| weak code enters protected branch | SonarQube quality gate |
 | vulnerable package ships in release image | Trivy |
 | deployment host builds a different artifact than CI | GHCR image publish model |
 | image authenticity is unclear | Cosign signing |
@@ -183,7 +164,6 @@ If you use the floating `main` tag instead, deployments are simpler but rollback
 ## Related Files
 
 - [`.github/workflows/pr-checks.yml`](../../.github/workflows/pr-checks.yml)
-- [`.github/workflows/sonarqube.yml`](../../.github/workflows/sonarqube.yml)
 - [`.github/workflows/release-images.yml`](../../.github/workflows/release-images.yml)
 - [`docker-compose.yml`](../../docker-compose.yml)
 - [`.env.production`](../../.env.production)

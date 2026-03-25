@@ -221,9 +221,13 @@ def load_mac_vendor_dataset() -> dict[str, str]:
 
     ieee = _read_dataset_file("ieee_oui.txt")
     for line in ieee.splitlines():
-        match = re.match(r"^([0-9A-Fa-f]{6})\s+\(hex\)\s+(.+)$", line)
-        if match:
-            data.setdefault(match.group(1).upper(), match.group(2).strip())
+        if " (hex) " not in line:
+            continue
+        prefix, vendor = line.split(" (hex) ", 1)
+        prefix = prefix.strip().upper()
+        vendor = vendor.strip()
+        if len(prefix) == 6 and all(char in "0123456789ABCDEF" for char in prefix) and vendor:
+            data.setdefault(prefix, vendor)
     return data
 
 
@@ -232,9 +236,15 @@ def load_iana_pen_dataset() -> dict[str, str]:
     data: dict[str, str] = {}
     text = _read_dataset_file("iana_pen.txt")
     for line in text.splitlines():
-        match = re.match(r"^(\d+)\s+(.+)$", line)
-        if match:
-            data[match.group(1)] = match.group(2).strip()
+        stripped = line.strip()
+        if not stripped:
+            continue
+        parts = stripped.split(None, 1)
+        if len(parts) != 2:
+            continue
+        pen, vendor = parts
+        if pen.isdigit() and vendor.strip():
+            data[pen] = vendor.strip()
     return data
 
 
