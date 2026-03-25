@@ -123,3 +123,23 @@ def test_scan_sync_returns_nmap_vendor_and_enriched_os(monkeypatch):
     assert os_fp.os_name == "Ubuntu Linux"
     assert host.mac_address == "20:6D:31:41:56:2A"
     assert len(ports) == 2
+
+
+def test_scan_sync_handles_missing_instant_win_fingerprint(monkeypatch):
+    fake = _FakePortScannerWithHostData()
+    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
+    monkeypatch.setattr(portscan, "_extract_mac_and_vendor", lambda host_data: ("20:6D:31:41:56:2A", "Firewalla Inc."))
+    monkeypatch.setattr(
+        "app.scanner.enrichment.instant_win.fingerprint_from_nmap_host_data",
+        lambda host_data: None,
+    )
+    host = DiscoveredHost(ip_address="192.168.100.1", discovery_method="arp")
+
+    results = portscan._scan_sync([host], ScanProfile.BALANCED, None)
+
+    ports, os_fp, ip, hostname, vendor = results[0]
+    assert ip == "192.168.100.1"
+    assert hostname == "firewalla.lan"
+    assert vendor == "Firewalla Inc."
+    assert os_fp.os_name is not None
+    assert len(ports) == 2

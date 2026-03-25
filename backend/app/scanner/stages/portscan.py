@@ -158,7 +158,7 @@ def _scan_sync(
         nmap_mac, nmap_vendor = _extract_mac_and_vendor(host_data)
         instant = fingerprint_from_nmap_host_data(host_data)
         os_fp = merge_into_os_fingerprint(os_fp, instant)
-        resolved_vendor = instant.vendor or nmap_vendor
+        resolved_vendor = instant.vendor if instant is not None and instant.vendor else nmap_vendor
 
         source_host = host_map.get(ip)
         if source_host is not None and nmap_mac and not source_host.mac_address:
