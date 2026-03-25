@@ -643,6 +643,7 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
 
     payload = system_routes.ScannerConfigUpdateRequest(
         enabled=True,
+        scheduled_scans_enabled=True,
         default_targets="192.168.1.0/24",
         auto_detect_targets=False,
         default_profile="balanced",
@@ -681,6 +682,7 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
         config = SimpleNamespace(
             id=1,
             enabled=True,
+            scheduled_scans_enabled=True,
             default_targets="192.168.1.0/24",
             auto_detect_targets=False,
             default_profile="balanced",
@@ -715,6 +717,7 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
         effective = SimpleNamespace(
             effective_targets="192.168.1.0/24",
             enabled=True,
+            scheduled_scans_enabled=True,
             default_targets="192.168.1.0/24",
             auto_detect_targets=False,
             detected_targets=None,
@@ -745,6 +748,7 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
             internet_lookup_budget=2,
             internet_lookup_timeout_seconds=5,
             last_scheduled_scan_at=None,
+            next_scheduled_scan_at=now,
         )
         return config, effective
 
@@ -1324,12 +1328,14 @@ def test_scanner_config_helpers_cover_normalization_and_routing(monkeypatch):
 
 def test_scanner_config_scheduling_and_evidence_helpers():
     now = datetime.now(timezone.utc)
-    scheduled = SimpleNamespace(enabled=True, interval_minutes=30, last_scheduled_scan_at=now)
-    assert scanner_config.should_enqueue_scheduled_scan(SimpleNamespace(enabled=False, interval_minutes=30, last_scheduled_scan_at=None)) is False
-    assert scanner_config.should_enqueue_scheduled_scan(SimpleNamespace(enabled=True, interval_minutes=0, last_scheduled_scan_at=None)) is False
-    assert scanner_config.should_enqueue_scheduled_scan(SimpleNamespace(enabled=True, interval_minutes=30, last_scheduled_scan_at=None)) is True
+    scheduled = SimpleNamespace(scheduled_scans_enabled=True, interval_minutes=30, last_scheduled_scan_at=now)
+    assert scanner_config.should_enqueue_scheduled_scan(SimpleNamespace(scheduled_scans_enabled=False, interval_minutes=30, last_scheduled_scan_at=None)) is False
+    assert scanner_config.should_enqueue_scheduled_scan(SimpleNamespace(scheduled_scans_enabled=True, interval_minutes=0, last_scheduled_scan_at=None)) is False
+    assert scanner_config.should_enqueue_scheduled_scan(SimpleNamespace(scheduled_scans_enabled=True, interval_minutes=30, last_scheduled_scan_at=None)) is True
     assert scanner_config.should_enqueue_scheduled_scan(scheduled, now=now) is False
     assert scanner_config.should_enqueue_scheduled_scan(scheduled, now=now + timedelta(minutes=31))
+    assert scanner_config.compute_next_scheduled_scan_at(SimpleNamespace(scheduled_scans_enabled=False, interval_minutes=30, last_scheduled_scan_at=None), now=now) is None
+    assert scanner_config.compute_next_scheduled_scan_at(SimpleNamespace(scheduled_scans_enabled=True, interval_minutes=30, last_scheduled_scan_at=None), now=now) == now
 
     empty = HostScanResult(host=DiscoveredHost(ip_address="192.168.1.1"))
     rich = HostScanResult(
@@ -1894,7 +1900,7 @@ async def test_worker_task_helpers_cover_interrupt_failure_and_dispatch_paths(mo
 @pytest.mark.asyncio
 async def test_worker_task_helpers_cover_scheduled_and_resume_entrypoints(monkeypatch):
     now = datetime.now(timezone.utc)
-    config = SimpleNamespace(default_profile="balanced", last_scheduled_scan_at=None)
+    config = SimpleNamespace(default_profile="balanced", last_scheduled_scan_at=None, scheduled_scans_enabled=True)
     run_calls = []
 
     class _Session:
@@ -1904,6 +1910,7 @@ async def test_worker_task_helpers_cover_scheduled_and_resume_entrypoints(monkey
                 committed=False,
                 refreshed=[],
                 execute=lambda stmt: _completed_task(_ScalarResult([])),
+                scalar=lambda stmt: _completed_task(None),
                 flush=lambda: _completed_task(None),
                 commit=lambda: _completed_task(None),
                 refresh=lambda obj: _completed_task(None),
@@ -1928,6 +1935,13 @@ async def test_worker_task_helpers_cover_scheduled_and_resume_entrypoints(monkey
     monkeypatch.setattr(worker_tasks.run_scan_job, "delay", lambda job_id: run_calls.append(job_id))
     await worker_tasks._enqueue_scheduled_scan()
     assert run_calls
+
+    duplicate_session = _Session()
+    duplicate_session.db.scalar = lambda stmt: _completed_task(uuid4())
+    monkeypatch.setattr(sys.modules["sqlalchemy.ext.asyncio"], "async_sessionmaker", lambda *args, **kwargs: (lambda: duplicate_session))
+    run_calls.clear()
+    await worker_tasks._enqueue_scheduled_scan()
+    assert run_calls == []
 
     jobs = [
         SimpleNamespace(id=uuid4(), status="paused", resume_after=now - timedelta(minutes=1), control_action="pause", control_mode="preserve_discovery", result_summary={}),
@@ -2201,10 +2215,12 @@ async def test_scanner_config_bootstrap_create_update_and_effective_helpers(monk
     assert created.default_profile == "balanced"
     assert created.interval_minutes == 45
     assert created.passive_arp_interface == "eth9"
+    assert created.scheduled_scans_enabled is False
     assert db_new.added[-1] is created
 
     config = SimpleNamespace(
         enabled=True,
+        scheduled_scans_enabled=True,
         default_targets=None,
         auto_detect_targets=True,
         default_profile="fast",
@@ -2249,6 +2265,7 @@ async def test_scanner_config_bootstrap_create_update_and_effective_helpers(monk
 
     payload = ScannerConfigUpdateInput(
         enabled=False,
+        scheduled_scans_enabled=False,
         default_targets=" 10.0.0.0/24 ",
         auto_detect_targets=False,
         default_profile="balanced",
@@ -2294,6 +2311,7 @@ async def test_scanner_config_bootstrap_create_update_and_effective_helpers(monk
             _FakeDb(),
             ScannerConfigUpdateInput(
                 enabled=True,
+                scheduled_scans_enabled=True,
                 default_targets=" ",
                 auto_detect_targets=False,
                 default_profile="balanced",

@@ -672,6 +672,18 @@ async def _enqueue_scheduled_scan() -> None:
     async with session_factory() as db:
         config = await get_or_create_scanner_config(db)
         if not should_enqueue_scheduled_scan(config):
+            if not getattr(config, "scheduled_scans_enabled", False):
+                log.debug("Scheduled scan skipped: scheduler disabled")
+            return
+        existing_scheduled = await db.scalar(
+            select(ScanJob.id).where(
+                ScanJob.parent_id.is_(None),
+                ScanJob.triggered_by == "schedule",
+                ScanJob.status.in_(("pending", "running", "paused")),
+            ).limit(1)
+        )
+        if existing_scheduled is not None:
+            log.info("Scheduled scan skipped: existing scheduled job is still active (job_id=%s)", existing_scheduled)
             return
         targets = resolve_scan_targets(config, None)
         job = ScanJob(

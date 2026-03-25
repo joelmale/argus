@@ -37,6 +37,7 @@ _SIOCGIFNETMASK = 0x891b
 @dataclass(slots=True)
 class EffectiveScannerConfig:
     enabled: bool
+    scheduled_scans_enabled: bool
     default_targets: str | None
     auto_detect_targets: bool
     detected_targets: str | None
@@ -75,11 +76,13 @@ class EffectiveScannerConfig:
     internet_lookup_budget: int
     internet_lookup_timeout_seconds: int
     last_scheduled_scan_at: datetime | None
+    next_scheduled_scan_at: datetime | None
 
 
 @dataclass(slots=True)
 class ScannerConfigUpdateInput:
     enabled: bool
+    scheduled_scans_enabled: bool
     default_targets: str | None
     auto_detect_targets: bool
     default_profile: str
@@ -346,6 +349,7 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
     default_targets, auto_detect_targets = _bootstrap_targets_from_env()
     config = ScannerConfig(
         enabled=True,
+        scheduled_scans_enabled=False,
         default_targets=default_targets,
         auto_detect_targets=auto_detect_targets,
         default_profile=settings.SCANNER_DEFAULT_PROFILE,
@@ -393,6 +397,7 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
     fingerprint_ai_backend = _normalize_ai_backend(config.fingerprint_ai_backend, ai_backend)
     return EffectiveScannerConfig(
         enabled=config.enabled,
+        scheduled_scans_enabled=config.scheduled_scans_enabled,
         default_targets=config.default_targets,
         auto_detect_targets=config.auto_detect_targets,
         detected_targets=detected_targets,
@@ -431,6 +436,7 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         internet_lookup_budget=config.internet_lookup_budget,
         internet_lookup_timeout_seconds=config.internet_lookup_timeout_seconds,
         last_scheduled_scan_at=config.last_scheduled_scan_at,
+        next_scheduled_scan_at=compute_next_scheduled_scan_at(config),
     )
 
 
@@ -451,6 +457,7 @@ async def update_scanner_config(
     _apply_core_scanner_settings(
         config,
         enabled=payload.enabled,
+        scheduled_scans_enabled=payload.scheduled_scans_enabled,
         normalized_targets=normalized_targets,
         auto_detect_targets=payload.auto_detect_targets,
         default_profile=payload.default_profile,
@@ -506,6 +513,7 @@ def _apply_core_scanner_settings(
     config: ScannerConfig,
     *,
     enabled: bool,
+    scheduled_scans_enabled: bool,
     normalized_targets: str | None,
     auto_detect_targets: bool,
     default_profile: str,
@@ -526,6 +534,7 @@ def _apply_core_scanner_settings(
     passive_arp_interface: str,
 ) -> None:
     config.enabled = enabled
+    config.scheduled_scans_enabled = scheduled_scans_enabled
     config.default_targets = normalized_targets
     config.auto_detect_targets = auto_detect_targets
     config.default_profile = default_profile
@@ -614,8 +623,18 @@ def materialize_scan_targets(targets: str) -> str:
     return detected
 
 
+def compute_next_scheduled_scan_at(config: ScannerConfig, now: datetime | None = None) -> datetime | None:
+    if not config.scheduled_scans_enabled:
+        return None
+    if config.interval_minutes <= 0:
+        return None
+    if config.last_scheduled_scan_at is None:
+        return now or datetime.now(timezone.utc)
+    return config.last_scheduled_scan_at + timedelta(minutes=config.interval_minutes)
+
+
 def should_enqueue_scheduled_scan(config: ScannerConfig, now: datetime | None = None) -> bool:
-    if not config.enabled:
+    if not config.scheduled_scans_enabled:
         return False
     if config.interval_minutes <= 0:
         return False

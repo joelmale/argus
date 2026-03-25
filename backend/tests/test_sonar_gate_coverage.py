@@ -786,6 +786,7 @@ async def test_update_scanner_config_normalizes_and_clamps_values(monkeypatch):
         db,
         ScannerConfigUpdateInput(
             enabled=False,
+            scheduled_scans_enabled=False,
             default_targets="  ",
             auto_detect_targets=True,
             default_profile="deep",

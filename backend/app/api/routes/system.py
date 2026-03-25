@@ -53,6 +53,7 @@ class BackupPolicyUpdateRequest(BaseModel):
 
 class ScannerConfigUpdateRequest(BaseModel):
     enabled: bool
+    scheduled_scans_enabled: bool
     default_targets: str | None = None
     auto_detect_targets: bool
     default_profile: str
@@ -135,6 +136,7 @@ def _serialize_scanner_config(config, effective) -> dict:
     return {
         "id": config.id,
         "enabled": config.enabled,
+        "scheduled_scans_enabled": config.scheduled_scans_enabled,
         "default_targets": config.default_targets,
         "auto_detect_targets": config.auto_detect_targets,
         "detected_targets": effective.detected_targets,
@@ -173,6 +175,7 @@ def _serialize_scanner_config(config, effective) -> dict:
         "internet_lookup_budget": config.internet_lookup_budget,
         "internet_lookup_timeout_seconds": config.internet_lookup_timeout_seconds,
         "last_scheduled_scan_at": config.last_scheduled_scan_at.isoformat() if config.last_scheduled_scan_at else None,
+        "next_scheduled_scan_at": effective.next_scheduled_scan_at.isoformat() if effective.next_scheduled_scan_at else None,
         "created_at": config.created_at.isoformat(),
         "updated_at": config.updated_at.isoformat(),
     }
@@ -463,6 +466,7 @@ async def write_scanner_config(
             db,
             ScannerConfigUpdateInput(
                 enabled=payload.enabled,
+                scheduled_scans_enabled=payload.scheduled_scans_enabled,
                 default_targets=payload.default_targets,
                 auto_detect_targets=payload.auto_detect_targets,
                 default_profile=payload.default_profile,

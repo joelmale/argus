@@ -100,6 +100,7 @@ async def test_scanner_config_routes_persist_runtime_settings(api_client, admin_
         headers=headers,
         json={
             "enabled": True,
+            "scheduled_scans_enabled": True,
             "default_targets": None,
             "auto_detect_targets": False,
             "default_profile": "balanced",
@@ -130,6 +131,7 @@ async def test_scanner_config_routes_persist_runtime_settings(api_client, admin_
 
     payload = {
         "enabled": True,
+        "scheduled_scans_enabled": True,
         "default_targets": "192.168.96.0/20",
         "auto_detect_targets": False,
         "default_profile": "deep",
@@ -159,10 +161,12 @@ async def test_scanner_config_routes_persist_runtime_settings(api_client, admin_
     assert updated.status_code == 200
     body = updated.json()
     assert body["effective_targets"] == "192.168.96.0/20"
+    assert body["scheduled_scans_enabled"] is True
     assert body["snmp_version"] == "3"
     assert body["snmp_v3_username"] == "argus"
     assert body["fingerprint_ai_enabled"] is True
     assert body["internet_lookup_enabled"] is True
+    assert body["next_scheduled_scan_at"] is not None
 
     fetched = await api_client.get("/api/v1/system/scanner-config", headers=headers)
     assert fetched.status_code == 200

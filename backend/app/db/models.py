@@ -441,6 +441,7 @@ class ScannerConfig(Base):
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     enabled: Mapped[bool] = mapped_column(Boolean, default=True)
+    scheduled_scans_enabled: Mapped[bool] = mapped_column(Boolean, default=False)
     default_targets: Mapped[str | None] = mapped_column(Text)
     auto_detect_targets: Mapped[bool] = mapped_column(Boolean, default=True)
     default_profile: Mapped[str] = mapped_column(String(32), default="balanced")

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -9,6 +10,7 @@ from app.db.session import AsyncSessionLocal
 from app.scanner.config import (
     AUTO_TARGET_SENTINEL,
     clear_inventory,
+    compute_next_scheduled_scan_at,
     has_meaningful_scan_evidence,
     resolve_scan_targets,
     should_enqueue_scheduled_scan,
@@ -42,11 +44,53 @@ def test_resolve_scan_targets_uses_auto_sentinel_when_enabled():
 
 
 def test_should_enqueue_scheduled_scan_respects_enablement():
-    enabled = ScannerConfig(enabled=True, auto_detect_targets=True, default_profile="balanced", interval_minutes=60, concurrent_hosts=10)
-    disabled = ScannerConfig(enabled=False, auto_detect_targets=True, default_profile="balanced", interval_minutes=60, concurrent_hosts=10)
+    enabled = ScannerConfig(
+        enabled=True,
+        scheduled_scans_enabled=True,
+        auto_detect_targets=True,
+        default_profile="balanced",
+        interval_minutes=60,
+        concurrent_hosts=10,
+    )
+    disabled = ScannerConfig(
+        enabled=True,
+        scheduled_scans_enabled=False,
+        auto_detect_targets=True,
+        default_profile="balanced",
+        interval_minutes=60,
+        concurrent_hosts=10,
+    )
 
     assert should_enqueue_scheduled_scan(enabled) is True
     assert should_enqueue_scheduled_scan(disabled) is False
+
+
+def test_compute_next_scheduled_scan_at_returns_none_when_disabled():
+    config = ScannerConfig(
+        enabled=True,
+        scheduled_scans_enabled=False,
+        auto_detect_targets=True,
+        default_profile="balanced",
+        interval_minutes=60,
+        concurrent_hosts=10,
+    )
+
+    assert compute_next_scheduled_scan_at(config) is None
+
+
+def test_compute_next_scheduled_scan_at_uses_last_run_plus_interval():
+    now = datetime.now(timezone.utc)
+    config = ScannerConfig(
+        enabled=True,
+        scheduled_scans_enabled=True,
+        auto_detect_targets=True,
+        default_profile="balanced",
+        interval_minutes=30,
+        concurrent_hosts=10,
+        last_scheduled_scan_at=now,
+    )
+
+    assert compute_next_scheduled_scan_at(config) == now + timedelta(minutes=30)
 
 
 def test_has_meaningful_scan_evidence_rejects_empty_ping_noise():
