@@ -17,6 +17,10 @@ interface AssetTableProps {
   readonly assets: Asset[]
   readonly isLoading: boolean
   readonly isError: boolean
+  readonly canManageAssets?: boolean
+  readonly selectedAssetIds?: string[]
+  readonly onToggleAssetSelection?: (assetId: string) => void
+  readonly onToggleAllVisible?: (assetIds: string[]) => void
 }
 
 type AssetView = {
@@ -159,7 +163,15 @@ function filterMenuButtonClass(selectedValue: string): string {
   return 'border-gray-200 dark:border-zinc-700 hover:text-zinc-800 dark:hover:text-zinc-200'
 }
 
-export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
+export function AssetTable({
+  assets,
+  isLoading,
+  isError,
+  canManageAssets = false,
+  selectedAssetIds = [],
+  onToggleAssetSelection,
+  onToggleAllVisible,
+}: AssetTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('ip')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
   const [openFilter, setOpenFilter] = useState<FilterKey | null>(null)
@@ -234,13 +246,17 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
     && filterValueMatches(normalizeFilterValue(view.statusLabel), filters.status)
     && filterValueMatches(normalizeFilterValue(view.lastSeenBucket), filters.last_seen)
   )
-  const loadingRows = Array.from({ length: 8 }, (_, index) => <SkeletonRow key={`asset-skeleton-${index}`} />)
+  const loadingRows = Array.from({ length: 8 }, (_, index) => (
+    <SkeletonRow key={`asset-skeleton-${index}`} columnCount={canManageAssets ? 10 : 9} />
+  ))
   const sortIconByDirection = {
     asc: <ArrowUp className="w-3.5 h-3.5" />,
     desc: <ArrowDown className="w-3.5 h-3.5" />,
   } satisfies Record<SortDirection, ReactNode>
 
   const sortedViews = [...filteredViews].sort((left, right) => sortAssets(left, right, sortKey, sortDirection))
+  const visibleAssetIds = sortedViews.map((view) => view.asset.id)
+  const allVisibleSelected = visibleAssetIds.length > 0 && visibleAssetIds.every((assetId) => selectedAssetIds.includes(assetId))
   let tableRows: ReactNode = sortedViews.map((view) => (
     <AssetRow
       key={view.asset.id}
@@ -248,6 +264,9 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
       canEnrich={currentUser?.role === 'admin'}
       isEnriching={isEnrichmentPending && queuedEnrichmentIp === view.asset.ip_address}
       onRunEnrichment={buildEnrichmentHandler(view.asset.ip_address, triggerEnrichment, setQueuedEnrichmentIp)}
+      showSelection={canManageAssets}
+      selected={selectedAssetIds.includes(view.asset.id)}
+      onToggleSelected={() => onToggleAssetSelection?.(view.asset.id)}
     />
   ))
 
@@ -256,7 +275,7 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
   } else if (sortedViews.length === 0) {
     tableRows = (
       <tr>
-        <td colSpan={9} className="px-4 py-16 text-center text-zinc-400">
+        <td colSpan={canManageAssets ? 10 : 9} className="px-4 py-16 text-center text-zinc-400">
           No assets match the current filters.
         </td>
       </tr>
@@ -297,6 +316,17 @@ export function AssetTable({ assets, isLoading, isError }: AssetTableProps) {
         <table className="w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800/50">
+              {canManageAssets && (
+                <th className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={allVisibleSelected}
+                    aria-label="Select all visible assets"
+                    onChange={() => onToggleAllVisible?.(visibleAssetIds)}
+                    className="h-4 w-4 rounded border-gray-300 text-sky-500 focus:ring-sky-500"
+                  />
+                </th>
+              )}
               {columns.map((column) => (
                 <th key={column.key} className="px-4 py-3 text-left text-xs font-medium text-zinc-500 dark:text-zinc-400 uppercase tracking-wider whitespace-nowrap">
                   <div className="flex items-center gap-1.5">
@@ -418,11 +448,17 @@ function AssetRow({
   canEnrich,
   isEnriching,
   onRunEnrichment,
+  showSelection,
+  selected,
+  onToggleSelected,
 }: Readonly<{
   asset: Asset
   canEnrich: boolean
   isEnriching: boolean
   onRunEnrichment: () => void
+  showSelection: boolean
+  selected: boolean
+  onToggleSelected?: () => void
 }>) {
   const ai = (asset as any).ai_analysis
   const deviceClass = ai?.device_class ?? asset.device_type ?? 'unknown'
@@ -434,6 +470,17 @@ function AssetRow({
 
   return (
     <tr className="hover:bg-gray-50 dark:hover:bg-zinc-800/50 transition-colors group">
+      {showSelection && (
+        <td className="px-4 py-3">
+          <input
+            type="checkbox"
+            checked={selected}
+            aria-label={`Select asset ${asset.ip_address}`}
+            onChange={() => onToggleSelected?.()}
+            className="h-4 w-4 rounded border-gray-300 text-sky-500 focus:ring-sky-500"
+          />
+        </td>
+      )}
       <td className="px-4 py-3">
         <Link href={`/assets/${asset.id}`} className="font-mono text-sky-600 dark:text-sky-400 hover:underline tabular">
           {asset.ip_address}
@@ -503,8 +550,8 @@ function AssetRow({
   )
 }
 
-function SkeletonRow() {
-  const widths = Array.from({ length: 9 }, (_, index) => ({
+function SkeletonRow({ columnCount }: Readonly<{ columnCount: number }>) {
+  const widths = Array.from({ length: columnCount }, (_, index) => ({
     key: `asset-skeleton-cell-${index}`,
     width: `${60 + index * 10}%`,
   }))

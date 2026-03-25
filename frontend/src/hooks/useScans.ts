@@ -59,3 +59,13 @@ export function useQueueScan() {
     },
   })
 }
+
+export function useClearScanQueue() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: () => scansApi.clearQueue(),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['scans'] })
+    },
+  })
+}

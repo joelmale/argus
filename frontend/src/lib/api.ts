@@ -101,6 +101,7 @@ export const assetsApi = {
   addTag: (id: string, tag: string) => api.post(`/api/v1/assets/${id}/tags`, { tag }),
   removeTag: (id: string, tag: string) => api.delete(`/api/v1/assets/${id}/tags/${encodeURIComponent(tag)}`),
   delete: (id: string) => api.delete(`/api/v1/assets/${id}`),
+  bulkDelete: (asset_ids: string[]) => api.post('/api/v1/assets/bulk-delete', { asset_ids }),
   runPortScan: (id: string) => api.post(`/api/v1/assets/${id}/port-scan`),
   refreshAiAnalysis: (id: string) => api.post(`/api/v1/assets/${id}/ai-analysis/refresh`),
   getConfigBackupTarget: (id: string) => api.get(`/api/v1/assets/${id}/config-backup-target`),
@@ -130,6 +131,7 @@ export const scansApi = {
     api.post(`/api/v1/scans/${id}/control`, payload),
   queue: (id: string, payload: { action: "move_up" | "move_down" | "move_to_front" | "start_now" }) =>
     api.post(`/api/v1/scans/${id}/queue`, payload),
+  clearQueue: () => api.post("/api/v1/scans/queue/clear"),
 };
 
 export const findingsApi = {

@@ -39,6 +39,16 @@ export function useUpdateAsset() {
   })
 }
 
+export function useBulkDeleteAssets() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (assetIds: string[]) => assetsApi.bulkDelete(assetIds),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
 export function useRunAssetPortScan() {
   const qc = useQueryClient()
   return useMutation({

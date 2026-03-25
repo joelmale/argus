@@ -220,6 +220,10 @@ class ConfigBackupTargetRequest(BaseModel):
     enabled: bool = True
 
 
+class BulkDeleteAssetsRequest(BaseModel):
+    asset_ids: list[UUID]
+
+
 async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
     stmt = (
         select(Asset)
@@ -602,6 +606,23 @@ async def get_asset_evidence(asset_id: UUID, db: DBSession, _: CurrentUser):
 async def get_asset_probe_runs(asset_id: UUID, db: DBSession, _: CurrentUser):
     asset = await _load_asset(db, asset_id)
     return _serialize_asset(asset)["probe_runs"]
+
+
+@router.post("/bulk-delete")
+async def bulk_delete_assets(
+    payload: BulkDeleteAssetsRequest,
+    db: DBSession,
+    _: AdminUser,
+):
+    if not payload.asset_ids:
+        return {"deleted": 0}
+
+    result = await db.execute(select(Asset).where(Asset.id.in_(payload.asset_ids)))
+    assets = list(result.scalars().all())
+    for asset in assets:
+        await db.delete(asset)
+    await db.commit()
+    return {"deleted": len(assets)}
 
 
 @router.delete("/{asset_id}", status_code=204, responses=ASSET_NOT_FOUND_RESPONSE)

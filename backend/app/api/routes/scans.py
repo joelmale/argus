@@ -59,6 +59,11 @@ class ScanQueueRequest(BaseModel):
     action: str
 
 
+class ClearQueueResponse(BaseModel):
+    status: str
+    cancelled: int
+
+
 SCAN_NOT_FOUND_DETAIL = "Scan not found"
 SCAN_NOT_FOUND_RESPONSE = {404: {"description": SCAN_NOT_FOUND_DETAIL}}
 TRIGGER_SCAN_RESPONSES = {400: {"description": "Invalid or unroutable scan targets"}}
@@ -105,6 +110,25 @@ async def _cancel_child_scan_jobs(db: AsyncSession, parent_id: UUID | str, *, me
             "stage": "cancelled",
             "message": message,
         }
+
+
+async def _clear_pending_scan_queue(db: AsyncSession) -> int:
+    result = await db.execute(
+        select(ScanJob)
+        .where(ScanJob.parent_id.is_(None), ScanJob.status == "pending")
+        .order_by(ScanJob.queue_position.asc().nullslast(), ScanJob.created_at.asc())
+    )
+    jobs = list(result.scalars().all())
+    if not jobs:
+        return 0
+
+    finished_at = datetime.now(timezone.utc)
+    for job in jobs:
+        await _cancel_child_scan_jobs(db, job.id, message="Removed from queue by operator")
+        _mark_job_cancelled(job, finished_at=finished_at, message="Removed from queue by operator")
+
+    await db.commit()
+    return len(jobs)
 
 
 async def _resume_scan_job(job: ScanJob, db: AsyncSession) -> dict:
@@ -479,3 +503,12 @@ async def reorder_scan_queue(
         "action": action,
         "queue": _serialize_queue(queue),
     }
+
+
+@router.post("/queue/clear", response_model=ClearQueueResponse)
+async def clear_scan_queue(
+    db: DBSession,
+    _: AdminUser,
+):
+    cancelled = await _clear_pending_scan_queue(db)
+    return {"status": "ok", "cancelled": cancelled}

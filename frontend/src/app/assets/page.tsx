@@ -1,13 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useMemo, useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { AssetTable } from '@/components/assets/AssetTable'
-import { useAssets } from '@/hooks/useAssets'
+import { useAssets, useBulkDeleteAssets } from '@/hooks/useAssets'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useTriggerScan } from '@/hooks/useScans'
 import { assetsApi } from '@/lib/api'
-import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope } from 'lucide-react'
+import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope, Trash2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
@@ -53,6 +53,7 @@ async function handleExportReportJson() {
 export default function AssetsPage() {
   const [search, setSearch] = useState('')
   const [status, setStatus] = useState('')
+  const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
   const [recentCutoff] = useState(() => Date.now() - 24 * 60 * 60 * 1000)
 
   const { data: assets = [], isLoading, isError } = useAssets({
@@ -61,6 +62,8 @@ export default function AssetsPage() {
   })
   const { data: currentUser } = useCurrentUser()
   const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
+  const { mutate: bulkDeleteAssets, isPending: isBulkDeleting } = useBulkDeleteAssets()
+  const canManageAssets = currentUser?.role === 'admin'
 
   const clearFilters = () => { setSearch(''); setStatus('') }
   const hasFilters = search || status
@@ -80,6 +83,47 @@ export default function AssetsPage() {
       return deviceClass === 'unknown'
     })
     .map((asset) => asset.ip_address)
+  const selectedCount = selectedAssetIds.length
+  const visibleSelectedCount = useMemo(
+    () => assets.filter((asset) => selectedAssetIds.includes(asset.id)).length,
+    [assets, selectedAssetIds],
+  )
+
+  function toggleAssetSelection(assetId: string) {
+    setSelectedAssetIds((current) =>
+      current.includes(assetId)
+        ? current.filter((id) => id !== assetId)
+        : [...current, assetId],
+    )
+  }
+
+  function toggleAllVisible(assetIds: string[]) {
+    if (assetIds.length === 0) {
+      return
+    }
+    setSelectedAssetIds((current) => {
+      const allVisibleSelected = assetIds.every((assetId) => current.includes(assetId))
+      if (allVisibleSelected) {
+        return current.filter((id) => !assetIds.includes(id))
+      }
+      return [...new Set([...current, ...assetIds])]
+    })
+  }
+
+  function handleBulkDelete() {
+    if (selectedAssetIds.length === 0) {
+      return
+    }
+    const confirmed = globalThis.window.confirm(
+      `Delete ${selectedAssetIds.length} selected asset${selectedAssetIds.length === 1 ? '' : 's'}? This cannot be undone.`,
+    )
+    if (!confirmed) {
+      return
+    }
+    bulkDeleteAssets(selectedAssetIds, {
+      onSuccess: () => setSelectedAssetIds([]),
+    })
+  }
 
   return (
     <AppShell>
@@ -213,7 +257,46 @@ export default function AssetsPage() {
           </span>
         </div>
 
-        <AssetTable assets={assets} isLoading={isLoading} isError={isError} />
+        {canManageAssets && (
+          <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-gray-200 bg-white px-4 py-3 dark:border-zinc-800 dark:bg-zinc-900">
+            <div className="text-sm text-zinc-500">
+              {selectedCount === 0
+                ? 'Select assets to delete them in bulk.'
+                : `${selectedCount} selected, ${visibleSelectedCount} visible in the current filter.`}
+            </div>
+            <div className="flex flex-wrap gap-2">
+              {selectedCount > 0 && (
+                <button
+                  type="button"
+                  onClick={() => setSelectedAssetIds([])}
+                  className="inline-flex items-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm text-zinc-600 dark:border-zinc-700 dark:text-zinc-300"
+                >
+                  <X className="w-3.5 h-3.5" />
+                  Clear selection
+                </button>
+              )}
+              <button
+                type="button"
+                disabled={selectedCount === 0 || isBulkDeleting}
+                onClick={handleBulkDelete}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300"
+              >
+                {isBulkDeleting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                Delete selected
+              </button>
+            </div>
+          </div>
+        )}
+
+        <AssetTable
+          assets={assets}
+          isLoading={isLoading}
+          isError={isError}
+          canManageAssets={!!canManageAssets}
+          selectedAssetIds={selectedAssetIds}
+          onToggleAssetSelection={toggleAssetSelection}
+          onToggleAllVisible={toggleAllVisible}
+        />
       </div>
     </AppShell>
   )

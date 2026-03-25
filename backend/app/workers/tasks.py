@@ -25,6 +25,7 @@ from app.db.models import ScanJob
 
 log = logging.getLogger(__name__)
 _passive_arp_thread: threading.Thread | None = None
+_queue_resume_thread: threading.Thread | None = None
 
 celery_app = Celery("argus", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
 
@@ -840,6 +841,26 @@ async def _dispatch_next_scan_if_idle(db) -> None:
     log.info("Queued scan started: job_id=%s queue_position=%s", next_job.id, next_job.queue_position)
 
 
+async def _resume_pending_queue_on_startup() -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with session_factory() as db:
+            if await _has_active_scan(db):
+                return
+            next_job = await _get_next_queued_job(db)
+            if next_job is None:
+                return
+            await db.commit()
+            run_scan_job.delay(str(next_job.id))
+            log.info("Scanner startup resumed queued scan: job_id=%s queue_position=%s", next_job.id, next_job.queue_position)
+    finally:
+        await engine.dispose()
+
+
 def _get_broadcast_fn():
     """Return a broadcast function that publishes events to Redis pub/sub."""
     return _publish_event
@@ -901,8 +922,22 @@ def _start_passive_arp_listener(**_: object) -> None:
     _passive_arp_thread.start()
 
 
+@worker_ready.connect
+def _resume_scan_queue_on_worker_ready(**_: object) -> None:
+    global _queue_resume_thread
+    if _queue_resume_thread and _queue_resume_thread.is_alive():
+        return
+
+    _queue_resume_thread = threading.Thread(target=_run_resume_pending_queue_on_startup, daemon=True)
+    _queue_resume_thread.start()
+
+
 def _run_passive_arp_listener() -> None:
     asyncio.run(_passive_arp_loop())
+
+
+def _run_resume_pending_queue_on_startup() -> None:
+    asyncio.run(_resume_pending_queue_on_startup())
 
 
 async def _passive_arp_loop() -> None:

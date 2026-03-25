@@ -2436,6 +2436,26 @@ async def test_scan_route_queue_helpers_cover_reorder_and_start_now(monkeypatch)
 
 
 @pytest.mark.asyncio
+async def test_scan_route_clear_pending_queue_cancels_all():
+    queued_a = ScanJob(id=uuid4(), status="pending", queue_position=1, created_at=datetime.now(timezone.utc))
+    queued_b = ScanJob(id=uuid4(), status="pending", queue_position=2, created_at=datetime.now(timezone.utc))
+
+    class _QueueDb(_FakeDb):
+        async def execute(self, stmt):
+            return _ScalarResult([queued_a, queued_b])
+
+    db = _QueueDb()
+    cleared = await scans_routes._clear_pending_scan_queue(db)
+    assert cleared == 2
+    assert queued_a.status == "cancelled"
+    assert queued_b.status == "cancelled"
+    assert db.committed is True
+
+    response = await scans_routes.clear_scan_queue(_QueueDb(), object())
+    assert response == {"status": "ok", "cancelled": 2}
+
+
+@pytest.mark.asyncio
 async def test_pipeline_helpers_cover_discovery_control_and_early_return(monkeypatch):
     payload = _progress_payload("job-1", "discovery", 0.1, ScanSummary(job_id="job-1", targets="x", profile=ScanProfile.BALANCED), message="hi")
     assert payload["data"]["message"] == "hi"
@@ -2759,6 +2779,40 @@ async def test_scans_routes_cover_ingest_get_scan_control_and_reorder(monkeypatc
 
 
 @pytest.mark.asyncio
+async def test_worker_startup_resume_dispatches_first_pending_job(monkeypatch):
+    started = []
+
+    class _Runner:
+        @staticmethod
+        def delay(job_id: str):
+            started.append(job_id)
+
+    class _Engine:
+        async def dispose(self):
+            return None
+
+    class _ContextSessionFactory:
+        def __call__(self):
+            return self
+
+        async def __aenter__(self):
+            return _FakeDb()
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return None
+
+    job = SimpleNamespace(id=uuid4(), queue_position=1)
+    monkeypatch.setattr(worker_tasks, "run_scan_job", _Runner())
+    monkeypatch.setattr(worker_tasks, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(worker_tasks, "_get_next_queued_job", lambda db: _completed_task(job))
+    monkeypatch.setattr("sqlalchemy.ext.asyncio.create_async_engine", lambda *args, **kwargs: _Engine())
+    monkeypatch.setattr("sqlalchemy.ext.asyncio.async_sessionmaker", lambda *args, **kwargs: _ContextSessionFactory())
+
+    await worker_tasks._resume_pending_queue_on_startup()
+    assert started == [str(job.id)]
+
+
+@pytest.mark.asyncio
 async def test_assets_routes_cover_update_tags_backups_and_reports(monkeypatch):
     now = datetime.now(timezone.utc)
     asset = Asset(id=uuid4(), ip_address="192.168.1.220", status="online", first_seen=now, last_seen=now, hostname="edge")
@@ -2802,6 +2856,15 @@ async def test_assets_routes_cover_update_tags_backups_and_reports(monkeypatch):
     fresh_tag_db = _FakeDb(get_result=asset, execute_result=_ScalarResult([]))
     tag = await assets_routes.add_asset_tag(asset.id, assets_routes.AssetTagRequest(tag=" NewTag "), fresh_tag_db, object())
     assert tag.tag == "newtag"
+
+    bulk_delete_db = _AssetOpsDb()
+    deleted = await assets_routes.bulk_delete_assets(
+        assets_routes.BulkDeleteAssetsRequest(asset_ids=[asset.id]),
+        bulk_delete_db,
+        object(),
+    )
+    assert deleted == {"deleted": 1}
+    assert bulk_delete_db.committed is True
 
     delete_tag_db = _FakeDb(execute_result=_ScalarResult([AssetTag(asset_id=asset.id, tag="core")]))
     await assets_routes.delete_asset_tag(asset.id, "CORE", delete_tag_db, object())

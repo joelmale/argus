@@ -6,12 +6,12 @@ import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanHistory } from '@/components/scans/ScanHistory'
-import { useScans, useTriggerScan } from '@/hooks/useScans'
+import { useClearScanQueue, useScans, useTriggerScan } from '@/hooks/useScans'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import {
   ScanLine, CheckCircle, XCircle,
-  Cpu, Loader2, Radio, Target, Layers,
+  Cpu, Loader2, Radio, Target, Layers, Trash2,
 } from 'lucide-react'
 
 const PROFILES = [
@@ -43,6 +43,7 @@ export default function ScansPage() {
 
   const { data: scans = [], isLoading } = useScans()
   const { mutate: trigger, isPending } = useTriggerScan()
+  const { mutate: clearQueue, isPending: isClearingQueue } = useClearScanQueue()
   const { activeScan } = useAppStore()
   const { data: currentUser } = useCurrentUser()
   const isViewer = currentUser?.role === 'viewer'
@@ -70,6 +71,7 @@ export default function ScansPage() {
   const stageLabel = activeScan?.stage ? formatScanStage(activeScan.stage) : null
   const inputBorderClass = error ? 'border-red-400' : 'border-gray-200 dark:border-zinc-700'
   const queuedScanLabel = runningScans.length === 1 ? 'scan' : 'scans'
+  const queuedScans = scans.filter((scan) => scan.status === 'pending')
   const followUpButtonClass = isPending || activeScan
     ? 'bg-zinc-200 text-zinc-400 dark:bg-zinc-800'
     : 'bg-red-500 text-white hover:bg-red-600'
@@ -328,6 +330,25 @@ export default function ScansPage() {
                 <span className="ml-2 text-xs text-zinc-400 font-normal">{scans.length} jobs</span>
               )}
             </h3>
+            {!isViewer && queuedScans.length > 0 && (
+              <button
+                type="button"
+                disabled={isClearingQueue}
+                onClick={() => {
+                  const confirmed = globalThis.window.confirm(
+                    `Clear ${queuedScans.length} queued scan${queuedScans.length === 1 ? '' : 's'}? Running scans are not affected.`,
+                  )
+                  if (!confirmed) {
+                    return
+                  }
+                  clearQueue()
+                }}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300"
+              >
+                {isClearingQueue ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
+                Clear queue
+              </button>
+            )}
           </div>
           <ScanHistory scans={scans} isLoading={isLoading} />
         </div>
