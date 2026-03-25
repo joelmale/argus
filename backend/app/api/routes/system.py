@@ -1,8 +1,11 @@
 from __future__ import annotations
 
+import asyncio
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
+import anthropic
+from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -59,6 +62,13 @@ class ScannerConfigUpdateRequest(BaseModel):
     top_ports_count: int = 1000
     deep_probe_timeout_seconds: int = 6
     ai_after_scan_enabled: bool = True
+    ai_backend: str = "ollama"
+    ai_model: str | None = None
+    fingerprint_ai_backend: str = "ollama"
+    ollama_base_url: str | None = None
+    openai_base_url: str | None = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
     passive_arp_enabled: bool = True
     passive_arp_interface: str = "eth0"
     snmp_enabled: bool = True
@@ -136,6 +146,13 @@ def _serialize_scanner_config(config, effective) -> dict:
         "top_ports_count": config.top_ports_count,
         "deep_probe_timeout_seconds": config.deep_probe_timeout_seconds,
         "ai_after_scan_enabled": config.ai_after_scan_enabled,
+        "ai_backend": effective.ai_backend,
+        "ai_model": effective.ai_model,
+        "fingerprint_ai_backend": effective.fingerprint_ai_backend,
+        "ollama_base_url": effective.ollama_base_url,
+        "openai_base_url": effective.openai_base_url,
+        "openai_api_key": effective.openai_api_key,
+        "anthropic_api_key": effective.anthropic_api_key,
         "passive_arp_enabled": config.passive_arp_enabled,
         "passive_arp_interface": config.passive_arp_interface,
         "snmp_enabled": config.snmp_enabled,
@@ -161,6 +178,76 @@ def _serialize_scanner_config(config, effective) -> dict:
     }
 
 
+async def _test_openai_compatible_provider(*, base_url: str, api_key: str, model: str, timeout_seconds: int = 15) -> dict:
+    client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+    async with asyncio.timeout(timeout_seconds):
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[{"role": "user", "content": "Reply with OK"}],
+            temperature=0,
+            max_tokens=5,
+        )
+    content = response.choices[0].message.content or ""
+    return {
+        "ok": True,
+        "model": model,
+        "message": (content or "Connection OK").strip(),
+    }
+
+
+async def _test_anthropic_provider(*, api_key: str, model: str, timeout_seconds: int = 15) -> dict:
+    client = anthropic.AsyncAnthropic(api_key=api_key)
+    async with asyncio.timeout(timeout_seconds):
+        response = await client.messages.create(
+            model=model,
+            max_tokens=5,
+            messages=[{"role": "user", "content": "Reply with OK"}],
+        )
+    content_parts = [block.text for block in response.content if getattr(block, "type", "") == "text"]
+    return {
+        "ok": True,
+        "model": model,
+        "message": ("\n".join(content_parts) or "Connection OK").strip(),
+    }
+
+
+async def _test_ai_provider_connection(provider: str, effective) -> dict:
+    normalized = (provider or "none").lower()
+    if normalized == "none":
+        return {"ok": True, "provider": "none", "message": "Rule-based fallback selected."}
+    if normalized == "ollama":
+        return {
+            "provider": "ollama",
+            **await _test_openai_compatible_provider(
+                base_url=effective.ollama_base_url,
+                api_key="ollama",
+                model=effective.ai_model if effective.ai_backend == "ollama" else effective.fingerprint_ai_model,
+            ),
+        }
+    if normalized == "openai":
+        if not effective.openai_api_key:
+            return {"ok": False, "provider": "openai", "message": "OpenAI API key is not configured."}
+        return {
+            "provider": "openai",
+            **await _test_openai_compatible_provider(
+                base_url=effective.openai_base_url,
+                api_key=effective.openai_api_key,
+                model=effective.ai_model if effective.ai_backend == "openai" else effective.fingerprint_ai_model,
+            ),
+        }
+    if normalized == "anthropic":
+        if not effective.anthropic_api_key:
+            return {"ok": False, "provider": "anthropic", "message": "Anthropic API key is not configured."}
+        return {
+            "provider": "anthropic",
+            **await _test_anthropic_provider(
+                api_key=effective.anthropic_api_key,
+                model=effective.ai_model if effective.ai_backend == "anthropic" else effective.fingerprint_ai_model,
+            ),
+        }
+    return {"ok": False, "provider": normalized, "message": f"Unsupported AI provider '{normalized}'."}
+
+
 @router.get("/backup-drivers")
 async def get_backup_drivers(_: AdminUser):
     return list_backup_drivers()
@@ -184,6 +271,23 @@ async def get_fingerprint_datasets(
     rows = await list_datasets(db)
     await db.commit()
     return [_serialize_dataset(row) for row in rows]
+
+
+@router.post("/ai/test")
+async def test_ai_configuration(
+    _: AdminUser,
+    db: DBSession,
+):
+    _, effective = await read_effective_scanner_config(db)
+    try:
+        analyst = await _test_ai_provider_connection(effective.ai_backend, effective)
+        fingerprint = await _test_ai_provider_connection(effective.fingerprint_ai_backend, effective)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"AI connection test failed: {exc}") from exc
+    return {
+        "analyst": analyst,
+        "fingerprint": fingerprint,
+    }
 
 
 @router.post("/fingerprint-datasets/{dataset_key}/refresh", responses=FINGERPRINT_REFRESH_RESPONSES)
@@ -368,6 +472,13 @@ async def write_scanner_config(
                 top_ports_count=payload.top_ports_count,
                 deep_probe_timeout_seconds=payload.deep_probe_timeout_seconds,
                 ai_after_scan_enabled=payload.ai_after_scan_enabled,
+                ai_backend=payload.ai_backend,
+                ai_model=payload.ai_model,
+                fingerprint_ai_backend=payload.fingerprint_ai_backend,
+                ollama_base_url=payload.ollama_base_url,
+                openai_base_url=payload.openai_base_url,
+                openai_api_key=payload.openai_api_key,
+                anthropic_api_key=payload.anthropic_api_key,
                 passive_arp_enabled=payload.passive_arp_enabled,
                 passive_arp_interface=payload.passive_arp_interface,
                 snmp_enabled=payload.snmp_enabled,

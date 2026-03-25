@@ -1,8 +1,5 @@
 """
-Agent factory — returns the appropriate analyst based on available config.
-
-Priority: Anthropic API (if key set) → Ollama (if reachable) → rule-based fallback.
-Override with AI_BACKEND env var: "ollama" | "anthropic" | "none"
+Agent factory — returns the configured analyst backend.
 """
 from __future__ import annotations
 
@@ -10,6 +7,7 @@ import logging
 from typing import TYPE_CHECKING
 
 from app.core.config import settings
+from app.scanner.config import EffectiveScannerConfig
 from app.scanner.agent.base import BaseAnalyst
 
 if TYPE_CHECKING:
@@ -38,19 +36,38 @@ class RuleBasedFallback(BaseAnalyst):
         )
 
 
-def get_analyst() -> BaseAnalyst:
-    """Return the best available analyst backend."""
-    backend = settings.AI_BACKEND.lower()
+def get_analyst(config: EffectiveScannerConfig | None = None) -> BaseAnalyst:
+    """Return the configured analyst backend."""
+    backend = (config.ai_backend if config else settings.AI_BACKEND).lower()
+    model = config.ai_model if config else None
 
-    if backend == "anthropic" and settings.ANTHROPIC_API_KEY:
-        log.info("AI analyst: Anthropic API (%s)", settings.ANTHROPIC_MODEL)
-        from app.scanner.agent.anthropic_analyst import AnthropicAnalyst
-        return AnthropicAnalyst()
+    if backend == "anthropic":
+        api_key = config.anthropic_api_key if config else settings.ANTHROPIC_API_KEY
+        if api_key:
+            log.info("AI analyst: Anthropic (%s)", model or settings.ANTHROPIC_MODEL)
+            from app.scanner.agent.anthropic_analyst import AnthropicAnalyst
+            return AnthropicAnalyst(api_key=api_key, model=model)
 
-    if backend in ("ollama", "auto"):
-        log.info("AI analyst: Ollama (%s @ %s)", settings.OLLAMA_MODEL, settings.OLLAMA_BASE_URL)
-        from app.scanner.agent.ollama_analyst import OllamaAnalyst
-        return OllamaAnalyst()
+    if backend == "openai":
+        api_key = config.openai_api_key if config else settings.OPENAI_API_KEY
+        if api_key:
+            log.info("AI analyst: OpenAI (%s @ %s)", model or settings.OPENAI_MODEL, config.openai_base_url if config else settings.OPENAI_BASE_URL)
+            from app.scanner.agent.openai_analyst import OpenAIAnalyst
+            return OpenAIAnalyst(
+                base_url=config.openai_base_url if config else settings.OPENAI_BASE_URL,
+                api_key=api_key,
+                model=model or settings.OPENAI_MODEL,
+            )
 
-    log.info("AI analyst: rule-based fallback (set AI_BACKEND=ollama or AI_BACKEND=anthropic)")
+    if backend == "ollama":
+        log.info("AI analyst: Ollama (%s @ %s)", model or settings.OLLAMA_MODEL, config.ollama_base_url if config else settings.OLLAMA_BASE_URL)
+        from app.scanner.agent.openai_compatible_analyst import OpenAICompatibleAnalyst
+        return OpenAICompatibleAnalyst(
+            base_url=config.ollama_base_url if config else settings.OLLAMA_BASE_URL,
+            api_key="ollama",
+            model=model or settings.OLLAMA_MODEL,
+            backend_label="ollama",
+        )
+
+    log.info("AI analyst: rule-based fallback")
     return RuleBasedFallback()

@@ -22,13 +22,16 @@ from app.backups import (
     list_backup_snapshots,
     upsert_backup_target,
 )
-from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, User, WirelessAssociation
+from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, ScanJob, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 from app.scanner.agent import get_analyst
+from app.scanner.config import read_effective_scanner_config
+from app.scanner.config import materialize_scan_targets, validate_scan_targets_routable
 from app.scanner.models import DeviceClass, DiscoveredHost, HostScanResult, ScanProfile
 from app.scanner.pipeline import _investigate_host
 from app.scanner.stages import portscan
+from app.workers.tasks import _has_active_scan, _next_queue_position, run_scan_job
 
 VALID_DEVICE_TYPES = {member.value for member in DeviceClass}
 ASSET_NOT_FOUND_DETAIL = "Asset not found"
@@ -478,26 +481,31 @@ async def run_asset_port_scan(
     _: AdminUser,
 ):
     asset = await _load_asset(db, asset_id)
-    host = DiscoveredHost(
-        ip_address=asset.ip_address,
-        mac_address=asset.mac_address,
-        discovery_method="manual",
-        nmap_hostname=asset.hostname,
-    )
-    ports, os_fp = await portscan.scan_host(host, ScanProfile.BALANCED)
-    result = HostScanResult(
-        host=host,
-        ports=ports,
-        os_fingerprint=os_fp,
-        reverse_hostname=asset.hostname,
-        scan_profile=ScanProfile.BALANCED,
-    )
+    targets = materialize_scan_targets(asset.ip_address)
+    route_error = validate_scan_targets_routable(targets)
+    if route_error:
+        raise HTTPException(status_code=400, detail=route_error)
 
-    from app.db.upsert import upsert_scan_result
-
-    await upsert_scan_result(db, result)
+    job = ScanJob(
+        targets=targets,
+        scan_type=ScanProfile.BALANCED.value,
+        triggered_by="manual",
+        queue_position=await _next_queue_position(db),
+        result_summary={
+            "stage": "queued",
+            "message": f"Queued targeted port scan for {asset.ip_address}",
+            "asset_id": str(asset.id),
+        },
+    )
+    db.add(job)
     await db.commit()
-    return _serialize_asset(await _load_asset(db, asset_id))
+    await db.refresh(job)
+
+    should_start = not await _has_active_scan(db) and job.queue_position == 1
+    if should_start:
+        run_scan_job.delay(str(job.id))
+        return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
+    return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
 @router.post("/{asset_id}/ai-analysis/refresh", responses=ASSET_NOT_FOUND_RESPONSE)
@@ -507,6 +515,7 @@ async def run_asset_ai_refresh(
     _: AdminUser,
 ):
     asset = await _load_asset(db, asset_id)
+    _, runtime_config = await read_effective_scanner_config(db)
     host = DiscoveredHost(
         ip_address=asset.ip_address,
         mac_address=asset.mac_address,
@@ -521,7 +530,7 @@ async def run_asset_ai_refresh(
         nmap_hostname=host.nmap_hostname,
         nmap_vendor=asset.vendor,
         profile=ScanProfile.BALANCED,
-        analyst=get_analyst(),
+        analyst=get_analyst(runtime_config),
         run_deep_probes=True,
         deep_probe_timeout_seconds=6,
         semaphore=asyncio.Semaphore(1),

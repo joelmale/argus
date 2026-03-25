@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 from typing import Any
 
+import anthropic
 from openai import AsyncOpenAI
 
 from app.core.config import settings
@@ -70,22 +71,41 @@ async def synthesize_fingerprint(
     *,
     asset: dict[str, Any],
     evidence: list[dict[str, Any]],
+    backend: str,
     model: str,
     prompt_suffix: str | None,
+    base_url: str | None = None,
+    api_key: str | None = None,
 ) -> dict[str, Any]:
-    client = AsyncOpenAI(base_url=settings.OLLAMA_BASE_URL, api_key="ollama")
     prompt = build_fingerprint_prompt(asset, evidence, prompt_suffix)
-    response = await client.chat.completions.create(
-        model=model,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": prompt},
-        ],
-        temperature=0.1,
-        max_tokens=500,
-    )
-    content = response.choices[0].message.content or "{}"
+    backend_name = (backend or "ollama").lower()
+
+    if backend_name == "anthropic":
+        client = anthropic.AsyncAnthropic(api_key=api_key or settings.ANTHROPIC_API_KEY)
+        response = await client.messages.create(
+            model=model,
+            max_tokens=500,
+            system=SYSTEM_PROMPT,
+            messages=[{"role": "user", "content": prompt}],
+        )
+        content_parts = [block.text for block in response.content if getattr(block, "type", "") == "text"]
+        content = "\n".join(content_parts) or "{}"
+    else:
+        resolved_base_url = base_url or settings.OLLAMA_BASE_URL
+        resolved_api_key = api_key or ("ollama" if backend_name == "ollama" else settings.OPENAI_API_KEY)
+        client = AsyncOpenAI(base_url=resolved_base_url, api_key=resolved_api_key)
+        response = await client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": prompt},
+            ],
+            temperature=0.1,
+            max_tokens=500,
+        )
+        content = response.choices[0].message.content or "{}"
     parsed = parse_fingerprint_response(content)
     parsed["model_used"] = model
     parsed["prompt_version"] = PROMPT_VERSION
+    parsed["backend_used"] = backend_name
     return parsed

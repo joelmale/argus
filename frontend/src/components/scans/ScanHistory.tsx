@@ -423,6 +423,13 @@ function renderScanActions(
       isControlling,
       () => onQueueAction({ id: scan.id, action: queueAction.action }),
     )))
+    actions.push(buildActionButton(
+      `${scan.id}:cancel-pending`,
+      'Cancel',
+      'px-3 py-1.5 rounded-lg text-xs border border-red-200 text-red-600 dark:border-red-900 dark:text-red-300 disabled:opacity-50',
+      isControlling,
+      () => onControl({ id: scan.id, action: 'cancel', mode: 'discard' }),
+    ))
   }
   if (scan.status === 'paused') {
     actions.push(buildActionButton(

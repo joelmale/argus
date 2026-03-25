@@ -142,7 +142,12 @@ async def run_scan(
     analyst = None
     if _should_enable_ai(enable_ai, mode_behavior):
         from app.scanner.agent import get_analyst
-        analyst = get_analyst()
+        if db_session is not None:
+            from app.scanner.config import read_effective_scanner_config
+            _, runtime_config = await read_effective_scanner_config(db_session)
+            analyst = get_analyst(runtime_config)
+        else:
+            analyst = get_analyst()
 
     tasks = _build_investigation_tasks(
         hosts,

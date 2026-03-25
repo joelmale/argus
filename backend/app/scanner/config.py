@@ -48,6 +48,13 @@ class EffectiveScannerConfig:
     top_ports_count: int
     deep_probe_timeout_seconds: int
     ai_after_scan_enabled: bool
+    ai_backend: str
+    ai_model: str
+    fingerprint_ai_backend: str
+    ollama_base_url: str
+    openai_base_url: str
+    openai_api_key: str
+    anthropic_api_key: str
     passive_arp_enabled: bool
     passive_arp_interface: str
     snmp_enabled: bool
@@ -82,6 +89,13 @@ class ScannerConfigUpdateInput:
     top_ports_count: int
     deep_probe_timeout_seconds: int
     ai_after_scan_enabled: bool
+    ai_backend: str
+    ai_model: str | None
+    fingerprint_ai_backend: str
+    ollama_base_url: str | None
+    openai_base_url: str | None
+    openai_api_key: str | None
+    anthropic_api_key: str | None
     passive_arp_enabled: bool
     passive_arp_interface: str
     snmp_enabled: bool
@@ -309,6 +323,21 @@ def _bootstrap_targets_from_env() -> tuple[str | None, bool]:
     return None, True
 
 
+def _normalize_ai_backend(value: str | None, default: str) -> str:
+    normalized = (value or default).strip().lower()
+    if normalized not in {"none", "ollama", "openai", "anthropic"}:
+        return default
+    return normalized
+
+
+def _default_model_for_backend(backend: str) -> str:
+    if backend == "anthropic":
+        return settings.ANTHROPIC_MODEL
+    if backend == "openai":
+        return settings.OPENAI_MODEL
+    return settings.OLLAMA_MODEL
+
+
 async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
     config = (await db.execute(select(ScannerConfig).limit(1))).scalar_one_or_none()
     if config is not None:
@@ -326,6 +355,13 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
         top_ports_count=1000,
         deep_probe_timeout_seconds=6,
         ai_after_scan_enabled=settings.AI_ENABLE_PER_SCAN,
+        ai_backend=_normalize_ai_backend(settings.AI_BACKEND, "ollama"),
+        ai_model=_default_model_for_backend(_normalize_ai_backend(settings.AI_BACKEND, "ollama")),
+        fingerprint_ai_backend="ollama",
+        ollama_base_url=settings.OLLAMA_BASE_URL,
+        openai_base_url=settings.OPENAI_BASE_URL,
+        openai_api_key=settings.OPENAI_API_KEY,
+        anthropic_api_key=settings.ANTHROPIC_API_KEY,
         passive_arp_enabled=settings.SCANNER_PASSIVE_ARP,
         passive_arp_interface=settings.SCANNER_PASSIVE_ARP_INTERFACE,
         snmp_enabled=True,
@@ -353,6 +389,8 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
 def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerConfig:
     detected_targets = detect_local_ipv4_cidr() if config.auto_detect_targets else None
     effective_targets = (config.default_targets or "").strip() or detected_targets
+    ai_backend = _normalize_ai_backend(config.ai_backend, _normalize_ai_backend(settings.AI_BACKEND, "ollama"))
+    fingerprint_ai_backend = _normalize_ai_backend(config.fingerprint_ai_backend, ai_backend)
     return EffectiveScannerConfig(
         enabled=config.enabled,
         default_targets=config.default_targets,
@@ -366,6 +404,13 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         top_ports_count=config.top_ports_count,
         deep_probe_timeout_seconds=config.deep_probe_timeout_seconds,
         ai_after_scan_enabled=config.ai_after_scan_enabled,
+        ai_backend=ai_backend,
+        ai_model=(config.ai_model or _default_model_for_backend(ai_backend)),
+        fingerprint_ai_backend=fingerprint_ai_backend,
+        ollama_base_url=config.ollama_base_url or settings.OLLAMA_BASE_URL,
+        openai_base_url=config.openai_base_url or settings.OPENAI_BASE_URL,
+        openai_api_key=config.openai_api_key or settings.OPENAI_API_KEY,
+        anthropic_api_key=config.anthropic_api_key or settings.ANTHROPIC_API_KEY,
         passive_arp_enabled=config.passive_arp_enabled,
         passive_arp_interface=config.passive_arp_interface,
         snmp_enabled=config.snmp_enabled,
@@ -378,7 +423,7 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         snmp_v3_auth_protocol=config.snmp_v3_auth_protocol,
         snmp_v3_priv_protocol=config.snmp_v3_priv_protocol,
         fingerprint_ai_enabled=config.fingerprint_ai_enabled,
-        fingerprint_ai_model=config.fingerprint_ai_model or settings.OLLAMA_MODEL,
+        fingerprint_ai_model=config.fingerprint_ai_model or _default_model_for_backend(fingerprint_ai_backend),
         fingerprint_ai_min_confidence=config.fingerprint_ai_min_confidence,
         fingerprint_ai_prompt_suffix=config.fingerprint_ai_prompt_suffix,
         internet_lookup_enabled=config.internet_lookup_enabled,
@@ -415,6 +460,13 @@ async def update_scanner_config(
         top_ports_count=payload.top_ports_count,
         deep_probe_timeout_seconds=payload.deep_probe_timeout_seconds,
         ai_after_scan_enabled=payload.ai_after_scan_enabled,
+        ai_backend=payload.ai_backend,
+        ai_model=payload.ai_model,
+        fingerprint_ai_backend=payload.fingerprint_ai_backend,
+        ollama_base_url=payload.ollama_base_url,
+        openai_base_url=payload.openai_base_url,
+        openai_api_key=payload.openai_api_key,
+        anthropic_api_key=payload.anthropic_api_key,
         passive_arp_enabled=payload.passive_arp_enabled,
         passive_arp_interface=payload.passive_arp_interface,
     )
@@ -463,6 +515,13 @@ def _apply_core_scanner_settings(
     top_ports_count: int,
     deep_probe_timeout_seconds: int,
     ai_after_scan_enabled: bool,
+    ai_backend: str,
+    ai_model: str | None,
+    fingerprint_ai_backend: str,
+    ollama_base_url: str | None,
+    openai_base_url: str | None,
+    openai_api_key: str | None,
+    anthropic_api_key: str | None,
     passive_arp_enabled: bool,
     passive_arp_interface: str,
 ) -> None:
@@ -476,6 +535,15 @@ def _apply_core_scanner_settings(
     config.top_ports_count = max(10, min(65535, top_ports_count))
     config.deep_probe_timeout_seconds = max(1, min(30, deep_probe_timeout_seconds))
     config.ai_after_scan_enabled = ai_after_scan_enabled
+    normalized_ai_backend = _normalize_ai_backend(ai_backend, _normalize_ai_backend(settings.AI_BACKEND, "ollama"))
+    normalized_fingerprint_backend = _normalize_ai_backend(fingerprint_ai_backend, normalized_ai_backend)
+    config.ai_backend = normalized_ai_backend
+    config.ai_model = _normalize_optional_text(ai_model) or _default_model_for_backend(normalized_ai_backend)
+    config.fingerprint_ai_backend = normalized_fingerprint_backend
+    config.ollama_base_url = _normalize_optional_text(ollama_base_url) or settings.OLLAMA_BASE_URL
+    config.openai_base_url = _normalize_optional_text(openai_base_url) or settings.OPENAI_BASE_URL
+    config.openai_api_key = _normalize_optional_text(openai_api_key)
+    config.anthropic_api_key = _normalize_optional_text(anthropic_api_key)
     config.passive_arp_enabled = passive_arp_enabled
     config.passive_arp_interface = _normalize_optional_text(passive_arp_interface) or settings.SCANNER_PASSIVE_ARP_INTERFACE
 
@@ -517,7 +585,7 @@ def _apply_ai_and_lookup_settings(
     internet_lookup_timeout_seconds: int,
 ) -> None:
     config.fingerprint_ai_enabled = fingerprint_ai_enabled
-    config.fingerprint_ai_model = _normalize_optional_text(fingerprint_ai_model) or settings.OLLAMA_MODEL
+    config.fingerprint_ai_model = _normalize_optional_text(fingerprint_ai_model) or _default_model_for_backend(config.fingerprint_ai_backend)
     config.fingerprint_ai_min_confidence = max(0.0, min(1.0, fingerprint_ai_min_confidence))
     config.fingerprint_ai_prompt_suffix = _normalize_optional_text(fingerprint_ai_prompt_suffix)
     config.internet_lookup_enabled = internet_lookup_enabled

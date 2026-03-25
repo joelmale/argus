@@ -43,9 +43,9 @@ ANTHROPIC_TOOLS = _to_anthropic_tools(TOOL_SCHEMAS)
 class AnthropicAnalyst(BaseAnalyst):
     """Investigation agent using Anthropic Claude API."""
 
-    def __init__(self):
-        self.client = anthropic.AsyncAnthropic(api_key=settings.ANTHROPIC_API_KEY)
-        self.model = settings.ANTHROPIC_MODEL
+    def __init__(self, *, api_key: str | None = None, model: str | None = None):
+        self.client = anthropic.AsyncAnthropic(api_key=api_key or settings.ANTHROPIC_API_KEY)
+        self.model = model or settings.ANTHROPIC_MODEL
 
     async def investigate(self, result: HostScanResult) -> AIAnalysis:
         hint, initial_context = self._build_investigation_seed(result)

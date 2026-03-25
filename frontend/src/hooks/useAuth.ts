@@ -361,6 +361,18 @@ export function useUpdateScannerConfig() {
   })
 }
 
+export function useTestAiConfiguration() {
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.testAiConfiguration()
+      return data as {
+        analyst: { ok: boolean; provider: string; model?: string; message: string }
+        fingerprint: { ok: boolean; provider: string; model?: string; message: string }
+      }
+    },
+  })
+}
+
 export function useUpdateTplinkDecoModule() {
   const queryClient = useQueryClient()
 

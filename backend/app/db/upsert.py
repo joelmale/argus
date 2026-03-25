@@ -650,8 +650,15 @@ async def _upsert_fingerprint_hypothesis(db: AsyncSession, asset: Asset, evidenc
         synthesized = await synthesize_fingerprint(
             asset=asset_payload,
             evidence=evidence_payload,
+            backend=config.fingerprint_ai_backend,
             model=config.fingerprint_ai_model or "qwen2.5:7b",
             prompt_suffix=config.fingerprint_ai_prompt_suffix,
+            base_url=config.ollama_base_url if config.fingerprint_ai_backend == "ollama" else config.openai_base_url,
+            api_key=(
+                config.anthropic_api_key
+                if config.fingerprint_ai_backend == "anthropic"
+                else ("ollama" if config.fingerprint_ai_backend == "ollama" else config.openai_api_key)
+            ),
         )
     except Exception as exc:
         log.debug("Fingerprint synthesis skipped for %s: %s", asset.ip_address, exc)
@@ -663,7 +670,7 @@ async def _upsert_fingerprint_hypothesis(db: AsyncSession, asset: Asset, evidenc
     db.add(
         FingerprintHypothesis(
             asset_id=asset.id,
-            source="ollama",
+            source=config.fingerprint_ai_backend,
             device_type=synthesized.get("device_type"),
             vendor=synthesized.get("vendor"),
             model=synthesized.get("model"),

@@ -634,6 +634,8 @@ export default function AssetDetailPage() {
   const { mutate: refreshAiAnalysis, isPending: isAiLookupPending } = useRefreshAssetAiAnalysis()
   const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
   const [showAutopsy, setShowAutopsy] = useState(false)
+  const [enrichmentStatus, setEnrichmentStatus] = useState<string | null>(null)
+  const [portScanStatus, setPortScanStatus] = useState<string | null>(null)
 
   if (isLoading) return (
     <AppShell>
@@ -676,15 +678,46 @@ export default function AssetDetailPage() {
             </div>
             <div className="flex items-center gap-2 flex-wrap">
               {currentUser?.role === 'admin' && (
-                <button
-                  type="button"
-                  onClick={() => triggerEnrichment({ targets: asset.ip_address, scan_type: 'deep_enrichment' })}
-                  disabled={isEnrichmentPending}
-                  className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
-                >
-                  {isEnrichmentPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Microscope className="w-3.5 h-3.5" />}
-                  {isEnrichmentPending ? 'Queueing enrichment…' : 'Run Deep Enrichment'}
-                </button>
+                <>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setEnrichmentStatus(null)
+                      triggerEnrichment(
+                        { targets: asset.ip_address, scan_type: 'deep_enrichment' },
+                        {
+                          onSuccess: (response) => {
+                            const jobId = response?.data?.job_id
+                            const status = response?.data?.status ?? 'queued'
+                            setEnrichmentStatus(
+                              jobId
+                                ? `Deep enrichment ${status} as job ${jobId.slice(0, 8)}. Check Scans for progress.`
+                                : `Deep enrichment ${status}. Check Scans for progress.`,
+                            )
+                          },
+                          onError: (error: any) => {
+                            const detail = error?.response?.data?.detail
+                            setEnrichmentStatus(
+                              typeof detail === 'string'
+                                ? `Unable to queue deep enrichment: ${detail}`
+                                : 'Unable to queue deep enrichment right now.',
+                            )
+                          },
+                        },
+                      )
+                    }}
+                    disabled={isEnrichmentPending}
+                    className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+                  >
+                    {isEnrichmentPending ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Microscope className="w-3.5 h-3.5" />}
+                    {isEnrichmentPending ? 'Queueing enrichment…' : 'Run Deep Enrichment'}
+                  </button>
+                  {enrichmentStatus && (
+                    <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-xs">
+                      {enrichmentStatus}
+                    </p>
+                  )}
+                </>
               )}
               <button
                 type="button"
@@ -748,15 +781,43 @@ export default function AssetDetailPage() {
                 <div className="flex items-center justify-between gap-3">
                   <CardTitle><Network className="w-4 h-4 inline mr-1.5" />Open Ports ({openPorts.length})</CardTitle>
                   {currentUser?.role === 'admin' && (
-                    <button
-                      type="button"
-                      onClick={() => runPortScan(asset.id)}
-                      disabled={isPortScanPending}
-                      className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
-                    >
-                      <Play className="w-3.5 h-3.5" />
-                      {isPortScanPending ? 'Scanning…' : 'Port Scan'}
-                    </button>
+                    <div className="flex items-center gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setPortScanStatus(null)
+                          runPortScan(asset.id, {
+                            onSuccess: (response) => {
+                              const jobId = response?.data?.job_id
+                              const status = response?.data?.status ?? 'queued'
+                              setPortScanStatus(
+                                jobId
+                                  ? `Targeted port scan ${status} as job ${jobId.slice(0, 8)}.`
+                                  : `Targeted port scan ${status}.`,
+                              )
+                            },
+                            onError: (error: any) => {
+                              const detail = error?.response?.data?.detail
+                              setPortScanStatus(
+                                typeof detail === 'string'
+                                  ? `Unable to queue port scan: ${detail}`
+                                  : 'Unable to queue port scan right now.',
+                              )
+                            },
+                          })
+                        }}
+                        disabled={isPortScanPending}
+                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+                      >
+                        <Play className="w-3.5 h-3.5" />
+                        {isPortScanPending ? 'Queueing…' : 'Port Scan'}
+                      </button>
+                      {portScanStatus && (
+                        <p className="text-xs text-zinc-500 dark:text-zinc-400 max-w-xs">
+                          {portScanStatus}
+                        </p>
+                      )}
+                    </div>
                   )}
                 </div>
               </CardHeader>

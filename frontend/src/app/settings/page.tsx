@@ -4,10 +4,10 @@ import { useId, useState, type ComponentProps, type ReactNode } from 'react'
 import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig } from 'lucide-react'
+import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncTplinkDecoModule, useTestTplinkDecoModule, useTplinkDecoModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
-import type { FingerprintDataset, TplinkDecoConfig, TplinkDecoSyncRun } from '@/types'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncTplinkDecoModule, useTestAiConfiguration, useTestTplinkDecoModule, useTplinkDecoModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import type { FingerprintDataset, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun } from '@/types'
 import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 
 type BackupPolicyFormProps = Readonly<{
@@ -27,52 +27,29 @@ type BackupPolicyFormProps = Readonly<{
   }) => void
 }>
 
+type ScannerConfigSavePayload = Omit<ScannerConfig, 'id' | 'detected_targets' | 'effective_targets' | 'last_scheduled_scan_at' | 'created_at' | 'updated_at'>
+
 type ScannerConfigCardProps = Readonly<{
-  scannerConfig?: {
-    enabled: boolean
-    default_targets: string | null
-    auto_detect_targets: boolean
-    detected_targets: string | null
-    effective_targets: string | null
-    default_profile: string
-    interval_minutes: number
-    concurrent_hosts: number
-    host_chunk_size: number
-    top_ports_count: number
-    deep_probe_timeout_seconds: number
-    ai_after_scan_enabled: boolean
-    fingerprint_ai_enabled: boolean
-    fingerprint_ai_model: string
-    fingerprint_ai_min_confidence: number
-    fingerprint_ai_prompt_suffix: string | null
-    internet_lookup_enabled: boolean
-    internet_lookup_allowed_domains: string | null
-    internet_lookup_budget: number
-    internet_lookup_timeout_seconds: number
-    last_scheduled_scan_at: string | null
-    updated_at: string
-  }
+  scannerConfig?: ScannerConfig
   isUpdatingScannerConfig: boolean
-  onSave: (payload: {
-    enabled: boolean
-    default_targets: string | null
-    auto_detect_targets: boolean
-    default_profile: string
-    interval_minutes: number
-    concurrent_hosts: number
-    host_chunk_size: number
-    top_ports_count: number
-    deep_probe_timeout_seconds: number
-    ai_after_scan_enabled: boolean
-    fingerprint_ai_enabled: boolean
-    fingerprint_ai_model: string
-    fingerprint_ai_min_confidence: number
-    fingerprint_ai_prompt_suffix: string | null
-    internet_lookup_enabled: boolean
-    internet_lookup_allowed_domains: string | null
-    internet_lookup_budget: number
-    internet_lookup_timeout_seconds: number
-  }) => void
+  onSave: (payload: ScannerConfigSavePayload) => void
+}>
+
+type AiAgentCardProps = Readonly<{
+  scannerConfig?: ScannerConfig
+  isUpdatingScannerConfig: boolean
+  isTestingAi: boolean
+  onSave: (payload: ScannerConfigSavePayload) => Promise<unknown>
+  onTest: () => Promise<{
+    analyst: { ok: boolean; provider: string; model?: string; message: string }
+    fingerprint: { ok: boolean; provider: string; model?: string; message: string }
+  }>
+}>
+
+type NetworkSnmpCardProps = Readonly<{
+  scannerConfig?: ScannerConfig
+  isUpdatingScannerConfig: boolean
+  onSave: (payload: ScannerConfigSavePayload) => Promise<unknown>
 }>
 
 type TplinkModulePayload = Omit<TplinkDecoConfig, 'id' | 'effective_owner_username' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'created_at' | 'updated_at'>
@@ -113,12 +90,12 @@ type TplinkSyncResult = {
   device_count?: number
 }
 
-function describeTplinkActionError(error: unknown) {
+function describeApiActionError(error: unknown) {
   if (!axios.isAxiosError(error)) {
-    return 'The Deco action failed before Argus returned a usable response.'
+    return 'The action failed before Argus returned a usable response.'
   }
   if (!error.response) {
-    return 'Argus could not reach the backend while running the Deco action.'
+    return 'Argus could not reach the backend while running the action.'
   }
   let detail: unknown
   if (error.response.data && typeof error.response.data === 'object') {
@@ -127,7 +104,7 @@ function describeTplinkActionError(error: unknown) {
   if (typeof detail === 'string' && detail.trim()) {
     return detail
   }
-  return `The Deco action failed with HTTP ${error.response.status}.`
+  return `The action failed with HTTP ${error.response.status}.`
 }
 
 function buildTplinkTestMessage(
@@ -308,14 +285,6 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
   const [topPortsCount, setTopPortsCount] = useState(scannerConfig?.top_ports_count ?? 1000)
   const [deepProbeTimeoutSeconds, setDeepProbeTimeoutSeconds] = useState(scannerConfig?.deep_probe_timeout_seconds ?? 6)
   const [aiAfterScanEnabled, setAiAfterScanEnabled] = useState(scannerConfig?.ai_after_scan_enabled ?? true)
-  const [fingerprintAiEnabled, setFingerprintAiEnabled] = useState(scannerConfig?.fingerprint_ai_enabled ?? false)
-  const [fingerprintAiModel, setFingerprintAiModel] = useState(scannerConfig?.fingerprint_ai_model ?? 'qwen2.5:7b')
-  const [fingerprintAiMinConfidence, setFingerprintAiMinConfidence] = useState(scannerConfig?.fingerprint_ai_min_confidence ?? 0.75)
-  const [fingerprintAiPromptSuffix, setFingerprintAiPromptSuffix] = useState(scannerConfig?.fingerprint_ai_prompt_suffix ?? '')
-  const [internetLookupEnabled, setInternetLookupEnabled] = useState(scannerConfig?.internet_lookup_enabled ?? false)
-  const [internetLookupAllowedDomains, setInternetLookupAllowedDomains] = useState(scannerConfig?.internet_lookup_allowed_domains ?? 'docs.tp-link.com,ui.com,synology.com,qnap.com,netgate.com,proxmox.com')
-  const [internetLookupBudget, setInternetLookupBudget] = useState(scannerConfig?.internet_lookup_budget ?? 3)
-  const [internetLookupTimeoutSeconds, setInternetLookupTimeoutSeconds] = useState(scannerConfig?.internet_lookup_timeout_seconds ?? 5)
 
   return (
     <Card>
@@ -343,26 +312,7 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
           <TextInputField label="Top ports count" value={topPortsCount} type="number" min={10} max={65535} onChange={(event) => setTopPortsCount(Number(event.target.value) || 1000)} placeholder="1000" />
           <TextInputField label="Deep probe timeout seconds" value={deepProbeTimeoutSeconds} type="number" min={1} max={30} onChange={(event) => setDeepProbeTimeoutSeconds(Number(event.target.value) || 6)} placeholder="6" />
           <CheckboxField label="Enable AI after-scan investigation" checked={aiAfterScanEnabled} onChange={(event) => setAiAfterScanEnabled(event.target.checked)} />
-          <CheckboxField label="Enable Ollama fingerprint synthesis" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
-          <TextInputField label="Ollama model" value={fingerprintAiModel} onChange={(event) => setFingerprintAiModel(event.target.value)} placeholder="qwen2.5:7b" />
-          <TextInputField label="Fingerprint AI minimum confidence" value={fingerprintAiMinConfidence} type="number" min={0} max={1} step={0.05} onChange={(event) => setFingerprintAiMinConfidence(Number(event.target.value) || 0.75)} placeholder="0.75" />
-          <CheckboxField label="Enable internet lookup for unresolved assets" checked={internetLookupEnabled} onChange={(event) => setInternetLookupEnabled(event.target.checked)} />
-          <TextInputField label="Lookup budget" value={internetLookupBudget} type="number" min={1} max={10} onChange={(event) => setInternetLookupBudget(Number(event.target.value) || 3)} placeholder="3" />
-          <TextInputField label="Lookup timeout seconds" value={internetLookupTimeoutSeconds} type="number" min={1} max={30} onChange={(event) => setInternetLookupTimeoutSeconds(Number(event.target.value) || 5)} placeholder="5" />
         </div>
-        <TextareaField
-          label="Fingerprint AI prompt suffix"
-          value={fingerprintAiPromptSuffix}
-          onChange={(event) => setFingerprintAiPromptSuffix(event.target.value)}
-          rows={3}
-          placeholder="Optional extra instructions for fingerprint synthesis"
-        />
-        <TextInputField
-          label="Allowed internet lookup domains"
-          value={internetLookupAllowedDomains}
-          onChange={(event) => setInternetLookupAllowedDomains(event.target.value)}
-          placeholder="Allowed domains, comma separated"
-        />
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Effective target</p>
           <p className="text-xs text-zinc-500">
@@ -380,12 +330,13 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
           <p>Chunk size controls how many discovered hosts go into each nmap batch before the next chunk starts.</p>
           <p>Top ports count applies to quick and balanced scans; deep enrichment still scans the full port range.</p>
           <p>Deep probe timeout is applied per protocol probe and is clamped between 1 and 30 seconds.</p>
-          <p>AI after-scan investigation lets you disable the post-probe analyst pass without turning off fingerprint AI settings.</p>
+          <p>AI after-scan investigation gates the post-probe analyst pass; provider routing and credentials live in the AI Agent section below.</p>
         </div>
         <button
           type="button"
           disabled={isUpdatingScannerConfig}
-          onClick={() => onSave({
+          onClick={() => scannerConfig && onSave({
+            ...scannerConfig,
             enabled: scannerEnabled,
             default_targets: defaultTargets.trim() || null,
             auto_detect_targets: autoDetectTargets,
@@ -396,18 +347,221 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
             top_ports_count: topPortsCount,
             deep_probe_timeout_seconds: deepProbeTimeoutSeconds,
             ai_after_scan_enabled: aiAfterScanEnabled,
-            fingerprint_ai_enabled: fingerprintAiEnabled,
-            fingerprint_ai_model: fingerprintAiModel,
-            fingerprint_ai_min_confidence: fingerprintAiMinConfidence,
-            fingerprint_ai_prompt_suffix: fingerprintAiPromptSuffix.trim() || null,
-            internet_lookup_enabled: internetLookupEnabled,
-            internet_lookup_allowed_domains: internetLookupAllowedDomains.trim() || null,
-            internet_lookup_budget: internetLookupBudget,
-            internet_lookup_timeout_seconds: internetLookupTimeoutSeconds,
           })}
           className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
         >
           Save scanner settings
+        </button>
+      </CardBody>
+    </Card>
+  )
+}
+
+function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSave, onTest }: AiAgentCardProps) {
+  const [aiBackend, setAiBackend] = useState(scannerConfig?.ai_backend ?? 'ollama')
+  const [aiModel, setAiModel] = useState(scannerConfig?.ai_model ?? 'qwen2.5:7b')
+  const [fingerprintAiEnabled, setFingerprintAiEnabled] = useState(scannerConfig?.fingerprint_ai_enabled ?? false)
+  const [fingerprintAiBackend, setFingerprintAiBackend] = useState(scannerConfig?.fingerprint_ai_backend ?? 'ollama')
+  const [fingerprintAiModel, setFingerprintAiModel] = useState(scannerConfig?.fingerprint_ai_model ?? 'qwen2.5:7b')
+  const [fingerprintAiMinConfidence, setFingerprintAiMinConfidence] = useState(scannerConfig?.fingerprint_ai_min_confidence ?? 0.75)
+  const [fingerprintAiPromptSuffix, setFingerprintAiPromptSuffix] = useState(scannerConfig?.fingerprint_ai_prompt_suffix ?? '')
+  const [internetLookupEnabled, setInternetLookupEnabled] = useState(scannerConfig?.internet_lookup_enabled ?? false)
+  const [internetLookupAllowedDomains, setInternetLookupAllowedDomains] = useState(scannerConfig?.internet_lookup_allowed_domains ?? 'docs.tp-link.com,ui.com,synology.com,qnap.com,netgate.com,proxmox.com')
+  const [internetLookupBudget, setInternetLookupBudget] = useState(scannerConfig?.internet_lookup_budget ?? 3)
+  const [internetLookupTimeoutSeconds, setInternetLookupTimeoutSeconds] = useState(scannerConfig?.internet_lookup_timeout_seconds ?? 5)
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState(scannerConfig?.ollama_base_url ?? 'http://ollama:11434/v1')
+  const [openaiBaseUrl, setOpenaiBaseUrl] = useState(scannerConfig?.openai_base_url ?? 'https://api.openai.com/v1')
+  const [openaiApiKey, setOpenaiApiKey] = useState(scannerConfig?.openai_api_key ?? '')
+  const [anthropicApiKey, setAnthropicApiKey] = useState(scannerConfig?.anthropic_api_key ?? '')
+  const [connectionMessage, setConnectionMessage] = useState<string | null>(null)
+  const [connectionError, setConnectionError] = useState<string | null>(null)
+
+  async function handleTest() {
+    setConnectionMessage(null)
+    setConnectionError(null)
+    try {
+      await handleSave()
+      const result = await onTest()
+      setConnectionMessage(
+        `Analyst: ${result.analyst.provider} ${result.analyst.ok ? 'OK' : 'failed'}${result.analyst.model ? ` (${result.analyst.model})` : ''}. ` +
+        `Fingerprint: ${result.fingerprint.provider} ${result.fingerprint.ok ? 'OK' : 'failed'}${result.fingerprint.model ? ` (${result.fingerprint.model})` : ''}.`,
+      )
+    } catch (error) {
+      setConnectionError(describeApiActionError(error))
+    }
+  }
+
+  async function handleSave() {
+    if (!scannerConfig) return
+    await onSave({
+      ...scannerConfig,
+      ai_backend: aiBackend,
+      ai_model: aiModel.trim() || '',
+      fingerprint_ai_enabled: fingerprintAiEnabled,
+      fingerprint_ai_backend: fingerprintAiBackend,
+      fingerprint_ai_model: fingerprintAiModel.trim() || '',
+      fingerprint_ai_min_confidence: fingerprintAiMinConfidence,
+      fingerprint_ai_prompt_suffix: fingerprintAiPromptSuffix.trim() || null,
+      internet_lookup_enabled: internetLookupEnabled,
+      internet_lookup_allowed_domains: internetLookupAllowedDomains.trim() || null,
+      internet_lookup_budget: internetLookupBudget,
+      internet_lookup_timeout_seconds: internetLookupTimeoutSeconds,
+      ollama_base_url: ollamaBaseUrl.trim() || 'http://ollama:11434/v1',
+      openai_base_url: openaiBaseUrl.trim() || 'https://api.openai.com/v1',
+      openai_api_key: openaiApiKey.trim() || '',
+      anthropic_api_key: anthropicApiKey.trim() || '',
+    })
+    setConnectionMessage('AI control-plane settings saved.')
+    setConnectionError(null)
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Bot className="w-4 h-4 inline mr-1.5" />AI Control Plane</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <SelectField label="Analyst provider" value={aiBackend} onChange={(event) => setAiBackend(event.target.value)}>
+            <option value="none">None / rule-based fallback</option>
+            <option value="ollama">Ollama</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+          </SelectField>
+          <TextInputField label="Analyst model" value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+          <CheckboxField label="Enable fingerprint synthesis workflow" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
+          <SelectField label="Fingerprint provider" value={fingerprintAiBackend} onChange={(event) => setFingerprintAiBackend(event.target.value)}>
+            <option value="ollama">Ollama</option>
+            <option value="openai">OpenAI</option>
+            <option value="anthropic">Anthropic</option>
+          </SelectField>
+          <TextInputField label="Fingerprint model" value={fingerprintAiModel} onChange={(event) => setFingerprintAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+          <TextInputField label="Fingerprint AI minimum confidence" value={fingerprintAiMinConfidence} type="number" min={0} max={1} step={0.05} onChange={(event) => setFingerprintAiMinConfidence(Number(event.target.value) || 0.75)} placeholder="0.75" />
+          <TextInputField label="Ollama base URL" value={ollamaBaseUrl} onChange={(event) => setOllamaBaseUrl(event.target.value)} placeholder="http://ollama:11434/v1" />
+          <TextInputField label="OpenAI base URL" value={openaiBaseUrl} onChange={(event) => setOpenaiBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
+          <TextInputField label="OpenAI API key" value={openaiApiKey} onChange={(event) => setOpenaiApiKey(event.target.value)} placeholder="sk-..." />
+          <TextInputField label="Anthropic API key" value={anthropicApiKey} onChange={(event) => setAnthropicApiKey(event.target.value)} placeholder="sk-ant-..." />
+          <CheckboxField label="Enable internet lookup for unresolved assets" checked={internetLookupEnabled} onChange={(event) => setInternetLookupEnabled(event.target.checked)} />
+          <TextInputField label="Lookup budget" value={internetLookupBudget} type="number" min={1} max={10} onChange={(event) => setInternetLookupBudget(Number(event.target.value) || 3)} placeholder="3" />
+          <TextInputField label="Lookup timeout seconds" value={internetLookupTimeoutSeconds} type="number" min={1} max={30} onChange={(event) => setInternetLookupTimeoutSeconds(Number(event.target.value) || 5)} placeholder="5" />
+        </div>
+        <TextareaField
+          label="Fingerprint AI prompt suffix"
+          value={fingerprintAiPromptSuffix}
+          onChange={(event) => setFingerprintAiPromptSuffix(event.target.value)}
+          rows={3}
+          placeholder="Optional extra instructions for fingerprint synthesis"
+        />
+        <TextInputField
+          label="Allowed internet lookup domains"
+          value={internetLookupAllowedDomains}
+          onChange={(event) => setInternetLookupAllowedDomains(event.target.value)}
+          placeholder="Allowed domains, comma separated"
+        />
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1 text-xs text-zinc-500">
+          <p>Provider routing is now persisted in Argus rather than requiring only env vars.</p>
+          <p>Analyst provider/model drive the post-scan investigation workflow.</p>
+          <p>Fingerprint provider/model drive the hypothesis synthesis workflow independently.</p>
+          <p>Unset credentials fall back to env defaults, so you can keep only the minimum env required for bootstrapping.</p>
+        </div>
+        {connectionMessage && <p className="text-sm text-emerald-600 dark:text-emerald-400">{connectionMessage}</p>}
+        {connectionError && <p className="text-sm text-rose-500">{connectionError}</p>}
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={isUpdatingScannerConfig}
+            onClick={() => void handleSave()}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+          >
+            <BrainCircuit className="w-4 h-4" />
+            Save AI settings
+          </button>
+          <button
+            type="button"
+            disabled={isUpdatingScannerConfig || isTestingAi}
+            onClick={() => void handleTest()}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700"
+          >
+            <PlugZap className="w-4 h-4" />
+            {isTestingAi ? 'Testing…' : 'Check AI connection'}
+          </button>
+        </div>
+      </CardBody>
+    </Card>
+  )
+}
+
+function NetworkSnmpCard({ scannerConfig, isUpdatingScannerConfig, onSave }: NetworkSnmpCardProps) {
+  const [passiveArpEnabled, setPassiveArpEnabled] = useState(scannerConfig?.passive_arp_enabled ?? true)
+  const [passiveArpInterface, setPassiveArpInterface] = useState(scannerConfig?.passive_arp_interface ?? 'eth0')
+  const [snmpEnabled, setSnmpEnabled] = useState(scannerConfig?.snmp_enabled ?? true)
+  const [snmpVersion, setSnmpVersion] = useState(scannerConfig?.snmp_version ?? '2c')
+  const [snmpCommunity, setSnmpCommunity] = useState(scannerConfig?.snmp_community ?? '')
+  const [snmpTimeout, setSnmpTimeout] = useState(scannerConfig?.snmp_timeout ?? 5)
+  const [snmpV3Username, setSnmpV3Username] = useState(scannerConfig?.snmp_v3_username ?? '')
+  const [snmpV3AuthKey, setSnmpV3AuthKey] = useState(scannerConfig?.snmp_v3_auth_key ?? '')
+  const [snmpV3PrivKey, setSnmpV3PrivKey] = useState(scannerConfig?.snmp_v3_priv_key ?? '')
+  const [snmpV3AuthProtocol, setSnmpV3AuthProtocol] = useState(scannerConfig?.snmp_v3_auth_protocol ?? 'sha')
+  const [snmpV3PrivProtocol, setSnmpV3PrivProtocol] = useState(scannerConfig?.snmp_v3_priv_protocol ?? 'aes')
+
+  async function handleSave() {
+    if (!scannerConfig) return
+    await onSave({
+      ...scannerConfig,
+      passive_arp_enabled: passiveArpEnabled,
+      passive_arp_interface: passiveArpInterface.trim() || 'eth0',
+      snmp_enabled: snmpEnabled,
+      snmp_version: snmpVersion,
+      snmp_community: snmpCommunity.trim() || null,
+      snmp_timeout: snmpTimeout,
+      snmp_v3_username: snmpV3Username.trim() || null,
+      snmp_v3_auth_key: snmpV3AuthKey.trim() || null,
+      snmp_v3_priv_key: snmpV3PrivKey.trim() || null,
+      snmp_v3_auth_protocol: snmpV3AuthProtocol,
+      snmp_v3_priv_protocol: snmpV3PrivProtocol,
+    })
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><Wifi className="w-4 h-4 inline mr-1.5" />Passive Discovery & SNMP</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <CheckboxField label="Enable passive ARP listener" checked={passiveArpEnabled} onChange={(event) => setPassiveArpEnabled(event.target.checked)} />
+          <TextInputField label="Passive ARP interface" value={passiveArpInterface} onChange={(event) => setPassiveArpInterface(event.target.value)} placeholder="eth0" />
+          <CheckboxField label="Enable SNMP enrichment" checked={snmpEnabled} onChange={(event) => setSnmpEnabled(event.target.checked)} />
+          <SelectField label="SNMP version" value={snmpVersion} onChange={(event) => setSnmpVersion(event.target.value)}>
+            <option value="2c">v2c</option>
+            <option value="3">v3</option>
+          </SelectField>
+          <TextInputField label="SNMP community" value={snmpCommunity} onChange={(event) => setSnmpCommunity(event.target.value)} placeholder="public" />
+          <TextInputField label="SNMP timeout seconds" value={snmpTimeout} type="number" min={1} max={30} onChange={(event) => setSnmpTimeout(Number(event.target.value) || 5)} placeholder="5" />
+          <TextInputField label="SNMPv3 username" value={snmpV3Username} onChange={(event) => setSnmpV3Username(event.target.value)} placeholder="argus_admin" />
+          <SelectField label="SNMPv3 auth protocol" value={snmpV3AuthProtocol} onChange={(event) => setSnmpV3AuthProtocol(event.target.value)}>
+            <option value="sha">SHA</option>
+            <option value="md5">MD5</option>
+          </SelectField>
+          <TextInputField label="SNMPv3 auth key" value={snmpV3AuthKey} onChange={(event) => setSnmpV3AuthKey(event.target.value)} placeholder="Authentication key" />
+          <SelectField label="SNMPv3 privacy protocol" value={snmpV3PrivProtocol} onChange={(event) => setSnmpV3PrivProtocol(event.target.value)}>
+            <option value="aes">AES</option>
+            <option value="des">DES</option>
+          </SelectField>
+          <TextInputField label="SNMPv3 privacy key" value={snmpV3PrivKey} onChange={(event) => setSnmpV3PrivKey(event.target.value)} placeholder="Privacy key" />
+        </div>
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1 text-xs text-zinc-500">
+          <p>SNMPv2c uses the community string. SNMPv3 uses username plus auth/privacy keys.</p>
+          <p>If your network is v3-only, set version to `v3` and fill the username, SHA auth key, and AES privacy key here.</p>
+          <p>These saved values override env defaults, so you can trim back SNMP-related Dockhand env vars once this is configured.</p>
+        </div>
+        <button
+          type="button"
+          disabled={isUpdatingScannerConfig}
+          onClick={() => void handleSave()}
+          className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+        >
+          Save network & SNMP settings
         </button>
       </CardBody>
     </Card>
@@ -520,7 +674,7 @@ function TplinkDecoModuleCard({
       const result = await onTest() as TplinkTestResult | undefined
       setActionMessage(buildTplinkTestMessage(result, saved))
     } catch (error) {
-      setActionError(describeTplinkActionError(error))
+      setActionError(describeApiActionError(error))
     }
   }
 
@@ -532,7 +686,7 @@ function TplinkDecoModuleCard({
       const result = await onSync() as TplinkSyncResult | undefined
       setActionMessage(buildTplinkSyncMessage(result))
     } catch (error) {
-      setActionError(describeTplinkActionError(error))
+      setActionError(describeApiActionError(error))
     }
   }
 
@@ -745,7 +899,8 @@ export default function SettingsPage() {
   const { mutate: deleteApiKey, isPending: isDeletingApiKey } = useDeleteApiKey()
   const { mutate: updateAlertRule, isPending: isUpdatingAlertRule } = useUpdateAlertRule()
   const { mutate: updateBackupPolicy, isPending: isUpdatingBackupPolicy } = useUpdateBackupPolicy()
-  const { mutate: updateScannerConfig, isPending: isUpdatingScannerConfig } = useUpdateScannerConfig()
+  const { mutateAsync: updateScannerConfig, isPending: isUpdatingScannerConfig } = useUpdateScannerConfig()
+  const { mutateAsync: testAiConfiguration, isPending: isTestingAiConfiguration } = useTestAiConfiguration()
   const { mutateAsync: updateTplinkDecoModule, isPending: isUpdatingTplinkDecoModule } = useUpdateTplinkDecoModule()
   const { mutateAsync: testTplinkDecoModule, isPending: isTestingTplinkDecoModule } = useTestTplinkDecoModule()
   const { mutateAsync: syncTplinkDecoModule, isPending: isSyncingTplinkDecoModule } = useSyncTplinkDecoModule()
@@ -846,25 +1001,23 @@ export default function SettingsPage() {
                     key={scannerConfig?.updated_at ?? 'scanner-config'}
                     scannerConfig={scannerConfig}
                     isUpdatingScannerConfig={isUpdatingScannerConfig}
-                    onSave={(payload) => updateScannerConfig(payload)}
+                    onSave={(payload) => void updateScannerConfig(payload)}
                   />
                 </SettingsSection>
 
                 <SettingsSection
                   id="ai-agent"
                   title="AI Agent"
-                  description="Current AI controls for fingerprint synthesis and unresolved asset lookup behavior."
+                  description="Provider routing, credentials, and model selection for analyst and fingerprint workflows."
                 >
-                  <Card>
-                    <CardBody className="space-y-3">
-                      <p className="text-sm text-zinc-500">
-                        AI settings currently live inside the scanner configuration card. The implemented controls are Ollama fingerprint synthesis, confidence threshold, prompt suffix, and internet lookup policy.
-                      </p>
-                      <p className="text-sm text-zinc-500">
-                        Missing from a true AI control plane today: backend/provider selection, Anthropic/OpenAI credential management, and per-workflow model routing.
-                      </p>
-                    </CardBody>
-                  </Card>
+                  <AiAgentCard
+                    key={scannerConfig?.updated_at ? `ai-agent-${scannerConfig.updated_at}` : 'ai-agent'}
+                    scannerConfig={scannerConfig}
+                    isUpdatingScannerConfig={isUpdatingScannerConfig}
+                    isTestingAi={isTestingAiConfiguration}
+                    onSave={(payload) => updateScannerConfig(payload)}
+                    onTest={() => testAiConfiguration()}
+                  />
                 </SettingsSection>
 
                 <SettingsSection
@@ -873,16 +1026,12 @@ export default function SettingsPage() {
                   description="Passive discovery, SNMP, and local controller integrations."
                 >
                   <div className="space-y-4">
-                    <Card>
-                      <CardBody className="space-y-3">
-                        <p className="text-sm text-zinc-500">
-                          Scanner-level SNMP and passive listener controls now live in the scanner configuration model, but the dedicated form surface still needs to be split out cleanly from general scan settings.
-                        </p>
-                        <p className="text-sm text-zinc-500">
-                          The Deco module below is a separate local-portal integration that can enrich transient client inventory beyond what SNMP exposes on consumer AP hardware.
-                        </p>
-                      </CardBody>
-                    </Card>
+                    <NetworkSnmpCard
+                      key={scannerConfig?.updated_at ? `network-snmp-${scannerConfig.updated_at}` : 'network-snmp'}
+                      scannerConfig={scannerConfig}
+                      isUpdatingScannerConfig={isUpdatingScannerConfig}
+                      onSave={(payload) => updateScannerConfig(payload)}
+                    />
                     <TplinkDecoModuleCard
                       key={tplinkDecoModule?.config.updated_at ?? 'tplink-deco-module'}
                       moduleConfig={tplinkDecoModule?.config}

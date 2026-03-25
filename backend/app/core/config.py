@@ -61,6 +61,11 @@ class Settings(BaseSettings):
     # Recommended models for tool use: qwen2.5:7b, llama3.1:8b, qwen2.5:14b
     OLLAMA_MODEL: str = "qwen2.5:7b"
 
+    # OpenAI-compatible hosted settings
+    OPENAI_BASE_URL: str = "https://api.openai.com/v1"
+    OPENAI_API_KEY: str = ""
+    OPENAI_MODEL: str = "gpt-5-mini"
+
     # Anthropic settings (optional fallback)
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
