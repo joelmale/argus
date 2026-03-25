@@ -64,6 +64,9 @@ export default function ScansPage() {
   }
 
   const runningScans = scans.filter((s) => s.status === 'running' || s.status === 'pending')
+  const activeScheduledScan = scans.find((scan) => scan.triggered_by === 'schedule' && scan.status === 'running')
+    ?? scans.find((scan) => scan.triggered_by === 'schedule' && scan.status === 'pending')
+    ?? scans.find((scan) => scan.triggered_by === 'schedule' && scan.status === 'paused')
   const followUpScan = scans.find((scan) =>
     scan.status === 'done'
     && (scan.scan_type === 'quick' || scan.scan_type === 'balanced')
@@ -179,6 +182,24 @@ export default function ScansPage() {
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Scans</h2>
           <p className="text-sm text-zinc-500 mt-0.5">Trigger network scans and review historical job results.</p>
         </div>
+
+        {activeScheduledScan && (
+          <div className="rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 dark:border-amber-900 dark:bg-amber-950/30 dark:text-amber-200">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="inline-flex items-center rounded-full bg-amber-100 px-2 py-0.5 text-[11px] font-semibold uppercase tracking-wide text-amber-700 dark:bg-amber-900/50 dark:text-amber-200">
+                Scheduled Scan {activeScheduledScan.status}
+              </span>
+              <span className="font-mono text-xs">{activeScheduledScan.id.slice(0, 8)}</span>
+              <span className="text-amber-700/80 dark:text-amber-200/80">{activeScheduledScan.targets}</span>
+              {activeScheduledScan.status === 'pending' && typeof activeScheduledScan.queue_position === 'number' && (
+                <span className="text-xs text-amber-700/80 dark:text-amber-200/80">queue #{activeScheduledScan.queue_position}</span>
+              )}
+            </div>
+            <p className="mt-1 text-xs text-amber-700/80 dark:text-amber-200/80">
+              Background scheduling is active. Argus will keep draining scheduled work one scan at a time until no scheduled jobs remain queued.
+            </p>
+          </div>
+        )}
 
         {/* Top row: trigger form + active progress */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-5">
