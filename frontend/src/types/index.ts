@@ -12,6 +12,7 @@ export type DeviceType =
   | "printer"
   | "ip_camera"
   | "smart_tv"
+  | "game_console"
   | "iot_device"
   | "voip"
   | "unknown";
@@ -137,6 +138,27 @@ export interface ScannerConfig {
   next_scheduled_scan_at: string | null;
   created_at: string;
   updated_at: string;
+}
+
+export interface OllamaModelSummary {
+  name: string;
+  size?: number | null;
+  modified_at?: string | null;
+  family?: string | null;
+}
+
+export interface OllamaModelsResponse {
+  base_url: string;
+  api_root: string;
+  models: OllamaModelSummary[];
+}
+
+export interface OllamaPullResponse {
+  base_url: string;
+  api_root: string;
+  model: string;
+  status: string;
+  digest?: string | null;
 }
 
 export interface WirelessAssociation {

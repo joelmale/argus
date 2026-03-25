@@ -37,6 +37,7 @@ const DEVICE_COLORS: Record<string, string> = {
   printer:      'bg-yellow-500/15 text-yellow-600 dark:text-yellow-400 border-yellow-500/30',
   ip_camera:    'bg-pink-500/15 text-pink-600 dark:text-pink-400 border-pink-500/30',
   smart_tv:     'bg-purple-500/15 text-purple-600 dark:text-purple-400 border-purple-500/30',
+  game_console: 'bg-fuchsia-500/15 text-fuchsia-600 dark:text-fuchsia-400 border-fuchsia-500/30',
   iot_device:   'bg-amber-500/15 text-amber-600 dark:text-amber-400 border-amber-500/30',
   voip:         'bg-lime-500/15 text-lime-600 dark:text-lime-400 border-lime-500/30',
   unknown:      'bg-zinc-500/15 text-zinc-500 dark:text-zinc-400 border-zinc-500/30',

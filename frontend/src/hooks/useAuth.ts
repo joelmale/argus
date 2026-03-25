@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, FingerprintDataset, HomeAssistantExport, IntegrationEvent, PluginInfo, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, FingerprintDataset, HomeAssistantExport, IntegrationEvent, OllamaModelsResponse, OllamaPullResponse, PluginInfo, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -369,6 +369,33 @@ export function useTestAiConfiguration() {
         analyst: { ok: boolean; provider: string; model?: string; message: string }
         fingerprint: { ok: boolean; provider: string; model?: string; message: string }
       }
+    },
+  })
+}
+
+export function useOllamaModels(baseUrl: string, enabled = true) {
+  return useQuery<OllamaModelsResponse>({
+    queryKey: ['system', 'ai', 'ollama-models', baseUrl],
+    queryFn: async () => {
+      const { data } = await authApi.listOllamaModels(baseUrl)
+      return data
+    },
+    enabled: enabled && baseUrl.trim().length > 0,
+    staleTime: 30_000,
+  })
+}
+
+export function usePullOllamaModel() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: { model: string; base_url?: string | null }) => {
+      const { data } = await authApi.pullOllamaModel(payload)
+      return data as OllamaPullResponse
+    },
+    onSuccess: async (_, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'ai', 'ollama-models', variables.base_url ?? ''] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
     },
   })
 }

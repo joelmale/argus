@@ -313,7 +313,7 @@ export function AssetTable({
         </div>
       )}
       <div className="overflow-x-auto">
-        <table className="w-full text-sm">
+        <table className="min-w-max w-full text-sm">
           <thead>
             <tr className="border-b border-gray-200 dark:border-zinc-800 bg-gray-50 dark:bg-zinc-800/50">
               {canManageAssets && (
@@ -531,7 +531,7 @@ function AssetRow({
       <td className="px-4 py-3 text-xs text-zinc-400 whitespace-nowrap">
         {timeAgo(asset.last_seen)}
       </td>
-      <td className="px-4 py-3">
+      <td className="px-4 py-3 whitespace-nowrap">
         {canEnrich ? (
           <button
             type="button"

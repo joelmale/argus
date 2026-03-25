@@ -4,9 +4,9 @@ import { useId, useState, type ComponentProps, type ReactNode } from 'react'
 import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit } from 'lucide-react'
+import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit, Download } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, usePlugins, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncTplinkDecoModule, useTestAiConfiguration, useTestTplinkDecoModule, useTplinkDecoModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, useOllamaModels, usePlugins, usePullOllamaModel, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncTplinkDecoModule, useTestAiConfiguration, useTestTplinkDecoModule, useTplinkDecoModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
 import type { FingerprintDataset, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun } from '@/types'
 import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 
@@ -381,8 +381,31 @@ function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSa
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState(scannerConfig?.openai_base_url ?? 'https://api.openai.com/v1')
   const [openaiApiKey, setOpenaiApiKey] = useState(scannerConfig?.openai_api_key ?? '')
   const [anthropicApiKey, setAnthropicApiKey] = useState(scannerConfig?.anthropic_api_key ?? '')
+  const [ollamaPullModel, setOllamaPullModel] = useState('')
   const [connectionMessage, setConnectionMessage] = useState<string | null>(null)
   const [connectionError, setConnectionError] = useState<string | null>(null)
+  const analystUsesOllama = aiBackend === 'ollama'
+  const fingerprintUsesOllama = fingerprintAiEnabled && fingerprintAiBackend === 'ollama'
+  const showOllamaSection = analystUsesOllama || fingerprintUsesOllama
+  const showOpenAiSection = aiBackend === 'openai' || (fingerprintAiEnabled && fingerprintAiBackend === 'openai')
+  const showAnthropicSection = aiBackend === 'anthropic' || (fingerprintAiEnabled && fingerprintAiBackend === 'anthropic')
+  const { data: ollamaModelsData, isFetching: isRefreshingOllamaModels, refetch: refetchOllamaModels } = useOllamaModels(ollamaBaseUrl, showOllamaSection)
+  const { mutateAsync: pullOllamaModel, isPending: isPullingOllamaModel } = usePullOllamaModel()
+  const ollamaModels = ollamaModelsData?.models ?? []
+  const hasOllamaModels = ollamaModels.length > 0
+
+  async function handlePullModel() {
+    setConnectionMessage(null)
+    setConnectionError(null)
+    try {
+      const result = await pullOllamaModel({ model: ollamaPullModel.trim(), base_url: ollamaBaseUrl.trim() || null })
+      await refetchOllamaModels()
+      setConnectionMessage(`Pulled Ollama model ${result.model} (${result.status}).`)
+      setOllamaPullModel('')
+    } catch (error) {
+      setConnectionError(describeApiActionError(error))
+    }
+  }
 
   async function handleTest() {
     setConnectionMessage(null)
@@ -436,23 +459,90 @@ function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSa
             <option value="openai">OpenAI</option>
             <option value="anthropic">Anthropic</option>
           </SelectField>
-          <TextInputField label="Analyst model" value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+          {analystUsesOllama && hasOllamaModels ? (
+            <SelectField label="Analyst model" value={aiModel} onChange={(event) => setAiModel(event.target.value)}>
+              {ollamaModels.map((model) => (
+                <option key={`analyst-${model.name}`} value={model.name}>{model.name}</option>
+              ))}
+            </SelectField>
+          ) : aiBackend !== 'none' ? (
+            <TextInputField label="Analyst model" value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+          ) : (
+            <div />
+          )}
           <CheckboxField label="Enable fingerprint synthesis workflow" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
-          <SelectField label="Fingerprint provider" value={fingerprintAiBackend} onChange={(event) => setFingerprintAiBackend(event.target.value)}>
-            <option value="ollama">Ollama</option>
-            <option value="openai">OpenAI</option>
-            <option value="anthropic">Anthropic</option>
-          </SelectField>
-          <TextInputField label="Fingerprint model" value={fingerprintAiModel} onChange={(event) => setFingerprintAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+          {fingerprintAiEnabled ? (
+            <SelectField label="Fingerprint provider" value={fingerprintAiBackend} onChange={(event) => setFingerprintAiBackend(event.target.value)}>
+              <option value="ollama">Ollama</option>
+              <option value="openai">OpenAI</option>
+              <option value="anthropic">Anthropic</option>
+            </SelectField>
+          ) : (
+            <div />
+          )}
+          {fingerprintAiEnabled && fingerprintAiBackend === 'ollama' && hasOllamaModels ? (
+            <SelectField label="Fingerprint model" value={fingerprintAiModel} onChange={(event) => setFingerprintAiModel(event.target.value)}>
+              {ollamaModels.map((model) => (
+                <option key={`fingerprint-${model.name}`} value={model.name}>{model.name}</option>
+              ))}
+            </SelectField>
+          ) : fingerprintAiEnabled ? (
+            <TextInputField label="Fingerprint model" value={fingerprintAiModel} onChange={(event) => setFingerprintAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+          ) : (
+            <div />
+          )}
           <TextInputField label="Fingerprint AI minimum confidence" value={fingerprintAiMinConfidence} type="number" min={0} max={1} step={0.05} onChange={(event) => setFingerprintAiMinConfidence(Number(event.target.value) || 0.75)} placeholder="0.75" />
-          <TextInputField label="Ollama base URL" value={ollamaBaseUrl} onChange={(event) => setOllamaBaseUrl(event.target.value)} placeholder="http://ollama:11434/v1" />
-          <TextInputField label="OpenAI base URL" value={openaiBaseUrl} onChange={(event) => setOpenaiBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
-          <TextInputField label="OpenAI API key" value={openaiApiKey} onChange={(event) => setOpenaiApiKey(event.target.value)} placeholder="sk-..." />
-          <TextInputField label="Anthropic API key" value={anthropicApiKey} onChange={(event) => setAnthropicApiKey(event.target.value)} placeholder="sk-ant-..." />
           <CheckboxField label="Enable internet lookup for unresolved assets" checked={internetLookupEnabled} onChange={(event) => setInternetLookupEnabled(event.target.checked)} />
           <TextInputField label="Lookup budget" value={internetLookupBudget} type="number" min={1} max={10} onChange={(event) => setInternetLookupBudget(Number(event.target.value) || 3)} placeholder="3" />
           <TextInputField label="Lookup timeout seconds" value={internetLookupTimeoutSeconds} type="number" min={1} max={30} onChange={(event) => setInternetLookupTimeoutSeconds(Number(event.target.value) || 5)} placeholder="5" />
         </div>
+        {showOllamaSection && (
+          <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-3">
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+              <TextInputField label="Ollama base URL" value={ollamaBaseUrl} onChange={(event) => setOllamaBaseUrl(event.target.value)} placeholder="http://ollama:11434/v1" />
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  onClick={() => void refetchOllamaModels()}
+                  disabled={isRefreshingOllamaModels}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700"
+                >
+                  <RefreshCw className={`w-4 h-4 ${isRefreshingOllamaModels ? 'animate-spin' : ''}`} />
+                  Refresh Ollama models
+                </button>
+              </div>
+            </div>
+            <div className="space-y-2 text-xs text-zinc-500">
+              <p>Installed Ollama models detected by Argus: {hasOllamaModels ? ollamaModels.map((model) => model.name).join(', ') : 'none found yet'}</p>
+              <p>Argus can adjust its own Ollama connection settings and trigger model downloads, but it does not manage arbitrary Ollama daemon tuning flags.</p>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_auto] gap-3">
+              <TextInputField label="Pull new Ollama model" value={ollamaPullModel} onChange={(event) => setOllamaPullModel(event.target.value)} placeholder="qwen2.5:7b" />
+              <div className="flex items-end">
+                <button
+                  type="button"
+                  disabled={isPullingOllamaModel || ollamaPullModel.trim().length === 0}
+                  onClick={() => void handlePullModel()}
+                  className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700 disabled:bg-zinc-100 disabled:text-zinc-400 dark:disabled:bg-zinc-800"
+                >
+                  <Download className="w-4 h-4" />
+                  {isPullingOllamaModel ? 'Pulling…' : 'Download model'}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
+        {showOpenAiSection && (
+          <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <TextInputField label="OpenAI base URL" value={openaiBaseUrl} onChange={(event) => setOpenaiBaseUrl(event.target.value)} placeholder="https://api.openai.com/v1" />
+            <TextInputField label="OpenAI API key" value={openaiApiKey} onChange={(event) => setOpenaiApiKey(event.target.value)} placeholder="sk-..." />
+          </div>
+        )}
+        {showAnthropicSection && (
+          <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 grid grid-cols-1 md:grid-cols-2 gap-3">
+            <TextInputField label="Anthropic API key" value={anthropicApiKey} onChange={(event) => setAnthropicApiKey(event.target.value)} placeholder="sk-ant-..." />
+          </div>
+        )}
         <TextareaField
           label="Fingerprint AI prompt suffix"
           value={fingerprintAiPromptSuffix}
