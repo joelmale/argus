@@ -27,7 +27,7 @@ type BackupPolicyFormProps = Readonly<{
   }) => void
 }>
 
-type ScannerConfigSavePayload = Omit<ScannerConfig, 'id' | 'detected_targets' | 'effective_targets' | 'last_scheduled_scan_at' | 'created_at' | 'updated_at'>
+type ScannerConfigSavePayload = Omit<ScannerConfig, 'id' | 'detected_targets' | 'effective_targets' | 'last_scheduled_scan_at' | 'next_scheduled_scan_at' | 'created_at' | 'updated_at'>
 
 type ScannerConfigCardProps = Readonly<{
   scannerConfig?: ScannerConfig
@@ -276,6 +276,7 @@ function BackupPolicyCard({ backupPolicy, isUpdatingBackupPolicy, onSave }: Back
 
 function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: ScannerConfigCardProps) {
   const [scannerEnabled, setScannerEnabled] = useState(scannerConfig?.enabled ?? true)
+  const [scheduledScansEnabled, setScheduledScansEnabled] = useState(scannerConfig?.scheduled_scans_enabled ?? false)
   const [autoDetectTargets, setAutoDetectTargets] = useState(scannerConfig?.auto_detect_targets ?? true)
   const [defaultTargets, setDefaultTargets] = useState(scannerConfig?.default_targets ?? '')
   const [defaultProfile, setDefaultProfile] = useState(scannerConfig?.default_profile ?? 'balanced')
@@ -293,7 +294,8 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
       </CardHeader>
       <CardBody className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <CheckboxField label="Enable scheduled scans" checked={scannerEnabled} onChange={(event) => setScannerEnabled(event.target.checked)} />
+          <CheckboxField label="Enable scanner configuration" checked={scannerEnabled} onChange={(event) => setScannerEnabled(event.target.checked)} />
+          <CheckboxField label="Enable scheduled scans" checked={scheduledScansEnabled} onChange={(event) => setScheduledScansEnabled(event.target.checked)} />
           <CheckboxField label="Auto-detect local subnet when no explicit target is set" checked={autoDetectTargets} onChange={(event) => setAutoDetectTargets(event.target.checked)} />
           <TextInputField
             label="Default targets"
@@ -324,8 +326,13 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
           <p className="text-xs text-zinc-500">
             Last scheduled run: {formatDateOrFallback(scannerConfig?.last_scheduled_scan_at)}
           </p>
+          <p className="text-xs text-zinc-500">
+            Next scheduled run: {formatDateOrFallback(scannerConfig?.next_scheduled_scan_at)}
+          </p>
         </div>
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1 text-xs text-zinc-500">
+          <p>Manual scans are always available. The scheduled-scan toggle only controls background recurring scans.</p>
+          <p>Argus keeps at most one scheduled scan queued or running at a time to avoid queue buildup after restarts or failures.</p>
           <p>Host concurrency controls how many devices Argus investigates at once.</p>
           <p>Chunk size controls how many discovered hosts go into each nmap batch before the next chunk starts.</p>
           <p>Top ports count applies to quick and balanced scans; deep enrichment still scans the full port range.</p>
@@ -338,6 +345,7 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
           onClick={() => scannerConfig && onSave({
             ...scannerConfig,
             enabled: scannerEnabled,
+            scheduled_scans_enabled: scheduledScansEnabled,
             default_targets: defaultTargets.trim() || null,
             auto_detect_targets: autoDetectTargets,
             default_profile: defaultProfile,

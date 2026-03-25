@@ -95,6 +95,7 @@ export interface ConfigBackupPolicy {
 export interface ScannerConfig {
   id: number;
   enabled: boolean;
+  scheduled_scans_enabled: boolean;
   default_targets: string | null;
   auto_detect_targets: boolean;
   detected_targets: string | null;
@@ -133,6 +134,7 @@ export interface ScannerConfig {
   internet_lookup_budget: number;
   internet_lookup_timeout_seconds: number;
   last_scheduled_scan_at: string | null;
+  next_scheduled_scan_at: string | null;
   created_at: string;
   updated_at: string;
 }

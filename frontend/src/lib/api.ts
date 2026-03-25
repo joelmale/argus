@@ -74,7 +74,7 @@ export const authApi = {
   updateBackupPolicy: (payload: Omit<ConfigBackupPolicy, "id" | "last_run_at" | "created_at" | "updated_at">) =>
     api.put("/api/v1/system/backup-policy", payload),
   getScannerConfig: () => api.get("/api/v1/system/scanner-config"),
-  updateScannerConfig: (payload: Omit<ScannerConfig, "id" | "detected_targets" | "effective_targets" | "last_scheduled_scan_at" | "created_at" | "updated_at">) =>
+  updateScannerConfig: (payload: Omit<ScannerConfig, "id" | "detected_targets" | "effective_targets" | "last_scheduled_scan_at" | "next_scheduled_scan_at" | "created_at" | "updated_at">) =>
     api.put("/api/v1/system/scanner-config", payload),
   testAiConfiguration: () => api.post("/api/v1/system/ai/test"),
   getTplinkDecoModule: () => api.get("/api/v1/system/modules/tplink-deco"),

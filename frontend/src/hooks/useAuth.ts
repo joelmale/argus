@@ -350,7 +350,7 @@ export function useUpdateScannerConfig() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (payload: Omit<ScannerConfig, 'id' | 'detected_targets' | 'effective_targets' | 'last_scheduled_scan_at' | 'created_at' | 'updated_at'>) => {
+    mutationFn: async (payload: Omit<ScannerConfig, 'id' | 'detected_targets' | 'effective_targets' | 'last_scheduled_scan_at' | 'next_scheduled_scan_at' | 'created_at' | 'updated_at'>) => {
       const { data } = await authApi.updateScannerConfig(payload)
       return data as ScannerConfig
     },
