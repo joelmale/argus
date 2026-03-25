@@ -161,7 +161,7 @@ TOOL_SCHEMAS: list[dict] = [
                         "enum": [
                             "router", "switch", "access_point", "firewall",
                             "server", "workstation", "nas", "printer",
-                            "ip_camera", "smart_tv", "iot_device", "voip", "unknown"
+                            "ip_camera", "smart_tv", "game_console", "iot_device", "voip", "unknown"
                         ],
                         "description": "Primary device classification",
                     },

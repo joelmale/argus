@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import asyncio
+from urllib.parse import urlsplit, urlunsplit
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException
 import anthropic
+import httpx
 from openai import AsyncOpenAI
 from pydantic import BaseModel
 from sqlalchemy import select
@@ -96,6 +98,11 @@ class ResetInventoryRequest(BaseModel):
     confirm: str
 
 
+class OllamaPullRequest(BaseModel):
+    model: str
+    base_url: str | None = None
+
+
 class TplinkDecoConfigUpdateRequest(BaseModel):
     enabled: bool
     base_url: str = "http://tplinkdeco.net"
@@ -178,6 +185,57 @@ def _serialize_scanner_config(config, effective) -> dict:
         "next_scheduled_scan_at": effective.next_scheduled_scan_at.isoformat() if effective.next_scheduled_scan_at else None,
         "created_at": config.created_at.isoformat(),
         "updated_at": config.updated_at.isoformat(),
+    }
+
+
+def _ollama_api_root(base_url: str) -> str:
+    normalized = (base_url or "").strip()
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Ollama base URL is required.")
+    parsed = urlsplit(normalized)
+    path = parsed.path.rstrip("/")
+    if path.endswith("/v1"):
+        path = path[:-3]
+    return urlunsplit((parsed.scheme, parsed.netloc, path or "", "", ""))
+
+
+async def _list_ollama_models(base_url: str) -> dict:
+    api_root = _ollama_api_root(base_url)
+    async with httpx.AsyncClient(timeout=15) as client:
+        response = await client.get(f"{api_root}/api/tags")
+        response.raise_for_status()
+    payload = response.json()
+    models = [
+        {
+            "name": item.get("name") or item.get("model"),
+            "size": item.get("size"),
+            "modified_at": item.get("modified_at"),
+            "family": (item.get("details") or {}).get("family"),
+        }
+        for item in payload.get("models", [])
+        if item.get("name") or item.get("model")
+    ]
+    return {"base_url": base_url, "api_root": api_root, "models": models}
+
+
+async def _pull_ollama_model(base_url: str, model: str) -> dict:
+    api_root = _ollama_api_root(base_url)
+    requested_model = model.strip()
+    if not requested_model:
+        raise HTTPException(status_code=400, detail="Model name is required.")
+    async with httpx.AsyncClient(timeout=600) as client:
+        response = await client.post(
+            f"{api_root}/api/pull",
+            json={"name": requested_model, "stream": False},
+        )
+        response.raise_for_status()
+    payload = response.json()
+    return {
+        "base_url": base_url,
+        "api_root": api_root,
+        "model": requested_model,
+        "status": payload.get("status", "ok"),
+        "digest": payload.get("digest"),
     }
 
 
@@ -291,6 +349,48 @@ async def test_ai_configuration(
         "analyst": analyst,
         "fingerprint": fingerprint,
     }
+
+
+@router.get("/ai/ollama/models")
+async def get_ollama_models(
+    _: AdminUser,
+    db: DBSession,
+    base_url: str | None = None,
+):
+    _, effective = await read_effective_scanner_config(db)
+    resolved_base_url = (base_url or effective.ollama_base_url or "").strip()
+    try:
+        return await _list_ollama_models(resolved_base_url)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama model listing failed with HTTP {exc.response.status_code}") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama model listing failed: {exc}") from exc
+
+
+@router.post("/ai/ollama/pull")
+async def pull_ollama_model(
+    payload: OllamaPullRequest,
+    user: AdminUser,
+    db: DBSession,
+):
+    _, effective = await read_effective_scanner_config(db)
+    resolved_base_url = (payload.base_url or effective.ollama_base_url or "").strip()
+    try:
+        result = await _pull_ollama_model(resolved_base_url, payload.model)
+    except httpx.HTTPStatusError as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama model pull failed with HTTP {exc.response.status_code}") from exc
+    except httpx.HTTPError as exc:
+        raise HTTPException(status_code=502, detail=f"Ollama model pull failed: {exc}") from exc
+    await log_audit_event(
+        db,
+        action="ai.ollama_model_pull",
+        user=user,
+        target_type="ollama_model",
+        target_id=payload.model.strip(),
+        details={"base_url": resolved_base_url, "status": result["status"], "digest": result.get("digest")},
+    )
+    await db.commit()
+    return result
 
 
 @router.post("/fingerprint-datasets/{dataset_key}/refresh", responses=FINGERPRINT_REFRESH_RESPONSES)

@@ -39,6 +39,10 @@ PORT_SIGNATURES: list[tuple[int | None, str | None, DeviceClass, float, str]] = 
     (554,    None,              DeviceClass.IP_CAMERA,      0.85, "RTSP video stream"),
     (8554,   "rtsp",            DeviceClass.IP_CAMERA,      0.85, "RTSP on alt port"),
     (1935,   None,              DeviceClass.SMART_TV,       0.60, "RTMP streaming"),
+    (3478,   None,              DeviceClass.GAME_CONSOLE,   0.64, "Console/STUN service"),
+    (3479,   None,              DeviceClass.GAME_CONSOLE,   0.64, "Console/STUN service"),
+    (3480,   None,              DeviceClass.GAME_CONSOLE,   0.64, "Console/STUN service"),
+    (9308,   None,              DeviceClass.GAME_CONSOLE,   0.78, "PlayStation Remote Play service"),
     (5353,   "mdns",            DeviceClass.IOT_DEVICE,     0.40, "mDNS (many devices)"),
     (1900,   "upnp",            DeviceClass.IOT_DEVICE,     0.40, "UPnP (many devices)"),
     (161,    "snmp",            DeviceClass.ROUTER,         0.55, "SNMP-managed device"),
@@ -225,6 +229,8 @@ def _collect_hostname_hints(host_name: str, host: DiscoveredHost) -> list[Device
         candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.97, f"Hostname hint: {host.nmap_hostname}"))
     if any(token in host_name for token in ("nas", "truenas", "synology")):
         candidates.append(DeviceHint(DeviceClass.NAS, 0.75, f"Hostname hint: {host.nmap_hostname}"))
+    if any(token in host_name for token in ("ps5", "playstation", "xbox", "switch")):
+        candidates.append(DeviceHint(DeviceClass.GAME_CONSOLE, 0.86, f"Hostname hint: {host.nmap_hostname}"))
     return candidates
 
 
@@ -237,6 +243,12 @@ def _collect_vendor_hints(
     port_set = set(open_ports.keys())
     if "firewalla" in mac_vendor_lower:
         candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.99, f"Vendor hint: {mac_vendor}"))
+    if ("sony interactive" in mac_vendor_lower or "playstation" in mac_vendor_lower) and port_set & {3478, 3479, 3480, 9308}:
+        candidates.append(DeviceHint(DeviceClass.GAME_CONSOLE, 0.94, f"Vendor hint: {mac_vendor}"))
+    if "microsoft" in mac_vendor_lower and port_set & {3074, 3478, 3479, 3480}:
+        candidates.append(DeviceHint(DeviceClass.GAME_CONSOLE, 0.84, f"Vendor hint: {mac_vendor}"))
+    if "nintendo" in mac_vendor_lower:
+        candidates.append(DeviceHint(DeviceClass.GAME_CONSOLE, 0.82, f"Vendor hint: {mac_vendor}"))
     if "ubiquiti" in mac_vendor_lower or "unifi" in mac_vendor_lower:
         if port_set & {8080, 8443, 10001, 1900}:
             candidates.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.82, f"Vendor and ports: {mac_vendor}"))

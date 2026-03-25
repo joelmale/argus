@@ -52,6 +52,7 @@ class DeviceClass(str, Enum):
     PRINTER        = "printer"
     IP_CAMERA      = "ip_camera"
     SMART_TV       = "smart_tv"
+    GAME_CONSOLE   = "game_console"
     IOT_DEVICE     = "iot_device"
     VOIP           = "voip"
     UNKNOWN        = "unknown"

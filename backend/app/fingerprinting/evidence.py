@@ -51,6 +51,10 @@ def _signature_evidence(value: str, source: str, details: dict[str, Any]) -> lis
         ("opnsense", "device_type", "firewall", 0.92),
         ("jellyfin", "device_type", "server", 0.74),
         ("plex", "device_type", "server", 0.72),
+        ("playstation", "device_type", "game_console", 0.94),
+        ("ps5", "device_type", "game_console", 0.94),
+        ("xbox", "device_type", "game_console", 0.9),
+        ("nintendo switch", "device_type", "game_console", 0.92),
         ("home assistant", "device_type", "iot_device", 0.84),
         ("frigate", "device_type", "server", 0.7),
         ("axis", "device_type", "ip_camera", 0.85),
@@ -69,6 +73,10 @@ def _signature_evidence(value: str, source: str, details: dict[str, Any]) -> lis
         ("tplink", "vendor", "TP-Link", 0.86),
         ("deco", "vendor", "TP-Link", 0.82),
         ("netgate", "vendor", "Netgate", 0.88),
+        ("sony interactive entertainment", "vendor", "Sony", 0.94),
+        ("playstation", "vendor", "Sony", 0.92),
+        ("xbox", "vendor", "Microsoft", 0.88),
+        ("nintendo", "vendor", "Nintendo", 0.88),
     ]
     for needle, category, normalized, confidence in signatures:
         if needle in text:
