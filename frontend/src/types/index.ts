@@ -568,6 +568,8 @@ export interface TopologyNode {
     topology_role?: string | null;
     topology_confidence?: number | null;
     is_gateway?: boolean;
+    layout_tier?: string | null;
+    is_infrastructure?: boolean;
   };
 }
 
@@ -585,6 +587,8 @@ export interface TopologyEdge {
     local_interface?: string | null;
     remote_interface?: string | null;
     ssid?: string | null;
+    layout_tier?: string | null;
+    evidence?: Record<string, unknown> | null;
     vlan_id: number | null;
   };
 }

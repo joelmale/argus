@@ -267,7 +267,7 @@ export default function LoginPage() {
         )}
       </div>
       <div className="pointer-events-none absolute bottom-5 right-5 rounded-full border border-white/70 bg-white/80 px-3 py-1 text-[11px] font-medium tracking-[0.18em] text-zinc-500 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-400">
-        v1.3
+        v1.5
       </div>
     </main>
   )
