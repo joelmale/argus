@@ -483,6 +483,7 @@ async def get_asset(asset_id: UUID, db: DBSession, _: CurrentUser):
         .options(
             selectinload(Asset.ports),
             selectinload(Asset.tags),
+            selectinload(Asset.note_entries).selectinload(AssetNote.user),
             selectinload(Asset.history),
             selectinload(Asset.ai_analysis),
             selectinload(Asset.evidence),
