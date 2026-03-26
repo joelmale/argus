@@ -81,6 +81,81 @@ function tierRow(tier: string | null | undefined): number {
   return 500
 }
 
+function isInfrastructureNode(node: { data: Record<string, unknown> }): boolean {
+  const role = String(node.data.topology_role ?? '')
+  return Boolean(node.data.is_gateway)
+    || role === 'gateway'
+    || role === 'gateway_candidate'
+    || role === 'switch'
+    || role === 'access_point'
+    || role === 'infrastructure'
+}
+
+function buildRadialPositions(
+  nodes: Array<{ data: Record<string, unknown> }>,
+  segments: Array<{ id: number; label: string }>,
+) {
+  const positions = new Map<string, { x: number; y: number }>()
+  const segmentOrder = new Map(segments.map((segment, index) => [segment.id, index]))
+  const bySegment = new Map<number, Array<{ data: Record<string, unknown> }>>()
+
+  for (const node of nodes) {
+    const segmentId = Number(node.data.segment_id ?? -1)
+    const bucket = bySegment.get(segmentId) ?? []
+    bucket.push(node)
+    bySegment.set(segmentId, bucket)
+  }
+
+  const orderedSegments = Array.from(bySegment.entries()).sort((a, b) => {
+    const aIndex = segmentOrder.get(a[0]) ?? Number.MAX_SAFE_INTEGER
+    const bIndex = segmentOrder.get(b[0]) ?? Number.MAX_SAFE_INTEGER
+    return aIndex - bIndex
+  })
+
+  for (const [index, [, segmentNodes]] of orderedSegments.entries()) {
+    const column = index % 2
+    const row = Math.floor(index / 2)
+    const centerX = 260 + column * 540
+    const centerY = 220 + row * 480
+
+    const hubs = segmentNodes.filter(isInfrastructureNode)
+    const endpoints = segmentNodes.filter((node) => !isInfrastructureNode(node))
+    const hubRingRadius = hubs.length > 1 ? 90 : 0
+    const endpointRingRadius = hubs.length > 1 ? 220 : 170
+
+    if (hubs.length === 0 && segmentNodes.length > 0) {
+      const [first, ...rest] = segmentNodes
+      positions.set(String(first.data.id), { x: centerX, y: centerY })
+      rest.forEach((node, nodeIndex) => {
+        const angle = (Math.PI * 2 * nodeIndex) / Math.max(rest.length, 1)
+        positions.set(String(node.data.id), {
+          x: centerX + Math.cos(angle) * endpointRingRadius,
+          y: centerY + Math.sin(angle) * endpointRingRadius,
+        })
+      })
+      continue
+    }
+
+    hubs.forEach((node, nodeIndex) => {
+      const angle = hubRingRadius > 0 ? (Math.PI * 2 * nodeIndex) / Math.max(hubs.length, 1) : 0
+      positions.set(String(node.data.id), {
+        x: centerX + Math.cos(angle) * hubRingRadius,
+        y: centerY + Math.sin(angle) * hubRingRadius,
+      })
+    })
+
+    endpoints.forEach((node, nodeIndex) => {
+      const angle = (Math.PI * 2 * nodeIndex) / Math.max(endpoints.length, 1)
+      positions.set(String(node.data.id), {
+        x: centerX + Math.cos(angle) * endpointRingRadius,
+        y: centerY + Math.sin(angle) * endpointRingRadius,
+      })
+    })
+  }
+
+  return positions
+}
+
 type SelectedGraphItem =
   | { kind: 'node'; data: Record<string, unknown> }
   | { kind: 'edge'; data: Record<string, unknown> }
@@ -97,7 +172,7 @@ export function TopologyMap() {
   )
   const [filter, setFilter] = useState('all')
   const [segmentFilter, setSegmentFilter] = useState('all')
-  const [layoutMode, setLayoutMode] = useState<'overview' | 'raw'>('overview')
+  const [layoutMode, setLayoutMode] = useState<'radial' | 'overview' | 'raw'>('radial')
   const [showObservedOnly, setShowObservedOnly] = useState(false)
   const [selectedItem, setSelectedItem] = useState<SelectedGraphItem | null>(null)
 
@@ -138,6 +213,7 @@ export function TopologyMap() {
   const elements = useMemo(() => {
     const segmentOrder = new Map(filteredGraph.segments.map((segment, index) => [segment.id, index]))
     const tierOffsets = new Map<string, number>()
+    const radialPositions = buildRadialPositions(filteredGraph.nodes, filteredGraph.segments)
 
     const nodes = filteredGraph.nodes.map((node) => {
       const segmentId = node.data.segment_id ?? -1
@@ -146,8 +222,9 @@ export function TopologyMap() {
       const tierKey = `${segmentId}:${tier}`
       const nextOffset = tierOffsets.get(tierKey) ?? 0
       tierOffsets.set(tierKey, nextOffset + 1)
-      const x = 180 + segmentColumn * 360 + nextOffset * 130
-      const y = tierRow(tier) + (nextOffset % 2) * 22
+      const radial = radialPositions.get(String(node.data.id))
+      const x = radial?.x ?? (180 + segmentColumn * 360 + nextOffset * 130)
+      const y = radial?.y ?? (tierRow(tier) + (nextOffset % 2) * 22)
 
       return {
         data: {
@@ -253,9 +330,8 @@ export function TopologyMap() {
           },
         },
       ],
-      layout: layoutMode === 'overview'
-        ? { name: 'preset', fit: true, padding: 60 }
-        : {
+      layout: layoutMode === 'raw'
+        ? {
             name: 'fcose',
             quality: 'default',
             randomize: true,
@@ -265,7 +341,10 @@ export function TopologyMap() {
             padding: 40,
             nodeSeparation: 100,
             idealEdgeLength: 140,
-          } as any,
+          } as any
+        : layoutMode === 'overview'
+        ? { name: 'preset', fit: true, padding: 60 }
+        : { name: 'preset', fit: true, padding: 80 },
       wheelSensitivity: 0.3,
     })
 
@@ -345,9 +424,10 @@ export function TopologyMap() {
         <div className="absolute left-3 top-16 flex flex-wrap gap-2">
           <select
             value={layoutMode}
-            onChange={(event) => setLayoutMode(event.target.value as 'overview' | 'raw')}
+            onChange={(event) => setLayoutMode(event.target.value as 'radial' | 'overview' | 'raw')}
             className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900"
           >
+            <option value="radial">Radial layout</option>
             <option value="overview">Overview layout</option>
             <option value="raw">Raw graph</option>
           </select>
@@ -420,7 +500,7 @@ export function TopologyMap() {
             <div className="rounded-xl border border-gray-200 p-3 dark:border-zinc-800">
               <p className="text-xs font-medium text-zinc-500">Layout Modes</p>
               <p className="mt-2 text-xs text-zinc-500">
-                Overview uses segment columns with gateway, distribution, and endpoint tiers. Raw graph uses force layout for debugging unexpected relationships.
+                Radial fans each segment around its most likely infrastructure hub. Overview uses segment columns with gateway, distribution, and endpoint tiers. Raw graph uses force layout for debugging unexpected relationships.
               </p>
             </div>
           </div>
