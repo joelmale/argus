@@ -1712,7 +1712,9 @@ async def test_worker_task_helpers_cover_control_queue_and_publish_paths(monkeyp
     worker_tasks._record_parent_chunk_progress(job, child, summary)
     assert job.result_summary["chunk_index"] == 1
 
-    decision_type = lambda **kwargs: SimpleNamespace(**kwargs)
+    def decision_type(**kwargs):
+        return SimpleNamespace(**kwargs)
+
     pause_job = SimpleNamespace(control_action="pause", control_mode="preserve_discovery", resume_after=datetime.now(timezone.utc))
     assert worker_tasks._scan_control_decision_from_job(pause_job, decision_type).action == "pause"
     requeue_job = SimpleNamespace(control_action="requeue", control_mode=None, resume_after=None)
@@ -2950,7 +2952,6 @@ async def test_assets_routes_cover_update_tags_backups_and_reports(monkeypatch):
 @pytest.mark.asyncio
 async def test_pipeline_persistence_helpers_cover_offline_ai_and_broadcast_paths(monkeypatch):
     summary = ScanSummary(job_id="job-300", targets="x", profile=ScanProfile.BALANCED)
-    result = _sample_result("192.168.1.230")
     offline_asset = Asset(
         id=uuid4(),
         ip_address="192.168.1.250",

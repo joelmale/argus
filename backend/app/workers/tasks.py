@@ -140,7 +140,6 @@ def run_resume_paused_scans():
 async def _run_job_async(job_id: str) -> None:
     """Async implementation of the scan job — runs the full pipeline."""
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
-    from app.db.models import ScanJob
     from app.scanner.config import get_or_create_scanner_config, materialize_scan_targets, validate_scan_targets_routable
     from app.scanner.models import ScanProfile, ScanSummary
     from app.scanner.pipeline import ScanControlDecision, ScanControlInterrupt, _persist_results, run_scan

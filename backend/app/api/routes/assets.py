@@ -28,7 +28,7 @@ from app.exporters import build_inventory_snapshot, render_ansible_inventory, re
 from app.scanner.agent import get_analyst
 from app.scanner.config import read_effective_scanner_config
 from app.scanner.config import materialize_scan_targets, validate_scan_targets_routable
-from app.scanner.models import DeviceClass, DiscoveredHost, HostScanResult, ScanProfile
+from app.scanner.models import DeviceClass, DiscoveredHost, ScanProfile
 from app.scanner.pipeline import _investigate_host
 from app.scanner.stages import portscan
 from app.workers.tasks import _has_active_scan, _next_queue_position, run_scan_job

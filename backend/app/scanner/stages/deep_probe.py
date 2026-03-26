@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 import logging
 
-from app.scanner.models import DiscoveredHost, PortResult, ProbeResult, ScanProfile
+from app.scanner.models import DiscoveredHost, PortResult, ProbeResult
 
 log = logging.getLogger(__name__)
 
