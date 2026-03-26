@@ -73,3 +73,6 @@ def test_deep_enrichment_scans_registered_ports(monkeypatch):
 
     assert fake.arguments is not None
     assert "-p1-49151" in fake.arguments
+    assert "--min-rate 1000" in fake.arguments
+    assert "-A" not in fake.arguments.split()
+    assert "--script=default,safe,vuln" not in fake.arguments

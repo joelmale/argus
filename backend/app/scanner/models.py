@@ -73,7 +73,7 @@ def _build_nmap_args(profile: ScanProfile, top_ports_count: int) -> str:
     if profile == ScanProfile.BALANCED:
         return "-sV -O -T4 -p1-1023 --host-timeout 60s"
     if profile == ScanProfile.DEEP_ENRICHMENT:
-        return "-A -T4 -p1-49151 --osscan-guess --script=default,safe,vuln --host-timeout 90s"
+        return "-sV -O -T4 -p1-49151 --min-rate 1000 --host-timeout 240s"
     return _build_nmap_args(ScanProfile.BALANCED, top_ports_count)
 
 
