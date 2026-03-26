@@ -74,6 +74,7 @@ class Settings(BaseSettings):
     SCANNER_DEFAULT_PROFILE: str = "balanced"
     SCANNER_CONCURRENT_HOSTS: int = 10
     SCANNER_PASSIVE_ARP_INTERFACE: str = "auto"
+    TOPOLOGY_DEFAULT_SEGMENT_PREFIX_V4: int = 24
 
     @model_validator(mode="after")
     def _populate_database_url(self) -> "Settings":

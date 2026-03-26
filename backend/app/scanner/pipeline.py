@@ -830,9 +830,10 @@ async def _persist_results(
     """Persist all scan results to the database."""
     from app.db.upsert import mark_offline, upsert_scan_result
     from app.alerting import notify_devices_offline_if_enabled, notify_new_device_if_enabled
-    from app.scanner.config import has_meaningful_scan_evidence
+    from app.scanner.config import has_meaningful_scan_evidence, read_effective_scanner_config
     from app.scanner.topology import infer_topology_links_from_snmp
     from app.topology.segments import ensure_segment_for_asset
+    _, runtime_config = await read_effective_scanner_config(db_session)
 
     # Find assets that were online before but not in this scan
     from sqlalchemy import select
@@ -860,6 +861,7 @@ async def _persist_results(
             infer_topology_links_from_snmp,
             ensure_segment_for_asset,
             notify_new_device_if_enabled,
+            runtime_config.topology_default_segment_prefix_v4,
         )
 
     await _persist_offline_assets(
@@ -959,6 +961,7 @@ async def _persist_result(
     infer_topology_links_from_snmp,
     ensure_segment_for_asset,
     notify_new_device_if_enabled,
+    topology_default_segment_prefix_v4,
 ) -> None:
     if result is None:
         return
@@ -968,7 +971,7 @@ async def _persist_result(
 
     try:
         asset, change_type = await upsert_scan_result(db_session, result)
-        await ensure_segment_for_asset(db_session, asset)
+        await ensure_segment_for_asset(db_session, asset, prefix_v4=topology_default_segment_prefix_v4)
         await _persist_snmp_topology(db_session, asset, result, infer_topology_links_from_snmp)
         await _update_summary(summary, broadcast_fn, job_id, result, change_type, db_session, notify_new_device_if_enabled, stage)
     except Exception as exc:

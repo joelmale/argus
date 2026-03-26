@@ -10,19 +10,21 @@ def build_topology_graph(
     assets: list[Asset],
     segments: list[NetworkSegment],
     links: list[TopologyLink],
+    *,
+    prefix_v4: int = 24,
 ) -> dict:
-    gateway_candidates = pick_gateway_candidates(assets)
+    gateway_candidates = pick_gateway_candidates(assets, prefix_v4)
     gateway_ids = {str(asset.id) for asset in gateway_candidates.values()}
     segment_by_cidr = {segment.cidr: segment for segment in segments}
     segment_assets: dict[str, list[Asset]] = defaultdict(list)
 
     for asset in assets:
-        cidr = infer_ipv4_segment_cidr(asset.ip_address)
+        cidr = infer_ipv4_segment_cidr(asset.ip_address, prefix_v4)
         if cidr:
             segment_assets[cidr].append(asset)
 
     nodes = [
-        {"data": _serialize_node(asset, segment_by_cidr, gateway_ids)}
+        {"data": _serialize_node(asset, segment_by_cidr, gateway_ids, prefix_v4)}
         for asset in assets
     ]
 
@@ -40,8 +42,8 @@ def build_topology_graph(
     return {"nodes": nodes, "edges": persisted_edges + inferred_edges, "segments": serialized_segments}
 
 
-def _serialize_node(asset: Asset, segment_by_cidr: dict[str, NetworkSegment], gateway_ids: set[str]) -> dict:
-    segment_cidr = infer_ipv4_segment_cidr(asset.ip_address)
+def _serialize_node(asset: Asset, segment_by_cidr: dict[str, NetworkSegment], gateway_ids: set[str], prefix_v4: int) -> dict:
+    segment_cidr = infer_ipv4_segment_cidr(asset.ip_address, prefix_v4)
     segment = segment_by_cidr.get(segment_cidr or "")
     topology_role, topology_confidence = infer_topology_role(asset, gateway_ids)
     layout_tier = _layout_tier_for_role(topology_role)

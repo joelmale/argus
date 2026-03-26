@@ -786,6 +786,7 @@ function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSa
 function NetworkSnmpCard({ scannerConfig, isUpdatingScannerConfig, onSave }: NetworkSnmpCardProps) {
   const [passiveArpEnabled, setPassiveArpEnabled] = useState(scannerConfig?.passive_arp_enabled ?? true)
   const [passiveArpInterface, setPassiveArpInterface] = useState(scannerConfig?.passive_arp_interface ?? 'eth0')
+  const [topologyDefaultSegmentPrefixV4, setTopologyDefaultSegmentPrefixV4] = useState(scannerConfig?.topology_default_segment_prefix_v4 ?? 24)
   const [snmpEnabled, setSnmpEnabled] = useState(scannerConfig?.snmp_enabled ?? true)
   const [snmpVersion, setSnmpVersion] = useState(scannerConfig?.snmp_version ?? '2c')
   const [snmpCommunity, setSnmpCommunity] = useState(scannerConfig?.snmp_community ?? '')
@@ -802,6 +803,7 @@ function NetworkSnmpCard({ scannerConfig, isUpdatingScannerConfig, onSave }: Net
       ...scannerConfig,
       passive_arp_enabled: passiveArpEnabled,
       passive_arp_interface: passiveArpInterface.trim() || 'eth0',
+      topology_default_segment_prefix_v4: Math.max(8, Math.min(30, topologyDefaultSegmentPrefixV4 || 24)),
       snmp_enabled: snmpEnabled,
       snmp_version: snmpVersion,
       snmp_community: snmpCommunity.trim() || null,
@@ -823,6 +825,7 @@ function NetworkSnmpCard({ scannerConfig, isUpdatingScannerConfig, onSave }: Net
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
           <CheckboxField label="Enable passive ARP listener" checked={passiveArpEnabled} onChange={(event) => setPassiveArpEnabled(event.target.checked)} />
           <TextInputField label="Passive ARP interface" value={passiveArpInterface} onChange={(event) => setPassiveArpInterface(event.target.value)} placeholder="eth0" />
+          <TextInputField label="Topology IPv4 segment prefix" value={topologyDefaultSegmentPrefixV4} type="number" min={8} max={30} onChange={(event) => setTopologyDefaultSegmentPrefixV4(Number(event.target.value) || 24)} placeholder="24" />
           <CheckboxField label="Enable SNMP enrichment" checked={snmpEnabled} onChange={(event) => setSnmpEnabled(event.target.checked)} />
           <SelectField label="SNMP version" value={snmpVersion} onChange={(event) => setSnmpVersion(event.target.value)}>
             <option value="2c">v2c</option>
@@ -846,6 +849,7 @@ function NetworkSnmpCard({ scannerConfig, isUpdatingScannerConfig, onSave }: Net
           <p>SNMPv2c uses the community string. SNMPv3 uses username plus auth/privacy keys.</p>
           <p>If your network is v3-only, set version to `v3` and fill the username, SHA auth key, and AES privacy key here.</p>
           <p>These saved values override env defaults, so you can trim back SNMP-related Dockhand env vars once this is configured.</p>
+          <p>Topology IPv4 segment prefix is used when Argus has an address but no explicit subnet mask or VLAN data. Change it to `/23` or another mask if your LAN is larger than `/24`.</p>
         </div>
         <button
           type="button"

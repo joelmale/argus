@@ -60,6 +60,7 @@ class EffectiveScannerConfig:
     passive_arp_interface: str
     passive_arp_effective_interface: str | None
     passive_arp_interface_auto: bool
+    topology_default_segment_prefix_v4: int
     snmp_enabled: bool
     snmp_version: str
     snmp_community: str
@@ -103,6 +104,7 @@ class ScannerConfigUpdateInput:
     anthropic_api_key: str | None
     passive_arp_enabled: bool
     passive_arp_interface: str
+    topology_default_segment_prefix_v4: int
     snmp_enabled: bool
     snmp_version: str
     snmp_community: str | None
@@ -434,6 +436,7 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
         anthropic_api_key=settings.ANTHROPIC_API_KEY,
         passive_arp_enabled=settings.SCANNER_PASSIVE_ARP,
         passive_arp_interface=settings.SCANNER_PASSIVE_ARP_INTERFACE,
+        topology_default_segment_prefix_v4=max(8, min(30, settings.TOPOLOGY_DEFAULT_SEGMENT_PREFIX_V4)),
         snmp_enabled=True,
         snmp_version=settings.SNMP_VERSION,
         snmp_community=settings.SNMP_COMMUNITY,
@@ -490,6 +493,7 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         passive_arp_interface=config.passive_arp_interface,
         passive_arp_effective_interface=passive_arp_effective_interface,
         passive_arp_interface_auto=passive_arp_interface_auto,
+        topology_default_segment_prefix_v4=max(8, min(30, config.topology_default_segment_prefix_v4)),
         snmp_enabled=config.snmp_enabled,
         snmp_version=config.snmp_version,
         snmp_community=config.snmp_community,
@@ -548,6 +552,7 @@ async def update_scanner_config(
         anthropic_api_key=payload.anthropic_api_key,
         passive_arp_enabled=payload.passive_arp_enabled,
         passive_arp_interface=payload.passive_arp_interface,
+        topology_default_segment_prefix_v4=payload.topology_default_segment_prefix_v4,
     )
     _apply_snmp_settings(
         config,
@@ -604,6 +609,7 @@ def _apply_core_scanner_settings(
     anthropic_api_key: str | None,
     passive_arp_enabled: bool,
     passive_arp_interface: str,
+    topology_default_segment_prefix_v4: int,
 ) -> None:
     config.enabled = enabled
     config.scheduled_scans_enabled = scheduled_scans_enabled
@@ -627,6 +633,7 @@ def _apply_core_scanner_settings(
     config.anthropic_api_key = _normalize_optional_text(anthropic_api_key)
     config.passive_arp_enabled = passive_arp_enabled
     config.passive_arp_interface = _normalize_optional_text(passive_arp_interface) or settings.SCANNER_PASSIVE_ARP_INTERFACE
+    config.topology_default_segment_prefix_v4 = max(8, min(30, topology_default_segment_prefix_v4))
 
 
 def _apply_snmp_settings(

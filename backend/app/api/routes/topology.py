@@ -11,6 +11,7 @@ from sqlalchemy.orm import selectinload
 from app.api.deps import get_current_admin, get_current_user
 from app.db.models import Asset, NetworkSegment, TopologyLink, User
 from app.db.session import get_db
+from app.scanner.config import read_effective_scanner_config
 from app.topology.graph_builder import build_topology_graph
 
 router = APIRouter()
@@ -28,13 +29,19 @@ class TopologyLinkCreateRequest(BaseModel):
 
 @router.get("/graph")
 async def get_topology_graph(db: DBSession, _: CurrentUser):
+    _, effective = await read_effective_scanner_config(db)
     assets_result = await db.execute(select(Asset).options(selectinload(Asset.ports)))
     assets = assets_result.scalars().all()
     segments_result = await db.execute(select(NetworkSegment))
     segments = segments_result.scalars().all()
     links_result = await db.execute(select(TopologyLink))
     links = links_result.scalars().all()
-    return build_topology_graph(assets, segments, links)
+    return build_topology_graph(
+        assets,
+        segments,
+        links,
+        prefix_v4=effective.topology_default_segment_prefix_v4,
+    )
 
 
 @router.post("/links", status_code=201)

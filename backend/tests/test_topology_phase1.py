@@ -51,8 +51,9 @@ def _asset(ip: str, *, device_type: str | None = None, hostname: str | None = No
     return asset
 
 
-def test_infer_ipv4_segment_cidr_prefers_private_ipv4_24():
+def test_infer_ipv4_segment_cidr_respects_configured_prefix():
     assert infer_ipv4_segment_cidr("192.168.100.17") == "192.168.100.0/24"
+    assert infer_ipv4_segment_cidr("192.168.100.17", 23) == "192.168.100.0/23"
     assert infer_ipv4_segment_cidr("10.1.2.3") == "10.1.2.0/24"
     assert infer_ipv4_segment_cidr("8.8.8.8") is None
     assert infer_ipv4_segment_cidr("not-an-ip") is None
@@ -73,10 +74,10 @@ async def test_ensure_segment_for_asset_creates_segment_once():
     asset = _asset("192.168.100.25", device_type="server")
     db = _FakeDb([[]])
 
-    segment = await ensure_segment_for_asset(db, asset)
+    segment = await ensure_segment_for_asset(db, asset, prefix_v4=23)
 
     assert segment is not None
-    assert segment.cidr == "192.168.100.0/24"
+    assert segment.cidr == "192.168.100.0/23"
     assert any(isinstance(item, NetworkSegment) for item in db.added)
 
 
@@ -100,6 +101,10 @@ async def test_topology_graph_exposes_segments_gateway_roles_and_edge_metadata()
     )
     db = _FakeDb([[gateway, endpoint], [segment], [link]])
 
+    async def fake_read_effective_scanner_config(_db):
+        return SimpleNamespace(), SimpleNamespace(topology_default_segment_prefix_v4=24)
+
+    topology_routes.read_effective_scanner_config = fake_read_effective_scanner_config
     payload = await topology_routes.get_topology_graph(db, SimpleNamespace())
 
     assert payload["segments"][0]["cidr"] == "192.168.100.0/24"

@@ -117,6 +117,7 @@ export interface ScannerConfig {
   anthropic_api_key: string;
   passive_arp_enabled: boolean;
   passive_arp_interface: string;
+  topology_default_segment_prefix_v4: number;
   snmp_enabled: boolean;
   snmp_version: string;
   snmp_community: string | null;

@@ -501,6 +501,7 @@ class ScannerConfig(Base):
     anthropic_api_key: Mapped[str | None] = mapped_column(Text)
     passive_arp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     passive_arp_interface: Mapped[str] = mapped_column(String(64), default="eth0")
+    topology_default_segment_prefix_v4: Mapped[int] = mapped_column(Integer, default=24)
     snmp_enabled: Mapped[bool] = mapped_column(Boolean, default=True)
     snmp_version: Mapped[str] = mapped_column(String(8), default="2c")
     snmp_community: Mapped[str] = mapped_column(String(128), default="public")

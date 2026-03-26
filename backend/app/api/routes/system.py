@@ -104,6 +104,7 @@ class ScannerConfigUpdateRequest(BaseModel):
     anthropic_api_key: str | None = None
     passive_arp_enabled: bool = True
     passive_arp_interface: str = "auto"
+    topology_default_segment_prefix_v4: int = 24
     snmp_enabled: bool = True
     snmp_version: str = "2c"
     snmp_community: str | None = None
@@ -232,6 +233,7 @@ def _serialize_scanner_config(config, effective) -> dict:
         "passive_arp_interface": config.passive_arp_interface,
         "passive_arp_effective_interface": effective.passive_arp_effective_interface,
         "passive_arp_interface_auto": effective.passive_arp_interface_auto,
+        "topology_default_segment_prefix_v4": effective.topology_default_segment_prefix_v4,
         "snmp_enabled": config.snmp_enabled,
         "snmp_version": config.snmp_version,
         "snmp_community": config.snmp_community,
@@ -896,6 +898,7 @@ async def write_scanner_config(
                 anthropic_api_key=payload.anthropic_api_key,
                 passive_arp_enabled=payload.passive_arp_enabled,
                 passive_arp_interface=payload.passive_arp_interface,
+                topology_default_segment_prefix_v4=payload.topology_default_segment_prefix_v4,
                 snmp_enabled=payload.snmp_enabled,
                 snmp_version=payload.snmp_version,
                 snmp_community=payload.snmp_community,

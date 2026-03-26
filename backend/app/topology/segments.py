@@ -8,7 +8,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.models import Asset, NetworkSegment
 
 
-def infer_ipv4_segment_cidr(ip_value: str | None) -> str | None:
+def normalize_topology_prefix_v4(prefix_v4: int | None) -> int:
+    if prefix_v4 is None:
+        return 24
+    return max(8, min(30, int(prefix_v4)))
+
+
+def infer_ipv4_segment_cidr(ip_value: str | None, prefix_v4: int = 24) -> str | None:
     if not ip_value:
         return None
     try:
@@ -17,7 +23,7 @@ def infer_ipv4_segment_cidr(ip_value: str | None) -> str | None:
         return None
     if candidate.version != 4 or not candidate.is_private:
         return None
-    network = ip_network(f"{candidate}/24", strict=False)
+    network = ip_network(f"{candidate}/{normalize_topology_prefix_v4(prefix_v4)}", strict=False)
     return str(network)
 
 
@@ -75,10 +81,10 @@ def score_gateway_candidate(asset: Asset) -> float:
     return min(score, 1.0)
 
 
-def pick_gateway_candidates(assets: list[Asset]) -> dict[str, Asset]:
+def pick_gateway_candidates(assets: list[Asset], prefix_v4: int = 24) -> dict[str, Asset]:
     grouped: dict[str, list[Asset]] = {}
     for asset in assets:
-        cidr = infer_ipv4_segment_cidr(asset.ip_address)
+        cidr = infer_ipv4_segment_cidr(asset.ip_address, prefix_v4)
         if cidr is None:
             continue
         grouped.setdefault(cidr, []).append(asset)
@@ -95,9 +101,11 @@ async def ensure_segment_for_asset(
     db: AsyncSession,
     asset: Asset,
     *,
-    source: str = "heuristic_ipv4_24",
+    prefix_v4: int = 24,
+    source: str | None = None,
 ) -> NetworkSegment | None:
-    cidr = infer_ipv4_segment_cidr(asset.ip_address)
+    normalized_prefix = normalize_topology_prefix_v4(prefix_v4)
+    cidr = infer_ipv4_segment_cidr(asset.ip_address, normalized_prefix)
     if cidr is None:
         return None
 
@@ -109,9 +117,9 @@ async def ensure_segment_for_asset(
     segment = NetworkSegment(
         cidr=cidr,
         label=cidr,
-        source=source,
+        source=source or f"heuristic_ipv4_{normalized_prefix}",
         confidence=0.55,
-        segment_metadata={"inferred_from": "asset_ipv4_private_address"},
+        segment_metadata={"inferred_from": "asset_ipv4_private_address", "prefix_v4": normalized_prefix},
     )
     db.add(segment)
     return segment
