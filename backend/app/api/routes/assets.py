@@ -492,12 +492,12 @@ async def run_asset_port_scan(
 
     job = ScanJob(
         targets=targets,
-        scan_type=ScanProfile.BALANCED.value,
+        scan_type=ScanProfile.DEEP_ENRICHMENT.value,
         triggered_by="manual",
         queue_position=await _next_queue_position(db),
         result_summary={
             "stage": "queued",
-            "message": f"Queued targeted port scan for {asset.ip_address}",
+            "message": f"Queued targeted deep port scan for {asset.ip_address}",
             "asset_id": str(asset.id),
         },
     )
@@ -526,14 +526,14 @@ async def run_asset_ai_refresh(
         discovery_method="manual",
         nmap_hostname=asset.hostname,
     )
-    ports, os_fp = await portscan.scan_host(host, ScanProfile.BALANCED)
+    ports, os_fp = await portscan.scan_host(host, ScanProfile.DEEP_ENRICHMENT)
     result = await _investigate_host(
         host=host,
         ports=ports,
         os_fp=os_fp,
         nmap_hostname=host.nmap_hostname,
         nmap_vendor=asset.vendor,
-        profile=ScanProfile.BALANCED,
+        profile=ScanProfile.DEEP_ENRICHMENT,
         analyst=get_analyst(runtime_config),
         run_deep_probes=True,
         deep_probe_timeout_seconds=6,

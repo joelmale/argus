@@ -44,3 +44,32 @@ def test_portscan_does_not_duplicate_pn(monkeypatch):
 
     assert fake.arguments is not None
     assert fake.arguments.split().count("-Pn") == 1
+
+
+def test_balanced_profile_scans_well_known_ports(monkeypatch):
+    fake = _FakePortScanner()
+    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
+
+    portscan._scan_sync(
+        [DiscoveredHost(ip_address="192.168.100.4", discovery_method="arp")],
+        ScanProfile.BALANCED,
+        None,
+    )
+
+    assert fake.arguments is not None
+    assert "-p1-1023" in fake.arguments
+    assert "--top-ports" not in fake.arguments
+
+
+def test_deep_enrichment_scans_registered_ports(monkeypatch):
+    fake = _FakePortScanner()
+    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
+
+    portscan._scan_sync(
+        [DiscoveredHost(ip_address="192.168.100.4", discovery_method="arp")],
+        ScanProfile.DEEP_ENRICHMENT,
+        None,
+    )
+
+    assert fake.arguments is not None
+    assert "-p1-49151" in fake.arguments

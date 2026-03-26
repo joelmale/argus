@@ -156,6 +156,15 @@ def _scan_sync(
         os_fp = _extract_os(host_data)
         nm_hostname = _extract_hostname(host_data)
         nmap_mac, nmap_vendor = _extract_mac_and_vendor(host_data)
+        if not ports:
+            log.warning(
+                "No open ports parsed for %s using args '%s' | protocols=%s | state_summary=%s | status=%s",
+                ip,
+                args,
+                _protocol_keys(host_data),
+                _protocol_state_summary(host_data),
+                host_data.get("status", {}),
+            )
         instant = fingerprint_from_nmap_host_data(host_data)
         os_fp = merge_into_os_fingerprint(os_fp, instant)
         resolved_vendor = instant.vendor if instant is not None and instant.vendor else nmap_vendor
@@ -198,6 +207,27 @@ def _iter_open_ports(host_data: dict):
         for port_num, info in proto_data.items():
             if info.get("state", "") in ("open", "open|filtered"):
                 yield proto, port_num, info
+
+
+def _protocol_keys(host_data: dict) -> list[str]:
+    return sorted(key for key, value in host_data.items() if isinstance(value, dict) and key in {"tcp", "udp", "sctp"})
+
+
+def _protocol_state_summary(host_data: dict) -> dict[str, dict[str, int]]:
+    summary: dict[str, dict[str, int]] = {}
+    for proto in ("tcp", "udp", "sctp"):
+        proto_data = host_data.get(proto, {})
+        if not isinstance(proto_data, dict) or not proto_data:
+            continue
+        counts: dict[str, int] = {}
+        for info in proto_data.values():
+            if not isinstance(info, dict):
+                continue
+            state = info.get("state", "unknown")
+            counts[state] = counts.get(state, 0) + 1
+        if counts:
+            summary[proto] = counts
+    return summary
 
 
 def _build_version_string(info: dict) -> str | None:

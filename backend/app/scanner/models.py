@@ -23,8 +23,8 @@ from pydantic import BaseModel, Field
 
 class ScanProfile(str, Enum):
     QUICK      = "quick"        # fast first-pass inventory with shallow scan depth
-    BALANCED   = "balanced"     # -T4, top 1000, OS+version — default
-    DEEP_ENRICHMENT = "deep_enrichment"  # deeper scan/probes for follow-up investigation
+    BALANCED   = "balanced"     # deterministic well-known ports (1-1023) with OS+version
+    DEEP_ENRICHMENT = "deep_enrichment"  # deeper scan/probes for follow-up investigation across registered ports
     CUSTOM     = "custom"       # caller supplies raw nmap_args
 
 
@@ -71,9 +71,9 @@ def _build_nmap_args(profile: ScanProfile, top_ports_count: int) -> str:
     if profile == ScanProfile.QUICK:
         return f"-sV -T4 --top-ports {top_ports_count} --host-timeout 20s"
     if profile == ScanProfile.BALANCED:
-        return f"-sV -O -T4 --top-ports {top_ports_count} --host-timeout 60s"
+        return "-sV -O -T4 -p1-1023 --host-timeout 60s"
     if profile == ScanProfile.DEEP_ENRICHMENT:
-        return "-A -T4 -p- --osscan-guess --script=default,safe,vuln --host-timeout 90s"
+        return "-A -T4 -p1-49151 --osscan-guess --script=default,safe,vuln --host-timeout 90s"
     return _build_nmap_args(ScanProfile.BALANCED, top_ports_count)
 
 
