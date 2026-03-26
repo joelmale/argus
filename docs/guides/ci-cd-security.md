@@ -165,5 +165,7 @@ If you use the floating `main` tag instead, deployments are simpler but rollback
 
 - [`.github/workflows/pr-checks.yml`](../../.github/workflows/pr-checks.yml)
 - [`.github/workflows/release-images.yml`](../../.github/workflows/release-images.yml)
+- [`.github/workflows/publish.yml`](../../.github/workflows/publish.yml)
 - [`docker-compose.yml`](../../docker-compose.yml)
 - [`.env.production`](../../.env.production)
+- [Development Workflow Guide](./development-workflow.md)
