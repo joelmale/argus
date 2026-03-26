@@ -39,12 +39,12 @@ This plan does **not** target:
 
 Current backend and frontend behavior:
 
-- [topology.py](/Users/JoelN/Coding/argus/backend/app/api/routes/topology.py) returns all assets plus raw `TopologyLink` rows
-- [TopologyMap.tsx](/Users/JoelN/Coding/argus/frontend/src/components/topology/TopologyMap.tsx) renders them with a generic Cytoscape force layout
+- `backend/app/api/routes/topology.py` returns all assets plus raw `TopologyLink` rows
+- `frontend/src/components/topology/TopologyMap.tsx` renders them with a generic Cytoscape force layout
 - SNMP already collects:
   - LLDP/CDP neighbors
   - wireless client data
-- [topology.py](/Users/JoelN/Coding/argus/backend/app/scanner/topology.py) already persists some inferred or observed links
+- `backend/app/scanner/topology.py` already persists some inferred or observed links
 
 The main weakness is not absence of any topology data. The weakness is that the system does not yet build a network model from that data.
 
@@ -121,7 +121,7 @@ Each phase below includes:
 ### Backend changes
 
 1. Add a `network_segments` table.
-2. Extend `TopologyLink` in [models.py](/Users/JoelN/Coding/argus/backend/app/db/models.py) with:
+2. Extend `TopologyLink` in `backend/app/db/models.py` with:
    - `relationship_type`
    - `confidence`
    - `observed`
@@ -140,7 +140,7 @@ Each phase below includes:
 
 ### API changes
 
-- update [topology.py](/Users/JoelN/Coding/argus/backend/app/api/routes/topology.py) serializers
+- update `backend/app/api/routes/topology.py` serializers
 - keep current `/graph` working but add richer edge and node payloads
 
 ### Testing
@@ -190,8 +190,8 @@ Implement:
 
 ### Integration points
 
-- post-scan pipeline in [pipeline.py](/Users/JoelN/Coding/argus/backend/app/scanner/pipeline.py)
-- config reset logic in [config.py](/Users/JoelN/Coding/argus/backend/app/scanner/config.py)
+- post-scan pipeline in `backend/app/scanner/pipeline.py`
+- config reset logic in `backend/app/scanner/config.py`
 
 ### Testing
 
@@ -306,7 +306,7 @@ Graph payload should include:
 
 ### API changes
 
-- evolve [topology.py](/Users/JoelN/Coding/argus/backend/app/api/routes/topology.py)
+- evolve `backend/app/api/routes/topology.py`
 - preserve current route but enrich payload rather than inventing a second public endpoint unless necessary
 
 ### Testing
@@ -337,12 +337,12 @@ Graph payload should include:
 
 Primary file:
 
-- [TopologyMap.tsx](/Users/JoelN/Coding/argus/frontend/src/components/topology/TopologyMap.tsx)
+- `frontend/src/components/topology/TopologyMap.tsx`
 
 Supporting files:
 
-- [index.ts](/Users/JoelN/Coding/argus/frontend/src/types/index.ts)
-- [useAssets.ts](/Users/JoelN/Coding/argus/frontend/src/hooks/useAssets.ts)
+- `frontend/src/types/index.ts`
+- `frontend/src/hooks/useAssets.ts`
 - possibly new topology-specific UI components
 
 ### UI modes

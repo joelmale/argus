@@ -5,38 +5,19 @@ Network discovery, inventory, fingerprinting, topology mapping, and homelab oper
 [![PR Checks](https://github.com/joelmale/argus/actions/workflows/pr-checks.yml/badge.svg)](https://github.com/joelmale/argus/actions/workflows/pr-checks.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-Argus is a self-hosted network inventory platform for home labs and small environments. It actively scans your network, enriches devices with fingerprinting evidence, keeps an audit trail of changes, exposes a REST API and WebSocket stream, and provides a modern dashboard for assets, scans, findings, topology, backups, and settings.
+Argus is a self-hosted network inventory and operations platform for homelabs and small private environments. It scans and enriches your network, tracks asset changes over time, exposes a REST API and live event stream, and provides a dashboard for assets, scans, findings, topology, backups, and settings.
 
-## What Argus Does Today
+Docs site:
 
-- Active discovery with `nmap`
-- Passive observations from ARP and imported DHCP/DNS logs
-- Asset inventory with ports, tags, notes, custom fields, history, findings, AI analysis, evidence, and autopsy traces
-- Evidence-driven fingerprinting with:
-  - MAC OUI/vendor data
-  - HTTP/TLS/SSH/SNMP hints
-  - passive observations
-  - instant-win Nmap fingerprints
-  - optional Ollama synthesis
-  - optional allowlisted internet lookup
-- Topology graph with Cytoscape.js
-- Scan scheduling and live scan progress over WebSocket
-- JWT auth with `admin` / `viewer` roles
-- Admin-managed API keys
-- Audit log and asset history
-- Findings ingestion and summary views
-- Config backup workflows for supported SSH-based devices
-- Inventory exports:
-  - CSV
-  - JSON
-  - Ansible inventory
-  - Terraform data
-  - HTML/JSON reports
-- Fingerprint dataset registry and refresh controls
-- TP-Link Deco local-portal module with:
-  - node and client sync
-  - log collection from the system-log feed
-  - parsed health/recommendation analysis
+- https://joelmale.github.io/argus/
+
+## Core Capabilities
+
+- Active discovery with `nmap`, plus passive observations and imported network evidence
+- Asset inventory with ports, findings, notes, tags, history, AI analysis, and supporting evidence
+- Evidence-driven fingerprinting using MAC OUI, service banners, SNMP, HTTP/TLS/SSH hints, and optional AI synthesis
+- Topology views, live scan progress, findings, config backups, and exports
+- Homelab-focused modules such as TP-Link Deco support and local AI integration
 
 ## Stack
 
@@ -67,11 +48,9 @@ Then open:
 
 On first run, Argus prompts you to create the initial admin account in the UI.
 
-## Development
+## Common Commands
 
-For local development and operational details, use [docs/getting-started.md](/Users/JoelN/Coding/argus/docs/getting-started.md).
-
-Most common commands:
+Most local workflows start here:
 
 ```bash
 npm run dev
@@ -81,23 +60,45 @@ npm run dev:logs
 npm run verify
 ```
 
-## Configuration
-
-Development uses `.env`. The production compose stack reads [.env.production](/Users/JoelN/Coding/argus/.env.production) as a template and expects secrets and deployment-specific values to be overridden in your deployment platform.
-
 ## Documentation
 
-- Getting started: [docs/getting-started.md](/Users/JoelN/Coding/argus/docs/getting-started.md)
-- Architecture: [docs/architecture.md](/Users/JoelN/Coding/argus/docs/architecture.md)
-- Troubleshooting: [docs/troubleshooting.md](/Users/JoelN/Coding/argus/docs/troubleshooting.md)
-- Scanner guide: [docs/guides/scanner.md](/Users/JoelN/Coding/argus/docs/guides/scanner.md)
-- Scan profiles: [docs/guides/scan-profiles.md](/Users/JoelN/Coding/argus/docs/guides/scan-profiles.md)
-- Fingerprinting guide: [docs/guides/fingerprinting.md](/Users/JoelN/Coding/argus/docs/guides/fingerprinting.md)
-- Settings reference: [docs/guides/settings-reference.md](/Users/JoelN/Coding/argus/docs/guides/settings-reference.md)
-- Backend API: [docs/guides/backend-api.md](/Users/JoelN/Coding/argus/docs/guides/backend-api.md)
-- Frontend dashboard: [docs/guides/frontend-dashboard.md](/Users/JoelN/Coding/argus/docs/guides/frontend-dashboard.md)
-- CI/CD and security: [docs/guides/ci-cd-security.md](/Users/JoelN/Coding/argus/docs/guides/ci-cd-security.md)
-- Plugin packaging: [docs/plugins/README.md](/Users/JoelN/Coding/argus/docs/plugins/README.md)
+Use the docs site for setup, architecture, operations, and development workflow details:
+
+- Docs home: https://joelmale.github.io/argus/
+- Getting started: https://joelmale.github.io/argus/getting-started
+- Architecture: https://joelmale.github.io/argus/architecture
+- Scanner guide: https://joelmale.github.io/argus/guides/scanner-guide
+- Scan profiles: https://joelmale.github.io/argus/guides/scan-profiles
+- Settings reference: https://joelmale.github.io/argus/guides/settings-reference
+- Backend API: https://joelmale.github.io/argus/guides/backend-api-guide
+- Frontend dashboard: https://joelmale.github.io/argus/guides/frontend-dashboard-guide
+- CI/CD and security: https://joelmale.github.io/argus/guides/ci-cd-security
+- Development workflow: https://joelmale.github.io/argus/guides/development-workflow
+- Troubleshooting: https://joelmale.github.io/argus/troubleshooting
+
+The markdown source for the docs lives in [`docs/`](docs/), and the Docusaurus site lives in [`website/`](website/).
+
+## Screenshots and Images
+
+Put screenshots and docs-site images here:
+
+- [`website/static/img/screenshots/`](website/static/img/screenshots/)
+
+Why this location:
+
+- Docusaurus serves everything under `website/static/` directly
+- screenshots can be referenced in docs with `/img/screenshots/<file>`
+- the same files can be linked from the README using the GitHub raw/blob URLs if needed
+
+Example docs image reference:
+
+```md
+![Asset Inventory](/img/screenshots/assets-overview.png)
+```
+
+## Configuration
+
+Development uses `.env`. The production compose stack reads [.env.production](.env.production) as a template and expects deployment-specific values to be overridden in your deployment platform.
 
 ## License
 

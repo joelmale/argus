@@ -3,10 +3,10 @@
 module.exports = {
   title: 'Argus',
   tagline: 'Network discovery, inventory, topology, and fingerprinting',
-  url: 'https://example.com',
-  baseUrl: '/',
+  url: 'https://joelmale.github.io',
+  baseUrl: '/argus/',
   favicon: 'img/favicon.svg',
-  organizationName: 'argus',
+  organizationName: 'joelmale',
   projectName: 'argus',
   onBrokenLinks: 'throw',
   trailingSlash: false,
@@ -24,6 +24,11 @@ module.exports = {
     navbar: {
       title: 'Argus Docs',
       items: [
+        {
+          to: '/',
+          label: 'Docs Home',
+          position: 'left',
+        },
         {
           type: 'docSidebar',
           sidebarId: 'docs',
@@ -50,6 +55,7 @@ module.exports = {
         {
           title: 'Project',
           items: [
+            { label: 'Docs Site', href: 'https://joelmale.github.io/argus/' },
             { label: 'Main README', href: 'https://github.com/joelmale/argus/blob/main/README.md' },
           ],
         },
