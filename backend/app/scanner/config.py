@@ -58,6 +58,8 @@ class EffectiveScannerConfig:
     anthropic_api_key: str
     passive_arp_enabled: bool
     passive_arp_interface: str
+    passive_arp_effective_interface: str | None
+    passive_arp_interface_auto: bool
     snmp_enabled: bool
     snmp_version: str
     snmp_community: str
@@ -176,8 +178,21 @@ def detect_local_ipv4_cidr() -> str | None:
     return None
 
 
-def _iter_ipv4_route_networks() -> list[ipaddress.IPv4Network]:
-    routes: list[ipaddress.IPv4Network] = []
+@dataclass(slots=True, frozen=True)
+class _RouteEntry:
+    iface: str
+    network: ipaddress.IPv4Network
+    is_default: bool
+
+
+def _interface_exists(ifname: str | None) -> bool:
+    if not ifname:
+        return False
+    return any(existing == ifname for _, existing in socket.if_nameindex())
+
+
+def _iter_route_entries() -> list[_RouteEntry]:
+    entries: list[_RouteEntry] = []
     try:
         with open("/proc/net/route", "r", encoding="utf-8") as handle:
             next(handle, None)
@@ -192,7 +207,6 @@ def _iter_ipv4_route_networks() -> list[ipaddress.IPv4Network]:
                     flags = int(flags_hex, 16)
                 except ValueError:
                     continue
-                # RTF_UP
                 if not flags & 0x1:
                     continue
                 try:
@@ -201,11 +215,63 @@ def _iter_ipv4_route_networks() -> list[ipaddress.IPv4Network]:
                     network = ipaddress.IPv4Network(f"{destination}/{mask}", strict=False)
                 except (OSError, ValueError):
                     continue
-                routes.append(network)
+                entries.append(_RouteEntry(iface=iface, network=network, is_default=network.prefixlen == 0))
     except OSError:
         pass
+    return entries
 
-    return routes
+
+def _iter_ipv4_route_networks() -> list[ipaddress.IPv4Network]:
+    return [entry.network for entry in _iter_route_entries()]
+
+
+def _target_probe_ip(token: str) -> ipaddress.IPv4Address | None:
+    try:
+        if "/" in token:
+            network = ipaddress.ip_network(token, strict=False)
+            return network.network_address if isinstance(network, ipaddress.IPv4Network) else None
+        address = ipaddress.ip_address(token)
+        return address if isinstance(address, ipaddress.IPv4Address) else None
+    except ValueError:
+        return None
+
+
+def detect_passive_arp_interface(targets: str | None = None) -> str | None:
+    route_entries = _iter_route_entries()
+    if not route_entries:
+        return None
+
+    best_match: _RouteEntry | None = None
+    for token in _iter_target_tokens(targets or ""):
+        probe_ip = _target_probe_ip(token)
+        if probe_ip is None:
+            continue
+        for entry in route_entries:
+            if probe_ip in entry.network:
+                if best_match is None or entry.network.prefixlen > best_match.network.prefixlen:
+                    best_match = entry
+
+    if best_match is not None:
+        return best_match.iface
+
+    for entry in route_entries:
+        if entry.is_default:
+            return entry.iface
+
+    return route_entries[0].iface
+
+
+def resolve_passive_arp_interface(configured_interface: str | None, targets: str | None) -> tuple[str | None, bool]:
+    normalized = _normalize_optional_text(configured_interface)
+    legacy_default = _normalize_optional_text(settings.SCANNER_PASSIVE_ARP_INTERFACE)
+    auto_requested = normalized in (None, "", AUTO_TARGET_SENTINEL)
+    legacy_missing = normalized == legacy_default and not _interface_exists(normalized)
+
+    if normalized and not auto_requested and not legacy_missing and _interface_exists(normalized):
+        return normalized, False
+
+    detected = detect_passive_arp_interface(targets)
+    return detected, True
 
 
 def validate_scan_targets_routable(targets: str) -> str | None:
@@ -393,6 +459,10 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
 def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerConfig:
     detected_targets = detect_local_ipv4_cidr() if config.auto_detect_targets else None
     effective_targets = (config.default_targets or "").strip() or detected_targets
+    passive_arp_effective_interface, passive_arp_interface_auto = resolve_passive_arp_interface(
+        config.passive_arp_interface,
+        effective_targets,
+    )
     ai_backend = _normalize_ai_backend(config.ai_backend, _normalize_ai_backend(settings.AI_BACKEND, "ollama"))
     fingerprint_ai_backend = _normalize_ai_backend(config.fingerprint_ai_backend, ai_backend)
     return EffectiveScannerConfig(
@@ -418,6 +488,8 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         anthropic_api_key=config.anthropic_api_key or settings.ANTHROPIC_API_KEY,
         passive_arp_enabled=config.passive_arp_enabled,
         passive_arp_interface=config.passive_arp_interface,
+        passive_arp_effective_interface=passive_arp_effective_interface,
+        passive_arp_interface_auto=passive_arp_interface_auto,
         snmp_enabled=config.snmp_enabled,
         snmp_version=config.snmp_version,
         snmp_community=config.snmp_community,

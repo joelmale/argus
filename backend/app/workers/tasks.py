@@ -957,14 +957,34 @@ async def _passive_arp_loop() -> None:
 
     from app.db.upsert import upsert_scan_result
     from app.fingerprinting.passive import record_passive_observation
+    from app.scanner.config import build_effective_scanner_config, get_or_create_scanner_config
     from app.scanner.models import HostScanResult, ScanProfile
     from app.scanner.stages.discovery import PassiveArpListener
 
-    listener = PassiveArpListener(interface=settings.SCANNER_PASSIVE_ARP_INTERFACE)
     engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    listener: PassiveArpListener | None = None
 
     try:
+        async with session_factory() as db:
+            config = await get_or_create_scanner_config(db)
+            effective = build_effective_scanner_config(config)
+
+        interface = effective.passive_arp_effective_interface
+        if not effective.passive_arp_enabled or not interface:
+            log.warning(
+                "Passive ARP listener disabled: no viable interface detected (configured=%s effective_targets=%s)",
+                effective.passive_arp_interface,
+                effective.effective_targets,
+            )
+            return
+
+        log.info(
+            "Passive ARP listener starting on interface %s (%s)",
+            interface,
+            "auto-detected" if effective.passive_arp_interface_auto else "configured",
+        )
+        listener = PassiveArpListener(interface=interface)
         async for host in listener.listen():
             async with session_factory() as db:
                 asset, change_type = await upsert_scan_result(
@@ -998,5 +1018,6 @@ async def _passive_arp_loop() -> None:
                     await _publish_event(payload)
                     await notify_new_device_if_enabled(db, payload["data"])
     finally:
-        listener.stop()
+        if listener is not None:
+            listener.stop()
         await engine.dispose()
