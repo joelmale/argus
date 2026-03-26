@@ -57,7 +57,7 @@ class Settings(BaseSettings):
     AI_MAX_CONCURRENT_HOSTS: int = 5   # How many hosts the AI investigates in parallel
 
     # Ollama settings (primary — uses your local RTX A2000)
-    OLLAMA_BASE_URL: str = "http://ollama:11434/v1"
+    OLLAMA_BASE_URL: str = "http://host.docker.internal:11434/v1"
     # Recommended models for tool use: qwen2.5:7b, llama3.1:8b, qwen2.5:14b
     OLLAMA_MODEL: str = "qwen2.5:7b"
 

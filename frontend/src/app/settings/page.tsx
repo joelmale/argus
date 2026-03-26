@@ -413,7 +413,7 @@ function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSa
   const [internetLookupAllowedDomains, setInternetLookupAllowedDomains] = useState(scannerConfig?.internet_lookup_allowed_domains ?? 'docs.tp-link.com,ui.com,synology.com,qnap.com,netgate.com,proxmox.com')
   const [internetLookupBudget, setInternetLookupBudget] = useState(scannerConfig?.internet_lookup_budget ?? 3)
   const [internetLookupTimeoutSeconds, setInternetLookupTimeoutSeconds] = useState(scannerConfig?.internet_lookup_timeout_seconds ?? 5)
-  const [ollamaBaseUrl, setOllamaBaseUrl] = useState(scannerConfig?.ollama_base_url ?? 'http://ollama:11434/v1')
+  const [ollamaBaseUrl, setOllamaBaseUrl] = useState(scannerConfig?.ollama_base_url ?? 'http://host.docker.internal:11434/v1')
   const [openaiBaseUrl, setOpenaiBaseUrl] = useState(scannerConfig?.openai_base_url ?? 'https://api.openai.com/v1')
   const [openaiApiKey, setOpenaiApiKey] = useState(scannerConfig?.openai_api_key ?? '')
   const [anthropicApiKey, setAnthropicApiKey] = useState(scannerConfig?.anthropic_api_key ?? '')
@@ -473,7 +473,7 @@ function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSa
       internet_lookup_allowed_domains: internetLookupAllowedDomains.trim() || null,
       internet_lookup_budget: internetLookupBudget,
       internet_lookup_timeout_seconds: internetLookupTimeoutSeconds,
-      ollama_base_url: ollamaBaseUrl.trim() || 'http://ollama:11434/v1',
+      ollama_base_url: ollamaBaseUrl.trim() || 'http://host.docker.internal:11434/v1',
       openai_base_url: openaiBaseUrl.trim() || 'https://api.openai.com/v1',
       openai_api_key: openaiApiKey.trim() || '',
       anthropic_api_key: anthropicApiKey.trim() || '',
@@ -535,7 +535,7 @@ function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSa
         {showOllamaSection && (
           <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-3">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-              <TextInputField label="Ollama base URL" value={ollamaBaseUrl} onChange={(event) => setOllamaBaseUrl(event.target.value)} placeholder="http://ollama:11434/v1" />
+              <TextInputField label="Ollama base URL" value={ollamaBaseUrl} onChange={(event) => setOllamaBaseUrl(event.target.value)} placeholder="http://host.docker.internal:11434/v1" />
               <div className="flex items-end">
                 <button
                   type="button"

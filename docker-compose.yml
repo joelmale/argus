@@ -65,7 +65,7 @@ services:
       AI_BACKEND: ${AI_BACKEND:-ollama}
       AI_ENABLE_PER_SCAN: ${AI_ENABLE_PER_SCAN:-true}
       AI_MAX_CONCURRENT_HOSTS: ${AI_MAX_CONCURRENT_HOSTS:-5}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
@@ -81,6 +81,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     ports:
       - "8000:8000"
     cap_add:
@@ -124,7 +126,7 @@ services:
       AI_BACKEND: ${AI_BACKEND:-ollama}
       AI_ENABLE_PER_SCAN: ${AI_ENABLE_PER_SCAN:-true}
       AI_MAX_CONCURRENT_HOSTS: ${AI_MAX_CONCURRENT_HOSTS:-5}
-      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://ollama:11434/v1}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
@@ -133,6 +135,8 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     cap_add:
       - NET_RAW
       - NET_ADMIN

@@ -8,6 +8,8 @@ services:
       dockerfile: Dockerfile
       target: dev
     command: sh -c "python scripts/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
     healthcheck:
@@ -35,6 +37,8 @@ services:
     environment:
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@localhost:5432/argus}
       REDIS_URL: ${REDIS_URL_DOCKER:-redis://localhost:6379/0}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./backend:/app
     network_mode: host
