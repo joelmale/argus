@@ -510,6 +510,17 @@ export interface Port {
   state: string;
 }
 
+export interface AssetNoteEntry {
+  id: number;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  user: {
+    id: string;
+    username: string;
+  } | null;
+}
+
 export interface Asset {
   id: string;
   ip_address: string;
@@ -528,6 +539,7 @@ export interface Asset {
   last_seen: string;
   ports: Port[];
   tags: { tag: string }[];
+  note_entries: AssetNoteEntry[];
   ai_analysis: AssetAIAnalysis | null;
   evidence: AssetEvidence[];
   probe_runs: ProbeRun[];

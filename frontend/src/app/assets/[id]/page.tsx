@@ -3,12 +3,12 @@
 import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useRefreshAssetAiAnalysis, useRemoveAssetTag, useRestoreAssist, useRunAssetPortScan, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
+import { useAddAssetNote, useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useRefreshAssetAiAnalysis, useRemoveAssetTag, useRestoreAssist, useRunAssetPortScan, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
 import { useTriggerScan } from '@/hooks/useScans'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
-import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert, Microscope, ChevronDown, ChevronUp, Workflow, Loader2 } from 'lucide-react'
+import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert, Microscope, ChevronDown, ChevronUp, Workflow, Loader2, MessageSquareText } from 'lucide-react'
 import Link from 'next/link'
 import { useParams } from 'next/navigation'
 import type { Asset, AssetAutopsyStage, ConfigBackupTarget } from '@/types'
@@ -122,13 +122,16 @@ function AssetMetadataEditor({ asset }: Readonly<{ asset: Asset }>) {
         </div>
 
         <div>
-          <p className="text-xs text-zinc-500 mb-1.5">Notes</p>
+          <p className="text-xs text-zinc-500 mb-1.5">Asset summary notes</p>
           <textarea
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
             rows={4}
             className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
           />
+          <p className="text-xs text-zinc-400 mt-1">
+            Use this for the durable asset summary. Day-to-day comments belong in the notes timeline.
+          </p>
         </div>
 
         <div>
@@ -149,6 +152,92 @@ function AssetMetadataEditor({ asset }: Readonly<{ asset: Asset }>) {
         >
           <Save className="w-3.5 h-3.5" /> {isSaving ? 'Saving…' : 'Save'}
         </button>
+      </CardBody>
+    </Card>
+  )
+}
+
+function AssetNotesCard({ asset }: Readonly<{ asset: Asset }>) {
+  const { data: currentUser } = useCurrentUser()
+  const { mutate: addNote, isPending } = useAddAssetNote()
+  const [content, setContent] = useState('')
+  const [error, setError] = useState<string | null>(null)
+
+  function handleAddNote() {
+    const normalized = content.trim()
+    if (!normalized) {
+      setError('Enter a note before saving.')
+      return
+    }
+    setError(null)
+    addNote(
+      { id: asset.id, content: normalized },
+      {
+        onSuccess: () => setContent(''),
+        onError: (err: any) => {
+          const detail = err?.response?.data?.detail
+          setError(typeof detail === 'string' ? detail : 'Unable to save note right now.')
+        },
+      },
+    )
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle><MessageSquareText className="w-4 h-4 inline mr-1.5 text-emerald-500" />Notes</CardTitle>
+      </CardHeader>
+      <CardBody className="space-y-4">
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-3">
+          <p className="text-xs text-zinc-500 mb-2">
+            Add operational context, handoff notes, or remediation history. Notes are stored with the asset and attributed to the user who added them.
+          </p>
+          <textarea
+            value={content}
+            onChange={(event) => setContent(event.target.value)}
+            rows={4}
+            placeholder={currentUser ? `Add a note as ${currentUser.username}` : 'Add a note'}
+            className="w-full px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+          />
+          {error && <p className="text-xs text-red-500 mt-2">{error}</p>}
+          <div className="mt-3 flex items-center justify-between gap-3">
+            <p className="text-xs text-zinc-400">
+              Summary notes remain editable in Tags & Metadata.
+            </p>
+            <button
+              type="button"
+              onClick={handleAddNote}
+              disabled={isPending}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs bg-emerald-500 text-white"
+            >
+              <Plus className="w-3.5 h-3.5" />
+              {isPending ? 'Saving…' : 'Add Note'}
+            </button>
+          </div>
+        </div>
+
+        {asset.note_entries.length === 0 ? (
+          <p className="text-sm text-zinc-500">No note entries have been recorded for this asset yet.</p>
+        ) : (
+          <div className="space-y-3">
+            {asset.note_entries.map((note) => (
+              <div key={note.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4">
+                <div className="flex items-center justify-between gap-3">
+                  <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">
+                    {note.user?.username ?? 'Unknown user'}
+                  </p>
+                  <p className="text-xs text-zinc-500">
+                    {formatDate(note.created_at)}
+                    {note.updated_at !== note.created_at ? ` · edited ${timeAgo(note.updated_at)}` : ''}
+                  </p>
+                </div>
+                <p className="mt-2 whitespace-pre-wrap text-sm text-zinc-600 dark:text-zinc-300">
+                  {note.content}
+                </p>
+              </div>
+            ))}
+          </div>
+        )}
       </CardBody>
     </Card>
   )
@@ -737,7 +826,6 @@ export default function AssetDetailPage() {
         {showAutopsy && <AutopsyCard asset={asset} />}
 
         <div className="grid grid-cols-1 xl:grid-cols-12 gap-5">
-          {/* Left column: inventory + evidence */}
           <div className="xl:col-span-4 space-y-5">
 
             {/* Overview */}
@@ -774,6 +862,8 @@ export default function AssetDetailPage() {
                 )}
               </CardBody>
             </Card>
+
+            <AssetNotesCard asset={asset} />
 
             {/* Open Ports */}
             <Card>
@@ -845,69 +935,10 @@ export default function AssetDetailPage() {
                 </table>
               </div>
             </Card>
-
-            <FingerprintEvidenceCard asset={asset} />
-
-            {/* AI Investigation Notes */}
-            {ai?.investigation_notes && (
-              <Card>
-                <CardHeader>
-                  <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Investigation Notes</CardTitle>
-                  <span className="text-xs text-zinc-400">{ai.ai_backend} · {ai.agent_steps} steps · <ConfidenceBadge confidence={ai.confidence} /> confidence</span>
-                </CardHeader>
-                <CardBody>
-                  <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed whitespace-pre-wrap">
-                    {ai.investigation_notes}
-                  </p>
-                  {ai.open_services_summary?.length > 0 && (
-                    <div className="mt-4">
-                      <p className="text-xs text-zinc-500 mb-2 font-medium">Services identified:</p>
-                      <div className="flex flex-wrap gap-1.5">
-                        {ai.open_services_summary.map((service: string) => (
-                          <span key={service} className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-xs font-mono text-zinc-700 dark:text-zinc-300">
-                            {service}
-                          </span>
-                        ))}
-                      </div>
-                    </div>
-                  )}
-                </CardBody>
-              </Card>
-            )}
+            <AssetFindingsCard asset={asset} />
           </div>
 
-          {/* Center column: operations + passive history */}
           <div className="xl:col-span-4 space-y-5">
-            {currentUser?.role === 'admin' ? (
-              <div className="space-y-5">
-                <AssetFindingsCard asset={asset} />
-                <PassiveTimelineCard asset={asset} />
-                <WirelessAssociationsCard asset={asset} />
-                <ConfigBackupCard asset={asset} />
-                <LifecycleCard asset={asset} />
-                <AssetMetadataEditor key={asset.id} asset={asset} />
-              </div>
-            ) : (
-              <div className="space-y-5">
-                <AssetFindingsCard asset={asset} />
-                <PassiveTimelineCard asset={asset} />
-                <LifecycleCard asset={asset} />
-                <Card>
-                  <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
-                  <CardBody>
-                    <p className="text-sm text-zinc-500">
-                      Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
-                    </p>
-                  </CardBody>
-                </Card>
-              </div>
-            )}
-          </div>
-
-          {/* Right column: AI and lookup enrichment */}
-          <div className="xl:col-span-4 space-y-5">
-            <FingerprintHypothesesCard asset={asset} />
-            <LookupProvenanceCard asset={asset} />
             {ai && (
               <Card>
                 <CardHeader>
@@ -960,6 +991,57 @@ export default function AssetDetailPage() {
               </Card>
             )}
 
+            {ai?.investigation_notes && (
+              <Card>
+                <CardHeader>
+                  <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Investigation Notes</CardTitle>
+                  <span className="text-xs text-zinc-400">{ai.ai_backend} · {ai.agent_steps} steps · <ConfidenceBadge confidence={ai.confidence} /> confidence</span>
+                </CardHeader>
+                <CardBody>
+                  <p className="text-sm text-zinc-700 dark:text-zinc-300 leading-relaxed whitespace-pre-wrap">
+                    {ai.investigation_notes}
+                  </p>
+                  {ai.open_services_summary?.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-xs text-zinc-500 mb-2 font-medium">Services identified:</p>
+                      <div className="flex flex-wrap gap-1.5">
+                        {ai.open_services_summary.map((service: string) => (
+                          <span key={service} className="px-2 py-0.5 rounded bg-zinc-100 dark:bg-zinc-800 text-xs font-mono text-zinc-700 dark:text-zinc-300">
+                            {service}
+                          </span>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </CardBody>
+              </Card>
+            )}
+
+            <FingerprintEvidenceCard asset={asset} />
+
+            {currentUser?.role === 'admin' ? (
+              <div className="space-y-5">
+                <PassiveTimelineCard asset={asset} />
+                <WirelessAssociationsCard asset={asset} />
+              </div>
+            ) : (
+              <div className="space-y-5">
+                <PassiveTimelineCard asset={asset} />
+                <Card>
+                  <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
+                  <CardBody>
+                    <p className="text-sm text-zinc-500">
+                      Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
+                    </p>
+                  </CardBody>
+                </Card>
+              </div>
+            )}
+          </div>
+
+          <div className="xl:col-span-4 space-y-5">
+            <FingerprintHypothesesCard asset={asset} />
+            <LookupProvenanceCard asset={asset} />
             {ai?.security_findings?.length > 0 && (
               <Card>
                 <CardHeader>
@@ -1005,6 +1087,23 @@ export default function AssetDetailPage() {
                 <CardBody>
                   <p className="text-sm text-zinc-500">
                     No persisted AI analysis is attached to this asset record yet.
+                  </p>
+                </CardBody>
+              </Card>
+            )}
+
+            <LifecycleCard asset={asset} />
+            {currentUser?.role === 'admin' ? (
+              <>
+                <ConfigBackupCard asset={asset} />
+                <AssetMetadataEditor key={asset.id} asset={asset} />
+              </>
+            ) : (
+              <Card>
+                <CardHeader><CardTitle>Tags & Metadata</CardTitle></CardHeader>
+                <CardBody>
+                  <p className="text-sm text-zinc-500">
+                    Viewer accounts can inspect asset details, but editing tags and metadata requires an admin account.
                   </p>
                 </CardBody>
               </Card>

@@ -22,7 +22,7 @@ from app.backups import (
     list_backup_snapshots,
     upsert_backup_target,
 )
-from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetTag, ConfigBackupSnapshot, Finding, Port, ScanJob, User, WirelessAssociation
+from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetNote, AssetTag, ConfigBackupSnapshot, Finding, Port, ScanJob, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 from app.scanner.agent import get_analyst
@@ -115,6 +115,23 @@ def _serialize_asset(asset: Asset) -> dict:
             for port in asset.ports
         ],
         "tags": [{"tag": tag.tag} for tag in asset.tags],
+        "note_entries": [
+            {
+                "id": row.id,
+                "content": row.content,
+                "created_at": row.created_at.isoformat(),
+                "updated_at": row.updated_at.isoformat(),
+                "user": (
+                    {
+                        "id": str(row.user.id),
+                        "username": row.user.username,
+                    }
+                    if row.user
+                    else None
+                ),
+            }
+            for row in sorted(asset.note_entries, key=lambda item: item.created_at, reverse=True)
+        ],
         "ai_analysis": _serialize_ai_analysis(asset.ai_analysis),
         "evidence": [
             {
@@ -211,6 +228,10 @@ class AssetTagRequest(BaseModel):
     tag: str
 
 
+class AssetNoteCreateRequest(BaseModel):
+    content: str
+
+
 class ConfigBackupTargetRequest(BaseModel):
     driver: str
     username: str
@@ -230,6 +251,7 @@ async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
         .options(
             selectinload(Asset.ports),
             selectinload(Asset.tags),
+            selectinload(Asset.note_entries).selectinload(AssetNote.user),
             selectinload(Asset.ai_analysis),
             selectinload(Asset.evidence),
             selectinload(Asset.probe_runs),
@@ -260,6 +282,7 @@ async def list_assets(
     """Return all discovered assets with optional filtering."""
     q = select(Asset).options(
         selectinload(Asset.tags),
+        selectinload(Asset.note_entries).selectinload(AssetNote.user),
         selectinload(Asset.ports),
         selectinload(Asset.ai_analysis),
         selectinload(Asset.evidence),
@@ -582,6 +605,7 @@ async def update_asset(
             .options(
                 selectinload(Asset.ports),
                 selectinload(Asset.tags),
+                selectinload(Asset.note_entries).selectinload(AssetNote.user),
                 selectinload(Asset.ai_analysis),
                 selectinload(Asset.evidence),
                 selectinload(Asset.probe_runs),
@@ -600,6 +624,43 @@ async def update_asset(
 async def get_asset_evidence(asset_id: UUID, db: DBSession, _: CurrentUser):
     asset = await _load_asset(db, asset_id)
     return _serialize_asset(asset)["evidence"]
+
+
+@router.get("/{asset_id}/notes", responses=ASSET_NOT_FOUND_RESPONSE)
+async def get_asset_notes(asset_id: UUID, db: DBSession, _: CurrentUser):
+    asset = await _load_asset(db, asset_id)
+    return _serialize_asset(asset)["note_entries"]
+
+
+@router.post("/{asset_id}/notes", responses=ASSET_NOT_FOUND_RESPONSE)
+async def add_asset_note(asset_id: UUID, payload: AssetNoteCreateRequest, db: DBSession, current_user: CurrentUser):
+    asset = await db.get(Asset, asset_id)
+    if not asset:
+        raise HTTPException(status_code=404, detail=ASSET_NOT_FOUND_DETAIL)
+    content = payload.content.strip()
+    if not content:
+        raise HTTPException(status_code=422, detail="Note content cannot be empty")
+
+    note = AssetNote(asset_id=asset.id, user_id=current_user.id, content=content)
+    db.add(note)
+    await db.commit()
+    refreshed = (
+        await db.execute(
+            select(AssetNote)
+            .options(selectinload(AssetNote.user))
+            .where(AssetNote.id == note.id)
+        )
+    ).scalar_one()
+    return {
+        "id": refreshed.id,
+        "content": refreshed.content,
+        "created_at": refreshed.created_at.isoformat(),
+        "updated_at": refreshed.updated_at.isoformat(),
+        "user": {
+            "id": str(refreshed.user.id),
+            "username": refreshed.user.username,
+        } if refreshed.user else None,
+    }
 
 
 @router.get("/{asset_id}/probe-runs", responses=ASSET_NOT_FOUND_RESPONSE)

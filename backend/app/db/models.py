@@ -40,6 +40,7 @@ class User(Base):
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade=CASCADING_CHILDREN)
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="user")
+    asset_notes: Mapped[list["AssetNote"]] = relationship(back_populates="user")
 
     @property
     def is_admin(self) -> bool:
@@ -68,6 +69,7 @@ class Asset(Base):
     ports: Mapped[list["Port"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
     tags: Mapped[list["AssetTag"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
     history: Mapped[list["AssetHistory"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    note_entries: Mapped[list["AssetNote"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
     ai_analysis: Mapped["AssetAIAnalysis | None"] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
     evidence: Mapped[list["AssetEvidence"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
     probe_runs: Mapped[list["ProbeRun"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
@@ -129,6 +131,20 @@ class AssetHistory(Base):
     diff: Mapped[dict | None] = mapped_column(JSONB)      # {field: {old, new}}
 
     asset: Mapped["Asset"] = relationship(back_populates="history")
+
+
+class AssetNote(Base):
+    __tablename__ = "asset_notes"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    asset_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), ForeignKey(ASSET_ID_FK, ondelete="CASCADE"), nullable=False)
+    user_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("users.id", ondelete=SET_NULL))
+    content: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+
+    asset: Mapped["Asset"] = relationship(back_populates="note_entries")
+    user: Mapped["User | None"] = relationship(back_populates="asset_notes")
 
 
 class AssetAIAnalysis(Base):

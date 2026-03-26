@@ -121,6 +121,8 @@ export const assetsApi = {
   bulkDelete: (asset_ids: string[]) => api.post('/api/v1/assets/bulk-delete', { asset_ids }),
   runPortScan: (id: string) => api.post(`/api/v1/assets/${id}/port-scan`),
   refreshAiAnalysis: (id: string) => api.post(`/api/v1/assets/${id}/ai-analysis/refresh`),
+  listNotes: (id: string) => api.get(`/api/v1/assets/${id}/notes`),
+  addNote: (id: string, content: string) => api.post(`/api/v1/assets/${id}/notes`, { content }),
   getConfigBackupTarget: (id: string) => api.get(`/api/v1/assets/${id}/config-backup-target`),
   upsertConfigBackupTarget: (
     id: string,

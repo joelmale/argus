@@ -17,7 +17,7 @@ from app.api import deps
 from app.api.routes import assets as assets_routes
 from app.api.routes import scans as scans_routes
 from app.api.routes import system as system_routes
-from app.db.models import ApiKey, Asset, AssetTag, Port, ProbeRun, ScanJob
+from app.db.models import ApiKey, Asset, AssetNote, AssetTag, Port, ProbeRun, ScanJob, User
 from app.db.upsert import (
     _ai_stage_trace,
     _best_device_type_confidence,
@@ -1145,6 +1145,17 @@ async def test_assets_routes_cover_success_paths_for_asset_views_and_backups(mon
         first_seen=now,
         last_seen=now,
     )
+    note_user = User(id=uuid4(), username="analyst", email=None, hashed_password="x", role="admin")
+    note_entry = AssetNote(
+        id=21,
+        asset_id=asset.id,
+        user_id=note_user.id,
+        content="Verified the firewall uplink and DHCP scope.",
+        created_at=now,
+        updated_at=now,
+    )
+    note_entry.user = note_user
+    asset.note_entries = [note_entry]
 
     class _RichAssetDb(_FakeDb):
         async def execute(self, stmt):
@@ -1166,6 +1177,10 @@ async def test_assets_routes_cover_success_paths_for_asset_views_and_backups(mon
     monkeypatch.setattr(assets_routes, "generate_backup_diff", lambda *args, **kwargs: _completed_task(""))
     monkeypatch.setattr(assets_routes, "generate_restore_assist", lambda *args, **kwargs: _completed_task({"steps": ["restore"]}))
     monkeypatch.setattr(assets_routes.portscan, "scan_host", lambda host, profile: _completed_task((scan_ports, OSFingerprint(os_name="Linux"))))
+    monkeypatch.setattr(assets_routes, "read_effective_scanner_config", lambda db: _completed_task((None, object())))
+    monkeypatch.setattr(assets_routes, "_next_queue_position", lambda db: _completed_task(1))
+    monkeypatch.setattr(assets_routes, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(assets_routes, "run_scan_job", SimpleNamespace(delay=lambda *_args, **_kwargs: None))
     monkeypatch.setattr(assets_routes, "_load_asset", lambda db, asset_id: _completed_task(asset))
     monkeypatch.setattr("app.db.upsert.upsert_scan_result", lambda db, result: _completed_task(None))
     monkeypatch.setattr(
@@ -1186,11 +1201,27 @@ async def test_assets_routes_cover_success_paths_for_asset_views_and_backups(mon
     assert serialized["ip_address"] == "192.168.1.44"
     assert serialized["ports"][0]["port_number"] == 443
     assert serialized["tags"][0]["tag"] == "gateway"
+    assert serialized["note_entries"][0]["user"]["username"] == "analyst"
     assert await assets_routes.get_asset_evidence(asset.id, db, object()) == []
     assert await assets_routes.get_asset_probe_runs(asset.id, db, object()) == []
+    assert await assets_routes.get_asset_notes(asset.id, db, object())
 
     refreshed = await assets_routes.update_asset(asset.id, {"hostname": "edge", "device_type": "router"}, _FakeDb(get_result=asset, execute_result=_ScalarResult([asset])), object())
     assert refreshed["hostname"] == "edge"
+
+    created_note_entry = AssetNote(
+        id=22,
+        asset_id=asset.id,
+        user_id=note_user.id,
+        content="Captured a fresh note.",
+        created_at=now,
+        updated_at=now,
+    )
+    created_note_entry.user = note_user
+    note_db = _FakeDb(get_result=asset, execute_result=_ScalarResult([created_note_entry]))
+    created_note = await assets_routes.add_asset_note(asset.id, assets_routes.AssetNoteCreateRequest(content="  Captured a fresh note.  "), note_db, note_user)
+    assert created_note["content"] == "Captured a fresh note."
+    assert isinstance(note_db.added[0], AssetNote)
 
     await assets_routes.delete_asset(asset.id, _FakeDb(get_result=asset), object())
     history = await assets_routes.get_asset_history(asset.id, db, object())
@@ -1222,6 +1253,68 @@ async def test_assets_routes_cover_success_paths_for_asset_views_and_backups(mon
     ai_refresh = await assets_routes.run_asset_ai_refresh(asset.id, db, object())
     assert port_scan["ip_address"] == "192.168.1.44"
     assert ai_refresh["hostname"] == "edge"
+
+
+@pytest.mark.asyncio
+async def test_asset_note_routes_serialize_and_create():
+    now = datetime.now(timezone.utc)
+    user = User(id=uuid4(), username="operator", email=None, hashed_password="x", role="admin")
+    asset = Asset(
+        id=uuid4(),
+        ip_address="192.168.1.60",
+        hostname="storage",
+        status="online",
+        first_seen=now,
+        last_seen=now,
+    )
+    asset.ports = []
+    asset.tags = []
+    asset.note_entries = []
+    asset.evidence = []
+    asset.probe_runs = []
+    asset.observations = []
+    asset.fingerprint_hypotheses = []
+    asset.internet_lookup_results = []
+    asset.lifecycle_records = []
+    asset.ai_analysis = None
+    asset.autopsy = None
+
+    note = AssetNote(
+        id=1,
+        asset_id=asset.id,
+        user_id=user.id,
+        content="Documented the NAS admin path.",
+        created_at=now,
+        updated_at=now,
+    )
+    note.user = user
+    asset.note_entries = [note]
+
+    serialized = assets_routes._serialize_asset(asset)
+    assert serialized["note_entries"][0]["content"] == "Documented the NAS admin path."
+    assert serialized["note_entries"][0]["user"]["username"] == "operator"
+
+    created_note = AssetNote(
+        id=2,
+        asset_id=asset.id,
+        user_id=user.id,
+        content="Captured a second note.",
+        created_at=now,
+        updated_at=now,
+    )
+    created_note.user = user
+    db = _FakeDb(get_result=asset, execute_result=_ScalarResult([created_note]))
+
+    response = await assets_routes.add_asset_note(
+        asset.id,
+        assets_routes.AssetNoteCreateRequest(content="  Captured a second note.  "),
+        db,
+        user,
+    )
+
+    assert response["content"] == "Captured a second note."
+    assert response["user"]["username"] == "operator"
+    assert isinstance(db.added[0], AssetNote)
 
 
 def test_scanner_config_helpers_cover_normalization_and_routing(monkeypatch):
@@ -3067,6 +3160,19 @@ async def test_pipeline_persistence_helpers_cover_offline_ai_and_broadcast_paths
         {"192.168.1.2"},
         True,
     ) == ["192.168.1.1"]
+
+    assert await pipeline_mod._get_offline_ips(
+        SimpleNamespace(
+            execute=lambda stmt: _completed_task(
+                _ScalarResult([("192.168.1.1",), ("192.168.1.2",), ("192.168.2.3",)])
+            )
+        ),
+        lambda value: _SelectStub(),
+        SimpleNamespace(ip_address="ip_address", status="status"),
+        {"192.168.1.2"},
+        True,
+        targets="192.168.1.2",
+    ) == []
 
 
 @pytest.mark.asyncio

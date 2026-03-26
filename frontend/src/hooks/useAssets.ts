@@ -71,6 +71,17 @@ export function useRefreshAssetAiAnalysis() {
   })
 }
 
+export function useAddAssetNote() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, content }: { id: string; content: string }) => assetsApi.addNote(id, content),
+    onSuccess: (_, { id }) => {
+      qc.invalidateQueries({ queryKey: ['assets', id] })
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
 export function useAddAssetTag() {
   const qc = useQueryClient()
   return useMutation({
