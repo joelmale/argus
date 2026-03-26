@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /Users/JoelN/Coding/argus/website && npm run build 2>&1 | tail -30)",
+      "Bash(cd /Users/JoelN/Coding/argus && npm run lint:backend 2>&1 | head -60)",
+      "Bash(cd /Users/JoelN/Coding/argus && npm run lint:backend 2>&1 | tail -10)"
+    ]
+  }
+}

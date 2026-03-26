@@ -19,18 +19,28 @@ sidebar_position: 10
 - scheduled scan execution
 - scan progress reporting
 
-## Discovery Flow
+## Pipeline Stages
 
-At a high level, Argus processes a scan in stages:
+Argus processes every scan through six sequential stages. Each stage feeds the next, and live progress events are emitted throughout so the UI and any WebSocket listener can follow the scan in real time.
 
-1. resolve effective targets
-2. perform discovery
-3. run port scans against discovered hosts
-4. run deeper probes and fingerprinting
-5. persist results
-6. emit live status events
+| Stage | Name | What Happens |
+|---|---|---|
+| 1 | Discovery | ARP and ping sweep to find live hosts on the target subnet |
+| 2 | Port Scan | nmap enumerates open ports, services, and OS fingerprints across all discovered hosts |
+| 3 | Fingerprint | Heuristic rules classify each host based on MAC vendor, service banners, port signatures, and TTL hints |
+| 4 | Deep Probes | Targeted protocol probes (HTTP, TLS, SSH, SNMP, mDNS, UPnP, SMB) collect richer evidence per host |
+| 5 | AI Analysis | Optional AI agent synthesizes all collected evidence into a structured device classification |
+| 6 | Persist | Results are upserted into the database; offline reconciliation runs; WebSocket events are emitted |
 
-Argus also stores an asset autopsy trace so an operator can inspect how a classification was reached and where evidence was weak.
+:::info Stage Control
+Stages 3–5 run concurrently across hosts (limited by the `concurrent_hosts` setting). This means a /24 with 50 live hosts and `concurrent_hosts=10` runs approximately five batches of ten hosts in parallel.
+:::
+
+Argus also stores an asset **autopsy trace** so an operator can inspect exactly how a classification was reached and where the evidence was weak or absent.
+
+:::tip Partial Scans
+If a scan is cancelled or paused during Stage 6, Argus can preserve discovery-only results — assets appear in inventory with minimal data and are enriched on the next full scan.
+:::
 
 ## Discovery and Port Scan Behavior
 
@@ -156,4 +166,7 @@ The scan management page exposes:
 ## Related Docs
 
 - [Architecture](../architecture.md)
+- [Scan Profiles](./scan-profiles.md)
+- [Fingerprinting Guide](./fingerprinting.md)
+- [Settings Reference](./settings-reference.md)
 - [Troubleshooting](../troubleshooting.md)

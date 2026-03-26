@@ -4,10 +4,10 @@ import { useId, useState, type ComponentProps, type ReactNode } from 'react'
 import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit, Download } from 'lucide-react'
+import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit, Download, ChevronDown } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
-import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, useOllamaModels, usePlugins, usePullOllamaModel, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncTplinkDecoModule, useTestAiConfiguration, useTestTplinkDecoModule, useTplinkDecoModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
-import type { FingerprintDataset, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun } from '@/types'
+import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFirewallaModule, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, useOllamaModels, usePfsenseModule, usePlugins, usePullOllamaModel, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncFirewallaModule, useSyncPfsenseModule, useSyncTplinkDecoModule, useSyncUnifiModule, useTestAiConfiguration, useTestFirewallaModule, useTestPfsenseModule, useTestTplinkDecoModule, useTestUnifiModule, useTplinkDecoModule, useUnifiModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateFirewallaModule, useUpdatePfsenseModule, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUnifiModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
+import type { FirewallaConfig, FirewallaSyncRun, FingerprintDataset, PfsenseConfig, PfsenseSyncRun, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UnifiConfig, UnifiSyncRun } from '@/types'
 import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 
 type BackupPolicyFormProps = Readonly<{
@@ -61,6 +61,42 @@ type TplinkDecoModuleCardProps = Readonly<{
   isTesting: boolean
   isSyncing: boolean
   onSave: (payload: TplinkModulePayload) => Promise<unknown>
+  onTest: () => Promise<unknown>
+  onSync: () => Promise<unknown>
+}>
+
+type UnifiModulePayload = Omit<UnifiConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'last_device_count' | 'created_at' | 'updated_at'>
+type UnifiModuleCardProps = Readonly<{
+  moduleConfig?: UnifiConfig
+  recentRuns: UnifiSyncRun[]
+  isSaving: boolean
+  isTesting: boolean
+  isSyncing: boolean
+  onSave: (payload: UnifiModulePayload) => Promise<unknown>
+  onTest: () => Promise<unknown>
+  onSync: () => Promise<unknown>
+}>
+
+type PfsenseModulePayload = Omit<PfsenseConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_lease_count' | 'created_at' | 'updated_at'>
+type PfsenseModuleCardProps = Readonly<{
+  moduleConfig?: PfsenseConfig
+  recentRuns: PfsenseSyncRun[]
+  isSaving: boolean
+  isTesting: boolean
+  isSyncing: boolean
+  onSave: (payload: PfsenseModulePayload) => Promise<unknown>
+  onTest: () => Promise<unknown>
+  onSync: () => Promise<unknown>
+}>
+
+type FirewallaModulePayload = Omit<FirewallaConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_device_count' | 'created_at' | 'updated_at'>
+type FirewallaModuleCardProps = Readonly<{
+  moduleConfig?: FirewallaConfig
+  recentRuns: FirewallaSyncRun[]
+  isSaving: boolean
+  isTesting: boolean
+  isSyncing: boolean
+  onSave: (payload: FirewallaModulePayload) => Promise<unknown>
   onTest: () => Promise<unknown>
   onSync: () => Promise<unknown>
 }>
@@ -942,6 +978,574 @@ function TplinkDecoModuleCard({
   )
 }
 
+function UnifiModuleCard({
+  moduleConfig,
+  recentRuns,
+  isSaving,
+  isTesting,
+  isSyncing,
+  onSave,
+  onTest,
+  onSync,
+}: UnifiModuleCardProps) {
+  const [isExpanded, setIsExpanded] = useState(moduleConfig?.enabled ?? false)
+  const [enabled, setEnabled] = useState(moduleConfig?.enabled ?? false)
+  const [controllerUrl, setControllerUrl] = useState(moduleConfig?.controller_url ?? 'https://192.168.1.1')
+  const [username, setUsername] = useState(moduleConfig?.username ?? '')
+  const [password, setPassword] = useState(moduleConfig?.password ?? '')
+  const [siteId, setSiteId] = useState(moduleConfig?.site_id ?? 'default')
+  const [verifyTls, setVerifyTls] = useState(moduleConfig?.verify_tls ?? false)
+  const [requestTimeoutSeconds, setRequestTimeoutSeconds] = useState(moduleConfig?.request_timeout_seconds ?? 15)
+  const [fetchClients, setFetchClients] = useState(moduleConfig?.fetch_clients ?? true)
+  const [fetchDevices, setFetchDevices] = useState(moduleConfig?.fetch_devices ?? true)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const isSyncDisabled = isSaving || isTesting || isSyncing || enabled !== true
+
+  function buildPayload() {
+    return {
+      enabled,
+      controller_url: controllerUrl.trim() || 'https://192.168.1.1',
+      username: username.trim() || null,
+      password: password.trim() || null,
+      site_id: siteId.trim() || 'default',
+      verify_tls: verifyTls,
+      request_timeout_seconds: requestTimeoutSeconds,
+      fetch_clients: fetchClients,
+      fetch_devices: fetchDevices,
+    }
+  }
+
+  async function handleSave() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      setActionMessage('UniFi module settings saved.')
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  async function handleTest() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      const result = await onTest() as { status: string; client_count: number; device_count: number } | undefined
+      setActionMessage(`Connection test ${result?.status ?? 'completed'}: ${result?.client_count ?? 0} clients, ${result?.device_count ?? 0} devices.`)
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  async function handleSync() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      const result = await onSync() as { status: string; client_count: number; device_count: number; ingested_assets: number } | undefined
+      setActionMessage(`Sync completed: ${result?.client_count ?? 0} clients, ${result?.device_count ?? 0} devices, ${result?.ingested_assets ?? 0} assets updated.`)
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <button
+          type="button"
+          onClick={() => setIsExpanded((v) => !v)}
+          className="flex items-center justify-between w-full text-left"
+        >
+          <CardTitle><Wifi className="w-4 h-4 inline mr-1.5" />UniFi Module</CardTitle>
+          <div className="flex items-center gap-2">
+            {!isExpanded && (
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${moduleConfig?.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800'}`}>
+                {moduleConfig?.enabled ? 'enabled' : 'disabled'}
+              </span>
+            )}
+            {!isExpanded && moduleConfig?.last_sync_at && (
+              <span className="text-xs text-zinc-400">synced {new Date(moduleConfig.last_sync_at).toLocaleDateString()}</span>
+            )}
+            <ChevronDown className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+          </div>
+        </button>
+      </CardHeader>
+      {isExpanded && <CardBody className="space-y-4">
+        <p className="text-sm text-zinc-500">
+          Pull wireless client and device data from a UniFi Network controller. Supports both UniFi OS (UDM/UDM-Pro) and classic controller paths.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <CheckboxField label="Enable UniFi module" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+          <CheckboxField label="Pull connected clients" checked={fetchClients} onChange={(event) => setFetchClients(event.target.checked)} />
+          <CheckboxField label="Pull network devices" checked={fetchDevices} onChange={(event) => setFetchDevices(event.target.checked)} />
+          <CheckboxField label="Verify TLS" checked={verifyTls} onChange={(event) => setVerifyTls(event.target.checked)} />
+          <TextInputField label="Controller URL" value={controllerUrl} onChange={(event) => setControllerUrl(event.target.value)} placeholder="https://192.168.1.1" />
+          <TextInputField label="Site ID" value={siteId} onChange={(event) => setSiteId(event.target.value)} placeholder="default" />
+          <TextInputField label="Username" value={username} onChange={(event) => setUsername(event.target.value)} placeholder="admin" />
+          <TextInputField label="Password" type="password" value={password} onChange={(event) => setPassword(event.target.value)} placeholder="Controller password" />
+          <TextInputField label="Request timeout seconds" type="number" min={3} max={60} value={requestTimeoutSeconds} onChange={(event) => setRequestTimeoutSeconds(Number(event.target.value) || 15)} placeholder="15" />
+        </div>
+
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Module health</p>
+          <p className="text-xs text-zinc-500">Status: {moduleConfig?.last_status ?? 'idle'}</p>
+          <p className="text-xs text-zinc-500">Last tested: {formatDateOrFallback(moduleConfig?.last_tested_at)}</p>
+          <p className="text-xs text-zinc-500">Last sync: {formatDateOrFallback(moduleConfig?.last_sync_at)}</p>
+          <p className="text-xs text-zinc-500">Last client count: {moduleConfig?.last_client_count ?? '—'}</p>
+          <p className="text-xs text-zinc-500">Last device count: {moduleConfig?.last_device_count ?? '—'}</p>
+          {moduleConfig?.last_error && <p className="text-xs text-rose-500">{moduleConfig.last_error}</p>}
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={isSaving || isTesting || isSyncing}
+            onClick={handleSave}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+          >
+            Save module settings
+          </button>
+          <button
+            type="button"
+            disabled={isSaving || isTesting || isSyncing}
+            onClick={handleTest}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700"
+          >
+            {isTesting ? 'Testing…' : 'Test connection'}
+          </button>
+          <button
+            type="button"
+            disabled={isSyncDisabled}
+            onClick={handleSync}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700 disabled:opacity-50"
+          >
+            {isSyncing ? 'Syncing…' : 'Sync now'}
+          </button>
+        </div>
+
+        {actionMessage && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+            {actionMessage}
+          </div>
+        )}
+        {actionError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/40 dark:text-red-300">
+            {actionError}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Recent sync runs</p>
+          {recentRuns.length === 0 ? (
+            <p className="text-sm text-zinc-500">No UniFi sync runs recorded yet.</p>
+          ) : recentRuns.map((run) => (
+            <div key={run.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Run #{run.id}</p>
+                <span className="text-xs text-zinc-500">{run.status}</span>
+              </div>
+              <p className="text-xs text-zinc-500">
+                Started {new Date(run.started_at).toLocaleString()}
+                {run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ''}
+                {run.client_count === null ? '' : ` · clients ${run.client_count}`}
+                {run.device_count === null ? '' : ` · devices ${run.device_count}`}
+              </p>
+              {run.error && <p className="text-xs text-rose-500">{run.error}</p>}
+            </div>
+          ))}
+        </div>
+      </CardBody>}
+    </Card>
+  )
+}
+
+function PfsenseModuleCard({
+  moduleConfig,
+  recentRuns,
+  isSaving,
+  isTesting,
+  isSyncing,
+  onSave,
+  onTest,
+  onSync,
+}: PfsenseModuleCardProps) {
+  const [isExpanded, setIsExpanded] = useState(moduleConfig?.enabled ?? false)
+  const [enabled, setEnabled] = useState(moduleConfig?.enabled ?? false)
+  const [baseUrl, setBaseUrl] = useState(moduleConfig?.base_url ?? 'http://192.168.1.1')
+  const [flavor, setFlavor] = useState(moduleConfig?.flavor ?? 'opnsense')
+  const [apiKey, setApiKey] = useState(moduleConfig?.api_key ?? '')
+  const [apiSecret, setApiSecret] = useState(moduleConfig?.api_secret ?? '')
+  const [fauxapiToken, setFauxapiToken] = useState(moduleConfig?.fauxapi_token ?? '')
+  const [verifyTls, setVerifyTls] = useState(moduleConfig?.verify_tls ?? false)
+  const [requestTimeoutSeconds, setRequestTimeoutSeconds] = useState(moduleConfig?.request_timeout_seconds ?? 15)
+  const [fetchDhcpLeases, setFetchDhcpLeases] = useState(moduleConfig?.fetch_dhcp_leases ?? true)
+  const [fetchArpTable, setFetchArpTable] = useState(moduleConfig?.fetch_arp_table ?? true)
+  const [fetchInterfaces, setFetchInterfaces] = useState(moduleConfig?.fetch_interfaces ?? true)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const isSyncDisabled = isSaving || isTesting || isSyncing || enabled !== true
+  const isFauxapi = flavor === 'pfsense_fauxapi'
+
+  function buildPayload() {
+    return {
+      enabled,
+      base_url: baseUrl.trim() || 'http://192.168.1.1',
+      flavor,
+      api_key: apiKey.trim() || null,
+      api_secret: apiSecret.trim() || null,
+      fauxapi_token: fauxapiToken.trim() || null,
+      verify_tls: verifyTls,
+      request_timeout_seconds: requestTimeoutSeconds,
+      fetch_dhcp_leases: fetchDhcpLeases,
+      fetch_arp_table: fetchArpTable,
+      fetch_interfaces: fetchInterfaces,
+    }
+  }
+
+  async function handleSave() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      setActionMessage('pfSense/OPNsense module settings saved.')
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  async function handleTest() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      const result = await onTest() as { status: string; lease_count: number; flavor: string } | undefined
+      setActionMessage(`Connection test ${result?.status ?? 'completed'}: ${result?.lease_count ?? 0} DHCP leases found (${result?.flavor ?? flavor}).`)
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  async function handleSync() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      const result = await onSync() as { status: string; lease_count: number; arp_count: number; interface_count: number } | undefined
+      setActionMessage(`Sync completed: ${result?.lease_count ?? 0} leases, ${result?.arp_count ?? 0} ARP entries, ${result?.interface_count ?? 0} interfaces.`)
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <button
+          type="button"
+          onClick={() => setIsExpanded((v) => !v)}
+          className="flex items-center justify-between w-full text-left"
+        >
+          <CardTitle><Shield className="w-4 h-4 inline mr-1.5" />pfSense / OPNsense Module</CardTitle>
+          <div className="flex items-center gap-2">
+            {!isExpanded && (
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${moduleConfig?.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800'}`}>
+                {moduleConfig?.enabled ? 'enabled' : 'disabled'}
+              </span>
+            )}
+            {!isExpanded && moduleConfig?.last_sync_at && (
+              <span className="text-xs text-zinc-400">synced {new Date(moduleConfig.last_sync_at).toLocaleDateString()}</span>
+            )}
+            <ChevronDown className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+          </div>
+        </button>
+      </CardHeader>
+      {isExpanded && <CardBody className="space-y-4">
+        <p className="text-sm text-zinc-500">
+          Pull DHCP leases, ARP table, and interface data from OPNsense (API key/secret) or pfSense via fauxapi (HMAC token).
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <CheckboxField label="Enable module" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+          <CheckboxField label="Pull DHCP leases" checked={fetchDhcpLeases} onChange={(event) => setFetchDhcpLeases(event.target.checked)} />
+          <CheckboxField label="Pull ARP table" checked={fetchArpTable} disabled={isFauxapi} onChange={(event) => setFetchArpTable(event.target.checked)} />
+          <CheckboxField label="Pull interfaces" checked={fetchInterfaces} onChange={(event) => setFetchInterfaces(event.target.checked)} />
+          <CheckboxField label="Verify TLS" checked={verifyTls} onChange={(event) => setVerifyTls(event.target.checked)} />
+          <TextInputField label="Base URL" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://192.168.1.1" />
+          <SelectField label="Flavor" value={flavor} onChange={(event) => setFlavor(event.target.value)}>
+            <option value="opnsense">OPNsense (API key/secret)</option>
+            <option value="pfsense_fauxapi">pfSense fauxapi (HMAC token)</option>
+          </SelectField>
+          <TextInputField label="Request timeout seconds" type="number" min={3} max={60} value={requestTimeoutSeconds} onChange={(event) => setRequestTimeoutSeconds(Number(event.target.value) || 15)} placeholder="15" />
+          {!isFauxapi && (
+            <>
+              <TextInputField label="API key" value={apiKey} onChange={(event) => setApiKey(event.target.value)} placeholder="OPNsense API key" />
+              <TextInputField label="API secret" type="password" value={apiSecret} onChange={(event) => setApiSecret(event.target.value)} placeholder="OPNsense API secret" />
+            </>
+          )}
+          {isFauxapi && (
+            <TextInputField label="fauxapi token (APIKEY:APISECRET)" type="password" value={fauxapiToken} onChange={(event) => setFauxapiToken(event.target.value)} placeholder="PFFA...key:secret" />
+          )}
+        </div>
+
+        {isFauxapi && (
+          <p className="text-xs text-zinc-500">ARP table is not supported for pfSense fauxapi. Fetch ARP table is disabled when this flavor is selected.</p>
+        )}
+
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Module health</p>
+          <p className="text-xs text-zinc-500">Status: {moduleConfig?.last_status ?? 'idle'}</p>
+          <p className="text-xs text-zinc-500">Last tested: {formatDateOrFallback(moduleConfig?.last_tested_at)}</p>
+          <p className="text-xs text-zinc-500">Last sync: {formatDateOrFallback(moduleConfig?.last_sync_at)}</p>
+          <p className="text-xs text-zinc-500">Last lease count: {moduleConfig?.last_lease_count ?? '—'}</p>
+          {moduleConfig?.last_error && <p className="text-xs text-rose-500">{moduleConfig.last_error}</p>}
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={isSaving || isTesting || isSyncing}
+            onClick={handleSave}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+          >
+            Save module settings
+          </button>
+          <button
+            type="button"
+            disabled={isSaving || isTesting || isSyncing}
+            onClick={handleTest}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700"
+          >
+            {isTesting ? 'Testing…' : 'Test connection'}
+          </button>
+          <button
+            type="button"
+            disabled={isSyncDisabled}
+            onClick={handleSync}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700 disabled:opacity-50"
+          >
+            {isSyncing ? 'Syncing…' : 'Sync now'}
+          </button>
+        </div>
+
+        {actionMessage && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+            {actionMessage}
+          </div>
+        )}
+        {actionError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/40 dark:text-red-300">
+            {actionError}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Recent sync runs</p>
+          {recentRuns.length === 0 ? (
+            <p className="text-sm text-zinc-500">No pfSense/OPNsense sync runs recorded yet.</p>
+          ) : recentRuns.map((run) => (
+            <div key={run.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Run #{run.id}</p>
+                <span className="text-xs text-zinc-500">{run.status}</span>
+              </div>
+              <p className="text-xs text-zinc-500">
+                Started {new Date(run.started_at).toLocaleString()}
+                {run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ''}
+                {run.lease_count === null ? '' : ` · leases ${run.lease_count}`}
+                {run.arp_count === null ? '' : ` · arp ${run.arp_count}`}
+              </p>
+              {run.error && <p className="text-xs text-rose-500">{run.error}</p>}
+            </div>
+          ))}
+        </div>
+      </CardBody>}
+    </Card>
+  )
+}
+
+function FirewallaModuleCard({
+  moduleConfig,
+  recentRuns,
+  isSaving,
+  isTesting,
+  isSyncing,
+  onSave,
+  onTest,
+  onSync,
+}: FirewallaModuleCardProps) {
+  const [isExpanded, setIsExpanded] = useState(moduleConfig?.enabled ?? false)
+  const [enabled, setEnabled] = useState(moduleConfig?.enabled ?? false)
+  const [baseUrl, setBaseUrl] = useState(moduleConfig?.base_url ?? 'http://firewalla.lan')
+  const [apiToken, setApiToken] = useState(moduleConfig?.api_token ?? '')
+  const [verifyTls, setVerifyTls] = useState(moduleConfig?.verify_tls ?? false)
+  const [requestTimeoutSeconds, setRequestTimeoutSeconds] = useState(moduleConfig?.request_timeout_seconds ?? 15)
+  const [fetchDevices, setFetchDevices] = useState(moduleConfig?.fetch_devices ?? true)
+  const [fetchAlarms, setFetchAlarms] = useState(moduleConfig?.fetch_alarms ?? true)
+  const [actionMessage, setActionMessage] = useState<string | null>(null)
+  const [actionError, setActionError] = useState<string | null>(null)
+  const isSyncDisabled = isSaving || isTesting || isSyncing || enabled !== true
+
+  function buildPayload() {
+    return {
+      enabled,
+      base_url: baseUrl.trim() || 'http://firewalla.lan',
+      api_token: apiToken.trim() || null,
+      verify_tls: verifyTls,
+      request_timeout_seconds: requestTimeoutSeconds,
+      fetch_devices: fetchDevices,
+      fetch_alarms: fetchAlarms,
+    }
+  }
+
+  async function handleSave() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      setActionMessage('Firewalla module settings saved.')
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  async function handleTest() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      const result = await onTest() as { status: string; device_count: number; box_name?: string | null } | undefined
+      const boxSuffix = result?.box_name ? ` (box: ${result.box_name})` : ''
+      setActionMessage(`Connection test ${result?.status ?? 'completed'}: ${result?.device_count ?? 0} devices${boxSuffix}.`)
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  async function handleSync() {
+    setActionMessage(null)
+    setActionError(null)
+    try {
+      await onSave(buildPayload())
+      const result = await onSync() as { status: string; device_count: number; alarm_count: number } | undefined
+      setActionMessage(`Sync completed: ${result?.device_count ?? 0} devices, ${result?.alarm_count ?? 0} alarms ingested as Findings.`)
+    } catch (error) {
+      setActionError(describeApiActionError(error))
+    }
+  }
+
+  return (
+    <Card>
+      <CardHeader>
+        <button
+          type="button"
+          onClick={() => setIsExpanded((v) => !v)}
+          className="flex items-center justify-between w-full text-left"
+        >
+          <CardTitle><Shield className="w-4 h-4 inline mr-1.5" />Firewalla Module</CardTitle>
+          <div className="flex items-center gap-2">
+            {!isExpanded && (
+              <span className={`text-xs px-2 py-0.5 rounded-full font-medium ${moduleConfig?.enabled ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300' : 'bg-zinc-100 text-zinc-500 dark:bg-zinc-800'}`}>
+                {moduleConfig?.enabled ? 'enabled' : 'disabled'}
+              </span>
+            )}
+            {!isExpanded && moduleConfig?.last_sync_at && (
+              <span className="text-xs text-zinc-400">synced {new Date(moduleConfig.last_sync_at).toLocaleDateString()}</span>
+            )}
+            <ChevronDown className={`w-4 h-4 text-zinc-400 transition-transform duration-200 ${isExpanded ? 'rotate-180' : ''}`} />
+          </div>
+        </button>
+      </CardHeader>
+      {isExpanded && <CardBody className="space-y-4">
+        <p className="text-sm text-zinc-500">
+          Pull device inventory and active alarms from a Firewalla gateway. Alarms are ingested as Findings and linked to their asset.
+        </p>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <CheckboxField label="Enable Firewalla module" checked={enabled} onChange={(event) => setEnabled(event.target.checked)} />
+          <CheckboxField label="Pull devices" checked={fetchDevices} onChange={(event) => setFetchDevices(event.target.checked)} />
+          <CheckboxField label="Pull alarms (as Findings)" checked={fetchAlarms} onChange={(event) => setFetchAlarms(event.target.checked)} />
+          <CheckboxField label="Verify TLS" checked={verifyTls} onChange={(event) => setVerifyTls(event.target.checked)} />
+          <TextInputField label="Base URL" value={baseUrl} onChange={(event) => setBaseUrl(event.target.value)} placeholder="http://firewalla.lan" />
+          <TextInputField label="API token" type="password" value={apiToken} onChange={(event) => setApiToken(event.target.value)} placeholder="Firewalla MSP API token" />
+          <TextInputField label="Request timeout seconds" type="number" min={3} max={60} value={requestTimeoutSeconds} onChange={(event) => setRequestTimeoutSeconds(Number(event.target.value) || 15)} placeholder="15" />
+        </div>
+
+        <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
+          <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Module health</p>
+          <p className="text-xs text-zinc-500">Status: {moduleConfig?.last_status ?? 'idle'}</p>
+          <p className="text-xs text-zinc-500">Last tested: {formatDateOrFallback(moduleConfig?.last_tested_at)}</p>
+          <p className="text-xs text-zinc-500">Last sync: {formatDateOrFallback(moduleConfig?.last_sync_at)}</p>
+          <p className="text-xs text-zinc-500">Last device count: {moduleConfig?.last_device_count ?? '—'}</p>
+          {moduleConfig?.last_error && <p className="text-xs text-rose-500">{moduleConfig.last_error}</p>}
+        </div>
+
+        <div className="flex flex-wrap gap-3">
+          <button
+            type="button"
+            disabled={isSaving || isTesting || isSyncing}
+            onClick={handleSave}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm bg-sky-500 text-white disabled:bg-zinc-300 disabled:text-zinc-500 dark:disabled:bg-zinc-800"
+          >
+            Save module settings
+          </button>
+          <button
+            type="button"
+            disabled={isSaving || isTesting || isSyncing}
+            onClick={handleTest}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700"
+          >
+            {isTesting ? 'Testing…' : 'Test connection'}
+          </button>
+          <button
+            type="button"
+            disabled={isSyncDisabled}
+            onClick={handleSync}
+            className="inline-flex items-center justify-center gap-2 px-4 py-2 rounded-lg text-sm border border-gray-200 dark:border-zinc-700 disabled:opacity-50"
+          >
+            {isSyncing ? 'Syncing…' : 'Sync now'}
+          </button>
+        </div>
+
+        {actionMessage && (
+          <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-sm text-emerald-700 dark:border-emerald-900 dark:bg-emerald-950/40 dark:text-emerald-300">
+            {actionMessage}
+          </div>
+        )}
+        {actionError && (
+          <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-700 dark:border-red-950 dark:bg-red-950/40 dark:text-red-300">
+            {actionError}
+          </div>
+        )}
+
+        <div className="space-y-3">
+          <p className="text-xs font-medium uppercase tracking-wide text-zinc-500">Recent sync runs</p>
+          {recentRuns.length === 0 ? (
+            <p className="text-sm text-zinc-500">No Firewalla sync runs recorded yet.</p>
+          ) : recentRuns.map((run) => (
+            <div key={run.id} className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-2">
+              <div className="flex items-center justify-between gap-3">
+                <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Run #{run.id}</p>
+                <span className="text-xs text-zinc-500">{run.status}</span>
+              </div>
+              <p className="text-xs text-zinc-500">
+                Started {new Date(run.started_at).toLocaleString()}
+                {run.finished_at ? ` · finished ${new Date(run.finished_at).toLocaleString()}` : ''}
+                {run.device_count === null ? '' : ` · devices ${run.device_count}`}
+                {run.alarm_count === null ? '' : ` · alarms ${run.alarm_count}`}
+              </p>
+              {run.error && <p className="text-xs text-rose-500">{run.error}</p>}
+            </div>
+          ))}
+        </div>
+      </CardBody>}
+    </Card>
+  )
+}
+
 function SettingsSection({
   id,
   title,
@@ -987,6 +1591,9 @@ export default function SettingsPage() {
   const { data: backupPolicy } = useBackupPolicy(currentUser?.role === 'admin')
   const { data: scannerConfig } = useScannerConfig(currentUser?.role === 'admin')
   const { data: tplinkDecoModule } = useTplinkDecoModule(currentUser?.role === 'admin')
+  const { data: unifiModule } = useUnifiModule(currentUser?.role === 'admin')
+  const { data: pfsenseModule } = usePfsenseModule(currentUser?.role === 'admin')
+  const { data: firewallModule } = useFirewallaModule(currentUser?.role === 'admin')
   const { data: fingerprintDatasets = [] } = useFingerprintDatasets(currentUser?.role === 'admin')
   const { data: plugins = [] } = usePlugins(currentUser?.role === 'admin')
   const { data: integrationEvents = [] } = useIntegrationEvents(currentUser?.role === 'admin')
@@ -1002,6 +1609,15 @@ export default function SettingsPage() {
   const { mutateAsync: updateTplinkDecoModule, isPending: isUpdatingTplinkDecoModule } = useUpdateTplinkDecoModule()
   const { mutateAsync: testTplinkDecoModule, isPending: isTestingTplinkDecoModule } = useTestTplinkDecoModule()
   const { mutateAsync: syncTplinkDecoModule, isPending: isSyncingTplinkDecoModule } = useSyncTplinkDecoModule()
+  const { mutateAsync: updateUnifiModule, isPending: isUpdatingUnifiModule } = useUpdateUnifiModule()
+  const { mutateAsync: testUnifiModule, isPending: isTestingUnifiModule } = useTestUnifiModule()
+  const { mutateAsync: syncUnifiModule, isPending: isSyncingUnifiModule } = useSyncUnifiModule()
+  const { mutateAsync: updatePfsenseModule, isPending: isUpdatingPfsenseModule } = useUpdatePfsenseModule()
+  const { mutateAsync: testPfsenseModule, isPending: isTestingPfsenseModule } = useTestPfsenseModule()
+  const { mutateAsync: syncPfsenseModule, isPending: isSyncingPfsenseModule } = useSyncPfsenseModule()
+  const { mutateAsync: updateFirewallaModule, isPending: isUpdatingFirewallaModule } = useUpdateFirewallaModule()
+  const { mutateAsync: testFirewallaModule, isPending: isTestingFirewallaModule } = useTestFirewallaModule()
+  const { mutateAsync: syncFirewallaModule, isPending: isSyncingFirewallaModule } = useSyncFirewallaModule()
   const { mutate: refreshFingerprintDataset, isPending: isRefreshingFingerprintDataset } = useRefreshFingerprintDataset()
   const [refreshingDatasetKey, setRefreshingDatasetKey] = useState<string | null>(null)
   const { mutate: resetInventory, isPending: isResettingInventory } = useResetInventory()
@@ -1140,6 +1756,39 @@ export default function SettingsPage() {
                       onSave={(payload) => updateTplinkDecoModule(payload)}
                       onTest={() => testTplinkDecoModule()}
                       onSync={() => syncTplinkDecoModule()}
+                    />
+                    <UnifiModuleCard
+                      key={unifiModule?.config.updated_at ?? 'unifi-module'}
+                      moduleConfig={unifiModule?.config}
+                      recentRuns={unifiModule?.recent_runs ?? []}
+                      isSaving={isUpdatingUnifiModule}
+                      isTesting={isTestingUnifiModule}
+                      isSyncing={isSyncingUnifiModule}
+                      onSave={(payload) => updateUnifiModule(payload)}
+                      onTest={() => testUnifiModule()}
+                      onSync={() => syncUnifiModule()}
+                    />
+                    <PfsenseModuleCard
+                      key={pfsenseModule?.config.updated_at ?? 'pfsense-module'}
+                      moduleConfig={pfsenseModule?.config}
+                      recentRuns={pfsenseModule?.recent_runs ?? []}
+                      isSaving={isUpdatingPfsenseModule}
+                      isTesting={isTestingPfsenseModule}
+                      isSyncing={isSyncingPfsenseModule}
+                      onSave={(payload) => updatePfsenseModule(payload)}
+                      onTest={() => testPfsenseModule()}
+                      onSync={() => syncPfsenseModule()}
+                    />
+                    <FirewallaModuleCard
+                      key={firewallModule?.config.updated_at ?? 'firewalla-module'}
+                      moduleConfig={firewallModule?.config}
+                      recentRuns={firewallModule?.recent_runs ?? []}
+                      isSaving={isUpdatingFirewallaModule}
+                      isTesting={isTestingFirewallaModule}
+                      isSyncing={isSyncingFirewallaModule}
+                      onSave={(payload) => updateFirewallaModule(payload)}
+                      onTest={() => testFirewallaModule()}
+                      onSync={() => syncFirewallaModule()}
                     />
                   </div>
                 </SettingsSection>

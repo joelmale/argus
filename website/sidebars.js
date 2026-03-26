@@ -8,6 +8,9 @@ module.exports = {
       label: 'Guides',
       items: [
         'guides/scanner-guide',
+        'guides/scan-profiles',
+        'guides/fingerprinting',
+        'guides/settings-reference',
         'guides/backend-api-guide',
         'guides/frontend-dashboard-guide',
         'guides/ci-cd-security',

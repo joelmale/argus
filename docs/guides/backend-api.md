@@ -128,14 +128,11 @@ WebSocket endpoint:
 ws://localhost:8000/ws/events
 ```
 
-Typical event categories:
+All messages use the envelope format `{"event": "<type>", "data": {...}}`.
 
-- `scan_progress`
-- `device_discovered`
-- `device_investigated`
-- `heartbeat`
+### `scan_progress`
 
-Example message:
+Emitted throughout a running scan as each stage completes or progresses.
 
 ```json
 {
@@ -143,10 +140,114 @@ Example message:
   "data": {
     "job_id": "12345678-1234-1234-1234-1234567890ab",
     "stage": "investigation",
-    "message": "Investigating discovered hosts",
-    "discovered_hosts": 42
+    "progress": 0.65,
+    "message": "Investigated 13/20 hosts",
+    "hosts_found": 20,
+    "hosts_port_scanned": 20,
+    "hosts_fingerprinted": 13,
+    "hosts_deep_probed": 10,
+    "hosts_investigated": 13,
+    "assets_created": 2,
+    "assets_updated": 11
   }
 }
+```
+
+| Field | Type | Description |
+|---|---|---|
+| `job_id` | string | UUID of the scan job |
+| `stage` | string | Current pipeline stage: `discovery`, `port_scan`, `investigation`, `persist` |
+| `progress` | float | Approximate 0–1 progress fraction |
+| `message` | string | Human-readable status description |
+| `hosts_found` | int | Total hosts discovered in Stage 1 |
+| `hosts_port_scanned` | int | Hosts that completed Stage 2 |
+| `hosts_fingerprinted` | int | Hosts that completed Stage 3 |
+| `hosts_deep_probed` | int | Hosts that received deep probes (Stage 4) |
+| `hosts_investigated` | int | Hosts that completed full investigation |
+| `assets_created` | int | New assets created so far this scan |
+| `assets_updated` | int | Existing assets updated so far this scan |
+| `current_host` | string \| null | IP of the host currently being investigated |
+
+### `device_discovered`
+
+Emitted when a previously unknown host is first persisted to inventory.
+
+```json
+{
+  "event": "device_discovered",
+  "data": {
+    "job_id": "12345678-...",
+    "stage": "investigation",
+    "ip": "192.168.1.42",
+    "mac": "aa:bb:cc:dd:ee:ff",
+    "hostname": "mydevice.local",
+    "device_class": "workstation"
+  }
+}
+```
+
+### `device_updated`
+
+Emitted when an existing asset is updated with new scan data.
+
+```json
+{
+  "event": "device_updated",
+  "data": {
+    "job_id": "12345678-...",
+    "stage": "investigation",
+    "ip": "192.168.1.42",
+    "hostname": "mydevice.local"
+  }
+}
+```
+
+### `device_investigated`
+
+Emitted when the AI agent completes analysis for a host (only when AI analysis is enabled).
+
+```json
+{
+  "event": "device_investigated",
+  "data": {
+    "job_id": "12345678-...",
+    "ip": "192.168.1.42",
+    "device_class": "router",
+    "vendor": "MikroTik",
+    "confidence": 0.88
+  }
+}
+```
+
+### `scan_complete`
+
+Emitted once when a scan finishes (regardless of outcome).
+
+```json
+{
+  "event": "scan_complete",
+  "data": {
+    "job_id": "12345678-...",
+    "targets": "192.168.1.0/24",
+    "profile": "balanced",
+    "hosts_scanned": 20,
+    "hosts_up": 20,
+    "new_assets": 2,
+    "changed_assets": 11,
+    "offline_assets": 1,
+    "total_open_ports": 87,
+    "ai_analyses_completed": 18,
+    "duration_seconds": 142.3
+  }
+}
+```
+
+### `heartbeat`
+
+Emitted periodically to keep idle connections alive. No data fields.
+
+```json
+{"event": "heartbeat", "data": {}}
 ```
 
 ## Data Model Themes
@@ -207,3 +308,5 @@ type ScanProgressEvent = {
 
 - [Architecture](../architecture.md)
 - [Frontend Dashboard Guide](./frontend-dashboard.md)
+- [Scanner Guide](./scanner.md)
+- [Settings Reference](./settings-reference.md)

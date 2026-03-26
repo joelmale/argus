@@ -91,7 +91,11 @@ Development uses `.env`. The production compose stack reads [.env.production](/U
 - Architecture: [docs/architecture.md](/Users/JoelN/Coding/argus/docs/architecture.md)
 - Troubleshooting: [docs/troubleshooting.md](/Users/JoelN/Coding/argus/docs/troubleshooting.md)
 - Scanner guide: [docs/guides/scanner.md](/Users/JoelN/Coding/argus/docs/guides/scanner.md)
+- Scan profiles: [docs/guides/scan-profiles.md](/Users/JoelN/Coding/argus/docs/guides/scan-profiles.md)
+- Fingerprinting guide: [docs/guides/fingerprinting.md](/Users/JoelN/Coding/argus/docs/guides/fingerprinting.md)
+- Settings reference: [docs/guides/settings-reference.md](/Users/JoelN/Coding/argus/docs/guides/settings-reference.md)
 - Backend API: [docs/guides/backend-api.md](/Users/JoelN/Coding/argus/docs/guides/backend-api.md)
+- Frontend dashboard: [docs/guides/frontend-dashboard.md](/Users/JoelN/Coding/argus/docs/guides/frontend-dashboard.md)
 - CI/CD and security: [docs/guides/ci-cd-security.md](/Users/JoelN/Coding/argus/docs/guides/ci-cd-security.md)
 - Plugin packaging: [docs/plugins/README.md](/Users/JoelN/Coding/argus/docs/plugins/README.md)
 

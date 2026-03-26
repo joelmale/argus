@@ -31,6 +31,36 @@ from app.modules.tplink_deco import (
     test_tplink_deco_connection,
     update_tplink_deco_config,
 )
+from app.modules.unifi import (
+    audit_unifi_config_change,
+    get_or_create_unifi_config,
+    list_recent_unifi_sync_runs,
+    serialize_unifi_config,
+    serialize_unifi_sync_run,
+    sync_unifi_module,
+    test_unifi_connection,
+    update_unifi_config,
+)
+from app.modules.pfsense import (
+    audit_pfsense_config_change,
+    get_or_create_pfsense_config,
+    list_recent_pfsense_sync_runs,
+    serialize_pfsense_config,
+    serialize_pfsense_sync_run,
+    sync_pfsense_module,
+    test_pfsense_connection,
+    update_pfsense_config,
+)
+from app.modules.firewalla import (
+    audit_firewalla_config_change,
+    get_or_create_firewalla_config,
+    list_recent_firewalla_sync_runs,
+    serialize_firewalla_config,
+    serialize_firewalla_sync_run,
+    sync_firewalla_module,
+    test_firewalla_connection,
+    update_firewalla_config,
+)
 from app.plugins import list_plugins
 from app.scanner.config import ScannerConfigUpdateInput, clear_inventory, read_effective_scanner_config, update_scanner_config
 
@@ -112,6 +142,42 @@ class TplinkDecoConfigUpdateRequest(BaseModel):
     fetch_portal_logs: bool = True
     request_timeout_seconds: int = 10
     verify_tls: bool = False
+
+
+class UnifiConfigUpdateRequest(BaseModel):
+    enabled: bool
+    controller_url: str = "https://192.168.1.1"
+    username: str | None = None
+    password: str | None = None
+    site_id: str = "default"
+    verify_tls: bool = False
+    request_timeout_seconds: int = 15
+    fetch_clients: bool = True
+    fetch_devices: bool = True
+
+
+class PfsenseConfigUpdateRequest(BaseModel):
+    enabled: bool
+    base_url: str = "http://192.168.1.1"
+    flavor: str = "opnsense"
+    api_key: str | None = None
+    api_secret: str | None = None
+    fauxapi_token: str | None = None
+    verify_tls: bool = False
+    request_timeout_seconds: int = 15
+    fetch_dhcp_leases: bool = True
+    fetch_arp_table: bool = True
+    fetch_interfaces: bool = True
+
+
+class FirewallaConfigUpdateRequest(BaseModel):
+    enabled: bool
+    base_url: str = "http://firewalla.lan"
+    api_token: str | None = None
+    verify_tls: bool = False
+    request_timeout_seconds: int = 15
+    fetch_devices: bool = True
+    fetch_alarms: bool = True
 
 
 def _serialize_dataset(row) -> dict:
@@ -548,6 +614,249 @@ async def run_tplink_deco_module_sync(
         action="module.tplink_deco.synced",
         user=user,
         target_type="tplink_deco_sync",
+        target_id=str(result.get("run_id")),
+        details=result,
+    )
+    await db.commit()
+    return result
+
+
+@router.get("/modules/unifi")
+async def get_unifi_module(
+    _: AdminUser,
+    db: DBSession,
+):
+    config = await get_or_create_unifi_config(db)
+    runs = await list_recent_unifi_sync_runs(db)
+    return {
+        "config": serialize_unifi_config(config),
+        "recent_runs": [serialize_unifi_sync_run(row) for row in runs],
+    }
+
+
+@router.put("/modules/unifi")
+async def write_unifi_module(
+    payload: UnifiConfigUpdateRequest,
+    user: AdminUser,
+    db: DBSession,
+):
+    config = await update_unifi_config(
+        db,
+        enabled=payload.enabled,
+        controller_url=payload.controller_url,
+        username=payload.username,
+        password=payload.password,
+        site_id=payload.site_id,
+        verify_tls=payload.verify_tls,
+        request_timeout_seconds=payload.request_timeout_seconds,
+        fetch_clients=payload.fetch_clients,
+        fetch_devices=payload.fetch_devices,
+    )
+    await audit_unifi_config_change(db, user=user, config=config)
+    await db.commit()
+    return serialize_unifi_config(config)
+
+
+@router.post("/modules/unifi/test", responses=TPLINK_MODULE_RESPONSES)
+async def test_unifi_module(
+    user: AdminUser,
+    db: DBSession,
+):
+    try:
+        result = await test_unifi_connection(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="module.unifi.tested",
+        user=user,
+        target_type="unifi_config",
+        details=result,
+    )
+    await db.commit()
+    return result
+
+
+@router.post("/modules/unifi/sync", responses=TPLINK_MODULE_RESPONSES)
+async def run_unifi_module_sync(
+    user: AdminUser,
+    db: DBSession,
+):
+    try:
+        result = await sync_unifi_module(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="module.unifi.synced",
+        user=user,
+        target_type="unifi_sync",
+        target_id=str(result.get("run_id")),
+        details=result,
+    )
+    await db.commit()
+    return result
+
+
+@router.get("/modules/pfsense")
+async def get_pfsense_module(
+    _: AdminUser,
+    db: DBSession,
+):
+    config = await get_or_create_pfsense_config(db)
+    runs = await list_recent_pfsense_sync_runs(db)
+    return {
+        "config": serialize_pfsense_config(config),
+        "recent_runs": [serialize_pfsense_sync_run(row) for row in runs],
+    }
+
+
+@router.put("/modules/pfsense")
+async def write_pfsense_module(
+    payload: PfsenseConfigUpdateRequest,
+    user: AdminUser,
+    db: DBSession,
+):
+    config = await update_pfsense_config(
+        db,
+        enabled=payload.enabled,
+        base_url=payload.base_url,
+        flavor=payload.flavor,
+        api_key=payload.api_key,
+        api_secret=payload.api_secret,
+        fauxapi_token=payload.fauxapi_token,
+        verify_tls=payload.verify_tls,
+        request_timeout_seconds=payload.request_timeout_seconds,
+        fetch_dhcp_leases=payload.fetch_dhcp_leases,
+        fetch_arp_table=payload.fetch_arp_table,
+        fetch_interfaces=payload.fetch_interfaces,
+    )
+    await audit_pfsense_config_change(db, user=user, config=config)
+    await db.commit()
+    return serialize_pfsense_config(config)
+
+
+@router.post("/modules/pfsense/test", responses=TPLINK_MODULE_RESPONSES)
+async def test_pfsense_module(
+    user: AdminUser,
+    db: DBSession,
+):
+    try:
+        result = await test_pfsense_connection(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="module.pfsense.tested",
+        user=user,
+        target_type="pfsense_config",
+        details=result,
+    )
+    await db.commit()
+    return result
+
+
+@router.post("/modules/pfsense/sync", responses=TPLINK_MODULE_RESPONSES)
+async def run_pfsense_module_sync(
+    user: AdminUser,
+    db: DBSession,
+):
+    try:
+        result = await sync_pfsense_module(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="module.pfsense.synced",
+        user=user,
+        target_type="pfsense_sync",
+        target_id=str(result.get("run_id")),
+        details=result,
+    )
+    await db.commit()
+    return result
+
+
+@router.get("/modules/firewalla")
+async def get_firewalla_module(
+    _: AdminUser,
+    db: DBSession,
+):
+    config = await get_or_create_firewalla_config(db)
+    runs = await list_recent_firewalla_sync_runs(db)
+    return {
+        "config": serialize_firewalla_config(config),
+        "recent_runs": [serialize_firewalla_sync_run(row) for row in runs],
+    }
+
+
+@router.put("/modules/firewalla")
+async def write_firewalla_module(
+    payload: FirewallaConfigUpdateRequest,
+    user: AdminUser,
+    db: DBSession,
+):
+    config = await update_firewalla_config(
+        db,
+        enabled=payload.enabled,
+        base_url=payload.base_url,
+        api_token=payload.api_token,
+        verify_tls=payload.verify_tls,
+        request_timeout_seconds=payload.request_timeout_seconds,
+        fetch_devices=payload.fetch_devices,
+        fetch_alarms=payload.fetch_alarms,
+    )
+    await audit_firewalla_config_change(db, user=user, config=config)
+    await db.commit()
+    return serialize_firewalla_config(config)
+
+
+@router.post("/modules/firewalla/test", responses=TPLINK_MODULE_RESPONSES)
+async def test_firewalla_module(
+    user: AdminUser,
+    db: DBSession,
+):
+    try:
+        result = await test_firewalla_connection(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="module.firewalla.tested",
+        user=user,
+        target_type="firewalla_config",
+        details=result,
+    )
+    await db.commit()
+    return result
+
+
+@router.post("/modules/firewalla/sync", responses=TPLINK_MODULE_RESPONSES)
+async def run_firewalla_module_sync(
+    user: AdminUser,
+    db: DBSession,
+):
+    try:
+        result = await sync_firewalla_module(db)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    await log_audit_event(
+        db,
+        action="module.firewalla.synced",
+        user=user,
+        target_type="firewalla_sync",
         target_id=str(result.get("run_id")),
         details=result,
     )

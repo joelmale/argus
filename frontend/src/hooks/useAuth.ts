@@ -3,7 +3,7 @@
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
-import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, FingerprintDataset, HomeAssistantExport, IntegrationEvent, OllamaModelsResponse, OllamaPullResponse, PluginInfo, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UserRole } from '@/types'
+import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, FirewallaConfig, FirewallaSyncRun, FingerprintDataset, HomeAssistantExport, IntegrationEvent, OllamaModelsResponse, OllamaPullResponse, PfsenseConfig, PfsenseSyncRun, PluginInfo, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UnifiConfig, UnifiSyncRun, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
 
@@ -440,6 +440,177 @@ export function useSyncTplinkDecoModule() {
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ['system', 'tplink-deco-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['assets'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useUnifiModule(enabled = true) {
+  return useQuery<{ config: UnifiConfig; recent_runs: UnifiSyncRun[] }>({
+    queryKey: ['system', 'unifi-module'],
+    queryFn: async () => {
+      const { data } = await authApi.getUnifiModule()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function useUpdateUnifiModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: Omit<UnifiConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_client_count' | 'last_device_count' | 'created_at' | 'updated_at'>) => {
+      const { data } = await authApi.updateUnifiModule(payload)
+      return data as UnifiConfig
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'unifi-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useTestUnifiModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.testUnifiModule()
+      return data as { status: string; client_count: number; device_count: number }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'unifi-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useSyncUnifiModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.syncUnifiModule()
+      return data as { status: string; client_count: number; device_count: number; ingested_assets: number; run_id: number }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'unifi-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['assets'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function usePfsenseModule(enabled = true) {
+  return useQuery<{ config: PfsenseConfig; recent_runs: PfsenseSyncRun[] }>({
+    queryKey: ['system', 'pfsense-module'],
+    queryFn: async () => {
+      const { data } = await authApi.getPfsenseModule()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function useUpdatePfsenseModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: Omit<PfsenseConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_lease_count' | 'created_at' | 'updated_at'>) => {
+      const { data } = await authApi.updatePfsenseModule(payload)
+      return data as PfsenseConfig
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'pfsense-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useTestPfsenseModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.testPfsenseModule()
+      return data as { status: string; lease_count: number; flavor: string }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'pfsense-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useSyncPfsenseModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.syncPfsenseModule()
+      return data as { status: string; lease_count: number; arp_count: number; interface_count: number; run_id: number }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'pfsense-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['assets'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useFirewallaModule(enabled = true) {
+  return useQuery<{ config: FirewallaConfig; recent_runs: FirewallaSyncRun[] }>({
+    queryKey: ['system', 'firewalla-module'],
+    queryFn: async () => {
+      const { data } = await authApi.getFirewallaModule()
+      return data
+    },
+    enabled,
+  })
+}
+
+export function useUpdateFirewallaModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async (payload: Omit<FirewallaConfig, 'id' | 'last_tested_at' | 'last_sync_at' | 'last_status' | 'last_error' | 'last_device_count' | 'created_at' | 'updated_at'>) => {
+      const { data } = await authApi.updateFirewallaModule(payload)
+      return data as FirewallaConfig
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'firewalla-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useTestFirewallaModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.testFirewallaModule()
+      return data as { status: string; device_count: number; box_name?: string | null }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'firewalla-module'] })
+      await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
+    },
+  })
+}
+
+export function useSyncFirewallaModule() {
+  const queryClient = useQueryClient()
+
+  return useMutation({
+    mutationFn: async () => {
+      const { data } = await authApi.syncFirewallaModule()
+      return data as { status: string; device_count: number; alarm_count: number; run_id: number }
+    },
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ['system', 'firewalla-module'] })
       await queryClient.invalidateQueries({ queryKey: ['assets'] })
       await queryClient.invalidateQueries({ queryKey: ['auth', 'audit-logs'] })
     },

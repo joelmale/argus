@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { ConfigBackupPolicy, ConfigBackupTarget, ScannerConfig, TplinkDecoConfig } from "@/types";
+import type { ConfigBackupPolicy, ConfigBackupTarget, FirewallaConfig, PfsenseConfig, ScannerConfig, TplinkDecoConfig, UnifiConfig } from "@/types";
 
 function getApiBaseUrl() {
   return process.env.NEXT_PUBLIC_API_URL ?? "";
@@ -84,6 +84,21 @@ export const authApi = {
     api.put("/api/v1/system/modules/tplink-deco", payload),
   testTplinkDecoModule: () => api.post("/api/v1/system/modules/tplink-deco/test"),
   syncTplinkDecoModule: () => api.post("/api/v1/system/modules/tplink-deco/sync"),
+  getUnifiModule: () => api.get("/api/v1/system/modules/unifi"),
+  updateUnifiModule: (payload: Omit<UnifiConfig, "id" | "last_tested_at" | "last_sync_at" | "last_status" | "last_error" | "last_client_count" | "last_device_count" | "created_at" | "updated_at">) =>
+    api.put("/api/v1/system/modules/unifi", payload),
+  testUnifiModule: () => api.post("/api/v1/system/modules/unifi/test"),
+  syncUnifiModule: () => api.post("/api/v1/system/modules/unifi/sync"),
+  getPfsenseModule: () => api.get("/api/v1/system/modules/pfsense"),
+  updatePfsenseModule: (payload: Omit<PfsenseConfig, "id" | "last_tested_at" | "last_sync_at" | "last_status" | "last_error" | "last_lease_count" | "created_at" | "updated_at">) =>
+    api.put("/api/v1/system/modules/pfsense", payload),
+  testPfsenseModule: () => api.post("/api/v1/system/modules/pfsense/test"),
+  syncPfsenseModule: () => api.post("/api/v1/system/modules/pfsense/sync"),
+  getFirewallaModule: () => api.get("/api/v1/system/modules/firewalla"),
+  updateFirewallaModule: (payload: Omit<FirewallaConfig, "id" | "last_tested_at" | "last_sync_at" | "last_status" | "last_error" | "last_device_count" | "created_at" | "updated_at">) =>
+    api.put("/api/v1/system/modules/firewalla", payload),
+  testFirewallaModule: () => api.post("/api/v1/system/modules/firewalla/test"),
+  syncFirewallaModule: () => api.post("/api/v1/system/modules/firewalla/sync"),
   resetInventory: (payload: { confirm: string; include_scan_history: boolean }) =>
     api.post("/api/v1/system/inventory/reset", payload),
 };
