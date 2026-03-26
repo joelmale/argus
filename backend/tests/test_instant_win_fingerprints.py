@@ -109,8 +109,7 @@ class _FakePortScannerWithHostData:
 
 
 def test_scan_sync_returns_nmap_vendor_and_enriched_os(monkeypatch):
-    fake = _FakePortScannerWithHostData()
-    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
+    monkeypatch.setattr(portscan, "_run_nmap_xml_scan", lambda targets, arguments: FIREWALLA_XML)
     host = DiscoveredHost(ip_address="192.168.100.1", discovery_method="arp")
 
     results = portscan._scan_sync([host], ScanProfile.BALANCED, None)
@@ -126,9 +125,7 @@ def test_scan_sync_returns_nmap_vendor_and_enriched_os(monkeypatch):
 
 
 def test_scan_sync_handles_missing_instant_win_fingerprint(monkeypatch):
-    fake = _FakePortScannerWithHostData()
-    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
-    monkeypatch.setattr(portscan, "_extract_mac_and_vendor", lambda host_data: ("20:6D:31:41:56:2A", "Firewalla Inc."))
+    monkeypatch.setattr(portscan, "_run_nmap_xml_scan", lambda targets, arguments: FIREWALLA_XML)
     monkeypatch.setattr(
         "app.scanner.enrichment.instant_win.fingerprint_from_nmap_host_data",
         lambda host_data: None,

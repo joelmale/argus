@@ -4,22 +4,25 @@ from app.scanner.models import DiscoveredHost, ScanProfile
 from app.scanner.stages import portscan
 
 
-class _FakePortScanner:
-    def __init__(self):
-        self.arguments = None
-        self.hosts = None
-
-    def scan(self, hosts: str, arguments: str):
-        self.hosts = hosts
-        self.arguments = arguments
-
-    def all_hosts(self):
-        return []
+EMPTY_XML = """\
+<nmaprun>
+  <host>
+    <status state="up" reason="arp-response" />
+    <address addr="192.168.100.4" addrtype="ipv4" />
+  </host>
+</nmaprun>
+"""
 
 
 def test_portscan_forces_pn_for_discovered_hosts(monkeypatch):
-    fake = _FakePortScanner()
-    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
+    captured: dict[str, str] = {}
+
+    def fake_run(targets: str, arguments: str):
+        captured["targets"] = targets
+        captured["arguments"] = arguments
+        return EMPTY_XML
+
+    monkeypatch.setattr(portscan, "_run_nmap_xml_scan", fake_run)
 
     portscan._scan_sync(
         [DiscoveredHost(ip_address="192.168.100.4", discovery_method="arp")],
@@ -27,14 +30,19 @@ def test_portscan_forces_pn_for_discovered_hosts(monkeypatch):
         None,
     )
 
-    assert fake.hosts == "192.168.100.4"
-    assert fake.arguments is not None
-    assert "-Pn" in fake.arguments.split()
+    assert captured["targets"] == "192.168.100.4"
+    assert "-Pn" in captured["arguments"].split()
 
 
 def test_portscan_does_not_duplicate_pn(monkeypatch):
-    fake = _FakePortScanner()
-    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
+    captured: dict[str, str] = {}
+
+    def fake_run(targets: str, arguments: str):
+        captured["targets"] = targets
+        captured["arguments"] = arguments
+        return EMPTY_XML
+
+    monkeypatch.setattr(portscan, "_run_nmap_xml_scan", fake_run)
 
     portscan._scan_sync(
         [DiscoveredHost(ip_address="192.168.100.4", discovery_method="arp")],
@@ -42,13 +50,18 @@ def test_portscan_does_not_duplicate_pn(monkeypatch):
         "-Pn -sV -T4",
     )
 
-    assert fake.arguments is not None
-    assert fake.arguments.split().count("-Pn") == 1
+    assert captured["arguments"].split().count("-Pn") == 1
 
 
 def test_balanced_profile_scans_well_known_ports(monkeypatch):
-    fake = _FakePortScanner()
-    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
+    captured: dict[str, str] = {}
+
+    def fake_run(targets: str, arguments: str):
+        captured["targets"] = targets
+        captured["arguments"] = arguments
+        return EMPTY_XML
+
+    monkeypatch.setattr(portscan, "_run_nmap_xml_scan", fake_run)
 
     portscan._scan_sync(
         [DiscoveredHost(ip_address="192.168.100.4", discovery_method="arp")],
@@ -56,14 +69,19 @@ def test_balanced_profile_scans_well_known_ports(monkeypatch):
         None,
     )
 
-    assert fake.arguments is not None
-    assert "-p1-1023" in fake.arguments
-    assert "--top-ports" not in fake.arguments
+    assert "-p1-1023" in captured["arguments"]
+    assert "--top-ports" not in captured["arguments"]
 
 
 def test_deep_enrichment_scans_registered_ports(monkeypatch):
-    fake = _FakePortScanner()
-    monkeypatch.setattr(portscan.nmap, "PortScanner", lambda: fake)
+    captured: dict[str, str] = {}
+
+    def fake_run(targets: str, arguments: str):
+        captured["targets"] = targets
+        captured["arguments"] = arguments
+        return EMPTY_XML
+
+    monkeypatch.setattr(portscan, "_run_nmap_xml_scan", fake_run)
 
     portscan._scan_sync(
         [DiscoveredHost(ip_address="192.168.100.4", discovery_method="arp")],
@@ -71,8 +89,7 @@ def test_deep_enrichment_scans_registered_ports(monkeypatch):
         None,
     )
 
-    assert fake.arguments is not None
-    assert "-p1-49151" in fake.arguments
-    assert "--min-rate 1000" in fake.arguments
-    assert "-A" not in fake.arguments.split()
-    assert "--script=default,safe,vuln" not in fake.arguments
+    assert "-p1-49151" in captured["arguments"]
+    assert "--min-rate 1000" in captured["arguments"]
+    assert "-A" not in captured["arguments"].split()
+    assert "--script=default,safe,vuln" not in captured["arguments"]

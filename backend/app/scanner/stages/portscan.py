@@ -17,10 +17,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import subprocess
 import time
 from typing import Optional
-
-import nmap
+from xml.etree import ElementTree as ET
 
 from app.scanner.models import DiscoveredHost, OSFingerprint, PortResult, ScanProfile, get_scan_mode_behavior
 
@@ -129,8 +129,6 @@ def _scan_sync(
     top_ports_count: int | None = None,
 ) -> list[HostScanTuple]:
     """Synchronous nmap scan — runs in thread executor."""
-    from app.scanner.enrichment.instant_win import fingerprint_from_nmap_host_data, merge_into_os_fingerprint
-
     target_str = " ".join(h.ip_address for h in hosts)
     mode_behavior = get_scan_mode_behavior(profile, top_ports_count=top_ports_count)
     base_args = custom_args or mode_behavior.nmap_args
@@ -139,19 +137,42 @@ def _scan_sync(
     log.info("Port scan [%s] %d hosts | args: %s", profile.value, len(hosts), args)
     t0 = time.monotonic()
 
-    nm = nmap.PortScanner()
     try:
-        nm.scan(hosts=target_str, arguments=args)
+        xml_output = _run_nmap_xml_scan(target_str, args)
     except Exception as exc:
         log.error("nmap scan failed: %s", exc)
         return []
 
     log.info("Port scan complete in %.1fs", time.monotonic() - t0)
 
-    results: list[HostScanTuple] = []
     host_map = {host.ip_address: host for host in hosts}
-    for ip in nm.all_hosts():
-        host_data = nm[ip]
+    return _parse_port_scan_xml(xml_output, args, host_map)
+
+
+def _run_nmap_xml_scan(target_str: str, args: str) -> str:
+    completed = subprocess.run(
+        ["nmap", *args.split(), "-oX", "-", *target_str.split()],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return completed.stdout
+
+
+def _parse_port_scan_xml(
+    xml_output: str,
+    args: str,
+    host_map: dict[str, DiscoveredHost],
+) -> list[HostScanTuple]:
+    from app.scanner.enrichment.instant_win import fingerprint_from_nmap_host_data, merge_into_os_fingerprint
+
+    results: list[HostScanTuple] = []
+    root = ET.fromstring(xml_output)
+    for host_node in root.findall("host"):
+        ip = _extract_host_address(host_node, "ipv4")
+        if not ip:
+            continue
+        host_data = _host_xml_to_dict(host_node)
         ports = _extract_ports(host_data)
         os_fp = _extract_os(host_data)
         nm_hostname = _extract_hostname(host_data)
@@ -178,6 +199,111 @@ def _scan_sync(
         results.append((ports, os_fp, ip, nm_hostname, resolved_vendor))
 
     return results
+
+
+def _extract_host_address(host_node: ET.Element, addr_type: str) -> str | None:
+    for address in host_node.findall("address"):
+        if address.get("addrtype") == addr_type and address.get("addr"):
+            return address.get("addr")
+    return None
+
+
+def _host_xml_to_dict(host_node: ET.Element) -> dict:
+    host_data: dict = {
+        "hostnames": _extract_hostname_entries(host_node),
+        "vendor": _extract_vendor_map(host_node),
+        "status": _extract_status(host_node),
+        "tcp": {},
+        "udp": {},
+    }
+    _populate_port_entries(host_node, host_data)
+    host_data["osmatch"] = _extract_osmatch_entries(host_node)
+    mac_address = _extract_host_address(host_node, "mac")
+    if mac_address:
+        host_data["addresses"] = {"mac": mac_address}
+    return host_data
+
+
+def _extract_hostname_entries(host_node: ET.Element) -> list[dict[str, str]]:
+    entries: list[dict[str, str]] = []
+    for hostname in host_node.findall("./hostnames/hostname"):
+        entries.append({"name": hostname.get("name") or "", "type": hostname.get("type") or ""})
+    return entries
+
+
+def _extract_vendor_map(host_node: ET.Element) -> dict[str, str]:
+    vendor_map: dict[str, str] = {}
+    for address in host_node.findall("address"):
+        addr = address.get("addr")
+        vendor = address.get("vendor")
+        if address.get("addrtype") == "mac" and addr and vendor:
+            vendor_map[addr] = vendor
+    return vendor_map
+
+
+def _extract_status(host_node: ET.Element) -> dict[str, str]:
+    status = host_node.find("status")
+    if status is None:
+        return {}
+    return {
+        "state": status.get("state", ""),
+        "reason": status.get("reason", ""),
+    }
+
+
+def _populate_port_entries(host_node: ET.Element, host_data: dict) -> None:
+    for dport in host_node.findall("./ports/port"):
+        proto = dport.get("protocol") or "tcp"
+        try:
+            port = int(dport.get("portid", "0"))
+        except ValueError:
+            continue
+        state_node = dport.find("state")
+        service_node = dport.find("service")
+        entry = {
+            "state": state_node.get("state", "") if state_node is not None else "",
+            "reason": state_node.get("reason", "") if state_node is not None else "",
+            "name": service_node.get("name", "") if service_node is not None else "",
+            "product": service_node.get("product", "") if service_node is not None else "",
+            "version": service_node.get("version", "") if service_node is not None else "",
+            "extrainfo": service_node.get("extrainfo", "") if service_node is not None else "",
+            "conf": service_node.get("conf", "") if service_node is not None else "",
+            "cpe": [node.text for node in dport.findall("./service/cpe") if node.text],
+        }
+        scripts = {
+            script.get("id"): script.get("output")
+            for script in dport.findall("script")
+            if script.get("id") and script.get("output")
+        }
+        if scripts:
+            entry["script"] = scripts
+        host_data.setdefault(proto, {})[port] = entry
+
+
+def _extract_osmatch_entries(host_node: ET.Element) -> list[dict]:
+    osmatch_entries: list[dict] = []
+    for dosmatch in host_node.findall("./os/osmatch"):
+        osclass_entries: list[dict] = []
+        for dosclass in dosmatch.findall("osclass"):
+            osclass_entries.append(
+                {
+                    "type": dosclass.get("type"),
+                    "vendor": dosclass.get("vendor"),
+                    "osfamily": dosclass.get("osfamily"),
+                    "osgen": dosclass.get("osgen"),
+                    "accuracy": dosclass.get("accuracy"),
+                    "cpe": [node.text for node in dosclass.findall("cpe") if node.text],
+                }
+            )
+        osmatch_entries.append(
+            {
+                "name": dosmatch.get("name"),
+                "accuracy": dosmatch.get("accuracy"),
+                "line": dosmatch.get("line"),
+                "osclass": osclass_entries,
+            }
+        )
+    return osmatch_entries
 
 
 def _extract_ports(host_data: dict) -> list[PortResult]:
