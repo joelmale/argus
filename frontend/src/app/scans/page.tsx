@@ -75,11 +75,11 @@ export default function ScansPage() {
   const inputBorderClass = error ? 'border-red-400' : 'border-gray-200 dark:border-zinc-700'
   const queuedScanLabel = runningScans.length === 1 ? 'scan' : 'scans'
   const queuedScans = scans.filter((scan) => scan.status === 'pending')
-  const followUpButtonClass = isPending || activeScan
+  const followUpButtonClass = isPending
     ? 'bg-zinc-200 text-zinc-400 dark:bg-zinc-800'
     : 'bg-red-500 text-white hover:bg-red-600'
 
-  const buttonStateClass = isViewer || isPending || !!activeScan
+  const buttonStateClass = isViewer || isPending
     ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
     : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-md hover:shadow-sky-500/20'
 
@@ -99,6 +99,9 @@ export default function ScansPage() {
   function renderSubmitLabel() {
     if (isPending) {
       return <><Loader2 className="w-4 h-4 animate-spin" /> Queuing…</>
+    }
+    if (activeScan) {
+      return <><ScanLine className="w-4 h-4" /> Queue Scan</>
     }
     return <><ScanLine className="w-4 h-4" /> Start Scan</>
   }
@@ -267,7 +270,7 @@ export default function ScansPage() {
                   <div className="flex items-center gap-3">
                     <button
                       type="submit"
-                      disabled={isViewer || isPending || !!activeScan}
+                      disabled={isViewer || isPending}
                       className={cn(
                         'flex items-center gap-2 py-2.5 px-5 rounded-lg text-sm font-medium',
                         'transition-all duration-150',
@@ -318,7 +321,7 @@ export default function ScansPage() {
               </div>
               <button
                 type="button"
-                disabled={isPending || !!activeScan}
+                disabled={isPending}
                 onClick={() => {
                   setError(null)
                   setLastResult(null)

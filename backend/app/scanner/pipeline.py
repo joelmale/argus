@@ -26,6 +26,7 @@ So for a /24 with 50 live hosts and CONCURRENT_HOSTS=10:
 from __future__ import annotations
 
 import asyncio
+import ipaddress
 import logging
 import time
 from dataclasses import dataclass
@@ -824,6 +825,7 @@ async def _persist_results(
     mark_missing_offline: bool = True,
     allow_discovery_only: bool = False,
     stage: str = "investigation",
+    targets: str | None = None,
 ) -> None:
     """Persist all scan results to the database."""
     from app.db.upsert import mark_offline, upsert_scan_result
@@ -835,7 +837,14 @@ async def _persist_results(
     # Find assets that were online before but not in this scan
     from sqlalchemy import select
     from app.db.models import Asset
-    offline_ips = await _get_offline_ips(db_session, select, Asset, scanned_ips, mark_missing_offline)
+    offline_ips = await _get_offline_ips(
+        db_session,
+        select,
+        Asset,
+        scanned_ips,
+        mark_missing_offline,
+        targets=targets,
+    )
 
     for result in results:
         await _persist_result(
@@ -889,6 +898,7 @@ async def _call_persist_results(
             mark_missing_offline=mark_missing_offline,
             allow_discovery_only=allow_discovery_only,
             stage=stage,
+            targets=summary.targets,
         )
     except TypeError as exc:
         if "unexpected keyword argument" not in str(exc):
@@ -896,12 +906,44 @@ async def _call_persist_results(
         await persist_fn(db_session, results, scanned_ips, summary, broadcast_fn, job_id)
 
 
-async def _get_offline_ips(db_session, select_fn, asset_model, scanned_ips: set[str], mark_missing_offline: bool) -> list[str]:
+def _ip_in_target_scope(ip_address: str, targets: str) -> bool:
+    try:
+        ip_obj = ipaddress.ip_address(ip_address)
+    except ValueError:
+        return False
+
+    for token in targets.replace(",", " ").split():
+        candidate = token.strip()
+        if not candidate:
+            continue
+        try:
+            if "/" in candidate:
+                network = ipaddress.ip_network(candidate, strict=False)
+                if ip_obj in network:
+                    return True
+            elif ip_obj == ipaddress.ip_address(candidate):
+                return True
+        except ValueError:
+            continue
+    return False
+
+
+async def _get_offline_ips(
+    db_session,
+    select_fn,
+    asset_model,
+    scanned_ips: set[str],
+    mark_missing_offline: bool,
+    targets: str | None = None,
+) -> list[str]:
     if not mark_missing_offline:
         return []
     stmt = select_fn(asset_model.ip_address).where(asset_model.status == "online")
     previously_online = {row[0] for row in (await db_session.execute(stmt)).all()}
-    return list(previously_online - scanned_ips)
+    offline_candidates = previously_online - scanned_ips
+    if not targets:
+        return list(offline_candidates)
+    return [ip for ip in offline_candidates if _ip_in_target_scope(ip, targets)]
 
 
 async def _persist_result(

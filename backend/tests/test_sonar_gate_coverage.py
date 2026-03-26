@@ -378,6 +378,22 @@ async def test_get_offline_ips_respects_mark_missing_offline_flag():
     assert skipped == []
 
 
+@pytest.mark.asyncio
+async def test_get_offline_ips_limits_results_to_scan_target_scope():
+    db = _FakeOfflineDb([("10.0.0.10",), ("10.0.1.20",), ("10.0.0.30",)])
+
+    offline = await _get_offline_ips(
+        db,
+        lambda *_args, **_kwargs: object(),
+        SimpleNamespace(ip_address="ip_address", status="status"),
+        {"10.0.0.10"},
+        True,
+        targets="10.0.0.10",
+    )
+
+    assert offline == []
+
+
 def test_merge_discovery_results_ignores_failed_method_and_prefers_mac_addresses():
     arp_results = [
         DiscoveredHost(

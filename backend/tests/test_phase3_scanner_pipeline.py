@@ -209,6 +209,7 @@ async def test_persist_results_skips_weak_hosts_and_marks_offline(monkeypatch):
     monkeypatch.setattr("app.alerting.notify_new_device_if_enabled", fake_notify_new_device_if_enabled)
     monkeypatch.setattr("app.alerting.notify_devices_offline_if_enabled", fake_notify_devices_offline_if_enabled)
     monkeypatch.setattr("app.scanner.topology.infer_topology_links_from_snmp", fake_infer_topology_links_from_snmp)
+    monkeypatch.setattr("app.topology.segments.ensure_segment_for_asset", lambda *_args, **_kwargs: None)
 
     from app.scanner.models import ScanSummary
 
@@ -220,6 +221,7 @@ async def test_persist_results_skips_weak_hosts_and_marks_offline(monkeypatch):
         summary=summary,
         broadcast_fn=None,
         job_id="job-2",
+        targets="192.168.96.0/24",
     )
 
     assert upserted == ["192.168.96.21"]
@@ -228,6 +230,75 @@ async def test_persist_results_skips_weak_hosts_and_marks_offline(monkeypatch):
     assert topology_inference == ["192.168.96.21"]
     assert notifications[0][0]["ip"] == "192.168.96.21"
     assert notifications[1][0]["ip"] == "192.168.96.30"
+
+
+@pytest.mark.asyncio
+async def test_persist_results_does_not_mark_assets_outside_target_scope_offline(monkeypatch):
+    notifications: list[list[dict]] = []
+
+    strong = SimpleNamespace(
+        host=DiscoveredHost(ip_address="192.168.96.21"),
+        probes=[ProbeResult(probe_type="snmp", success=True, data={"neighbors": []})],
+        ai_analysis=AIAnalysis(device_class=DeviceClass.SERVER, confidence=0.9),
+    )
+
+    class FakeAsset:
+        def __init__(self, ip_address: str):
+            self.ip_address = ip_address
+            self.hostname = None
+            self.last_seen = None
+            self.effective_device_type = "server"
+
+    class FakeResult:
+        def all(self):
+            return [("192.168.96.21",), ("192.168.96.30",), ("192.168.97.40",)]
+
+    class FakeDb:
+        async def execute(self, _stmt):
+            return FakeResult()
+
+        async def commit(self):
+            return None
+
+    async def fake_upsert_scan_result(_db, result):
+        return FakeAsset(result.host.ip_address), "updated"
+
+    async def fake_mark_offline(_db, offline_ips):
+        return len(offline_ips), [FakeAsset(ip) for ip in offline_ips]
+
+    async def fake_notify_new_device_if_enabled(_db, payload):
+        notifications.append([payload])
+
+    async def fake_notify_devices_offline_if_enabled(_db, payload):
+        notifications.append(payload)
+
+    monkeypatch.setattr("app.scanner.config.has_meaningful_scan_evidence", lambda result: True)
+    monkeypatch.setattr("app.db.upsert.upsert_scan_result", fake_upsert_scan_result)
+    monkeypatch.setattr("app.db.upsert.mark_offline", fake_mark_offline)
+    monkeypatch.setattr("app.alerting.notify_new_device_if_enabled", fake_notify_new_device_if_enabled)
+    monkeypatch.setattr("app.alerting.notify_devices_offline_if_enabled", fake_notify_devices_offline_if_enabled)
+    async def fake_infer_topology_links_from_snmp(*_args, **_kwargs):
+        return None
+
+    monkeypatch.setattr("app.scanner.topology.infer_topology_links_from_snmp", fake_infer_topology_links_from_snmp)
+    monkeypatch.setattr("app.topology.segments.ensure_segment_for_asset", lambda *_args, **_kwargs: None)
+
+    from app.scanner.models import ScanSummary
+
+    summary = ScanSummary(job_id="job-3", targets="192.168.96.21", profile=ScanProfile.BALANCED)
+    await _persist_results(
+        FakeDb(),
+        results=[strong],
+        scanned_ips={"192.168.96.21"},
+        summary=summary,
+        broadcast_fn=None,
+        job_id="job-3",
+        targets="192.168.96.21",
+    )
+
+    assert summary.offline_assets == 0
+    assert len(notifications) == 1
+    assert notifications[0][0]["ip"] == "192.168.96.21"
 
 
 @pytest.mark.asyncio

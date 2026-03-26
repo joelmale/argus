@@ -4,7 +4,7 @@ import { useId, useState, type ComponentProps, type ReactNode } from 'react'
 import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit, Download, ChevronDown } from 'lucide-react'
+import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit, Download, ChevronDown, HelpCircle } from 'lucide-react'
 import { assetsApi } from '@/lib/api'
 import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFirewallaModule, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, useOllamaModels, usePfsenseModule, usePlugins, usePullOllamaModel, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncFirewallaModule, useSyncPfsenseModule, useSyncTplinkDecoModule, useSyncUnifiModule, useTestAiConfiguration, useTestFirewallaModule, useTestPfsenseModule, useTestTplinkDecoModule, useTestUnifiModule, useTplinkDecoModule, useUnifiModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateFirewallaModule, useUpdatePfsenseModule, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUnifiModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
 import type { FirewallaConfig, FirewallaSyncRun, FingerprintDataset, PfsenseConfig, PfsenseSyncRun, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UnifiConfig, UnifiSyncRun } from '@/types'
@@ -207,13 +207,26 @@ function inputClassName(className?: string): string {
   ].join(' ').trim()
 }
 
+function HelpTooltip({ text }: Readonly<{ text: string }>) {
+  return (
+    <span className="relative group inline-flex items-center ml-1">
+      <HelpCircle className="w-3.5 h-3.5 text-zinc-400 cursor-help" />
+      <span className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 rounded-lg bg-zinc-900 dark:bg-zinc-700 text-white text-xs px-3 py-2 opacity-0 group-hover:opacity-100 transition-opacity z-50 shadow-lg leading-relaxed whitespace-normal">
+        {text}
+      </span>
+    </span>
+  )
+}
+
 function CheckboxField({
   label,
+  help,
   checked,
   onChange,
   disabled,
 }: Readonly<{
   label: string
+  help?: string
   checked: boolean
   onChange: ComponentProps<'input'>['onChange']
   disabled?: boolean
@@ -221,20 +234,21 @@ function CheckboxField({
   return (
     <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
       <input type="checkbox" checked={checked} onChange={onChange} disabled={disabled} />
-      <span>{label}</span>
+      <span className="flex items-center">{label}{help && <HelpTooltip text={help} />}</span>
     </label>
   )
 }
 
 function TextInputField({
   label,
+  help,
   className,
   ...props
-}: Readonly<{ label: string; className?: string } & Omit<ComponentProps<'input'>, 'className'>>) {
+}: Readonly<{ label: string; help?: string; className?: string } & Omit<ComponentProps<'input'>, 'className'>>) {
   const id = useId()
   return (
     <div className="space-y-1.5">
-      <label htmlFor={id} className="block text-xs font-medium text-zinc-500">{label}</label>
+      <label htmlFor={id} className="flex items-center text-xs font-medium text-zinc-500">{label}{help && <HelpTooltip text={help} />}</label>
       <input id={id} className={inputClassName(className)} {...props} />
     </div>
   )
@@ -242,14 +256,15 @@ function TextInputField({
 
 function SelectField({
   label,
+  help,
   className,
   children,
   ...props
-}: Readonly<{ label: string; className?: string; children: ReactNode } & Omit<ComponentProps<'select'>, 'className'>>) {
+}: Readonly<{ label: string; help?: string; className?: string; children: ReactNode } & Omit<ComponentProps<'select'>, 'className'>>) {
   const id = useId()
   return (
     <div className="space-y-1.5">
-      <label htmlFor={id} className="block text-xs font-medium text-zinc-500">{label}</label>
+      <label htmlFor={id} className="flex items-center text-xs font-medium text-zinc-500">{label}{help && <HelpTooltip text={help} />}</label>
       <select id={id} className={inputClassName(className)} {...props}>
         {children}
       </select>
@@ -259,14 +274,83 @@ function SelectField({
 
 function TextareaField({
   label,
+  help,
   className,
   ...props
-}: Readonly<{ label: string; className?: string } & Omit<ComponentProps<'textarea'>, 'className'>>) {
+}: Readonly<{ label: string; help?: string; className?: string } & Omit<ComponentProps<'textarea'>, 'className'>>) {
   const id = useId()
   return (
     <div className="space-y-1.5">
-      <label htmlFor={id} className="block text-xs font-medium text-zinc-500">{label}</label>
+      <label htmlFor={id} className="flex items-center text-xs font-medium text-zinc-500">{label}{help && <HelpTooltip text={help} />}</label>
       <textarea id={id} className={inputClassName(className)} {...props} />
+    </div>
+  )
+}
+
+const CURATED_OLLAMA_MODELS: ReadonlyArray<{ name: string; size: string; desc: string }> = [
+  { name: 'qwen2.5:7b',  size: '4.7 GB', desc: 'Recommended · strong tool use · 8 GB VRAM' },
+  { name: 'qwen2.5:14b', size: '9.0 GB', desc: 'Higher accuracy · 16 GB VRAM' },
+  { name: 'qwen2.5:32b', size: '19 GB',  desc: 'Excellent reasoning · 24+ GB VRAM' },
+  { name: 'llama3.1:8b', size: '4.9 GB', desc: 'Good general tool use · 8 GB VRAM' },
+  { name: 'llama3.2:3b', size: '2.0 GB', desc: 'Lightweight, fingerprint-only · 4 GB VRAM' },
+  { name: 'mistral:7b',  size: '4.1 GB', desc: 'Solid JSON output · 8 GB VRAM' },
+  { name: 'gemma2:9b',   size: '5.5 GB', desc: 'Strong reasoning · 10 GB VRAM' },
+]
+
+function OllamaModelSelect({
+  label,
+  value,
+  installedModels,
+  onModelChange,
+  onQueuePull,
+  help,
+}: Readonly<{
+  label: string
+  value: string
+  installedModels: Array<{ name: string }>
+  onModelChange: (model: string) => void
+  onQueuePull: (model: string) => void
+  help?: string
+}>) {
+  const id = useId()
+  const installedNames = new Set(installedModels.map(m => m.name))
+  const notInstalled = CURATED_OLLAMA_MODELS.filter(m => !installedNames.has(m.name))
+  const selectedNotInstalled = value.length > 0 && !installedNames.has(value)
+
+  return (
+    <div className="space-y-1.5">
+      <label htmlFor={id} className="flex items-center text-xs font-medium text-zinc-500">
+        {label}{help && <HelpTooltip text={help} />}
+      </label>
+      <select
+        id={id}
+        className={inputClassName()}
+        value={value}
+        onChange={(e) => {
+          const v = e.target.value
+          onModelChange(v)
+          if (!installedNames.has(v)) onQueuePull(v)
+        }}
+      >
+        {installedModels.length > 0 && (
+          <optgroup label="Installed">
+            {installedModels.map(m => (
+              <option key={m.name} value={m.name}>{m.name}</option>
+            ))}
+          </optgroup>
+        )}
+        <optgroup label={installedModels.length > 0 ? 'Recommended — not yet installed' : 'Recommended models'}>
+          {notInstalled.map(m => (
+            <option key={m.name} value={m.name}>{m.name} · {m.size} · {m.desc}</option>
+          ))}
+        </optgroup>
+        {value.length > 0 && !installedNames.has(value) && !CURATED_OLLAMA_MODELS.some(m => m.name === value) && (
+          <option value={value}>{value} (custom)</option>
+        )}
+      </select>
+      {selectedNotInstalled && (
+        <p className="text-xs text-amber-600 dark:text-amber-400">Not yet installed — use &ldquo;Pull new Ollama model&rdquo; below to download it first.</p>
+      )}
     </div>
   )
 }
@@ -489,48 +573,120 @@ function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSa
       </CardHeader>
       <CardBody className="space-y-4">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <SelectField label="Analyst provider" value={aiBackend} onChange={(event) => setAiBackend(event.target.value)}>
+          <SelectField
+            label="Analyst provider"
+            value={aiBackend}
+            onChange={(event) => setAiBackend(event.target.value)}
+            help="The AI backend that investigates each host after a scan. Uses a ReAct tool-calling loop to probe services and classify devices."
+          >
             <option value="none">None / rule-based fallback</option>
-            <option value="ollama">Ollama</option>
-            <option value="openai">OpenAI</option>
+            <option value="ollama">Ollama (local)</option>
+            <option value="openai">OpenAI / compatible API</option>
             <option value="anthropic">Anthropic</option>
           </SelectField>
-          {analystUsesOllama && hasOllamaModels ? (
-            <SelectField label="Analyst model" value={aiModel} onChange={(event) => setAiModel(event.target.value)}>
-              {ollamaModels.map((model) => (
-                <option key={`analyst-${model.name}`} value={model.name}>{model.name}</option>
-              ))}
-            </SelectField>
+          {analystUsesOllama ? (
+            <OllamaModelSelect
+              label="Analyst model"
+              value={aiModel}
+              installedModels={ollamaModels}
+              onModelChange={setAiModel}
+              onQueuePull={setOllamaPullModel}
+              help="Model used by the analyst agent. Must support tool use / function calling. qwen2.5:7b is the recommended starting point."
+            />
           ) : aiBackend !== 'none' ? (
-            <TextInputField label="Analyst model" value={aiModel} onChange={(event) => setAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+            <TextInputField
+              label="Analyst model"
+              value={aiModel}
+              onChange={(event) => setAiModel(event.target.value)}
+              placeholder="gpt-4o-mini"
+              help="Model name for the selected provider. For OpenAI: gpt-4o-mini, gpt-4o. For Anthropic: claude-haiku-4-5-20251001."
+            />
           ) : (
             <div />
           )}
-          <CheckboxField label="Enable fingerprint synthesis workflow" checked={fingerprintAiEnabled} onChange={(event) => setFingerprintAiEnabled(event.target.checked)} />
+          <CheckboxField
+            label="Enable fingerprint synthesis"
+            checked={fingerprintAiEnabled}
+            onChange={(event) => setFingerprintAiEnabled(event.target.checked)}
+            help="Runs a second, lighter AI pass that reads scan evidence and produces a structured device classification (type, vendor, OS). Independent from the analyst agent."
+          />
           {fingerprintAiEnabled ? (
-            <SelectField label="Fingerprint provider" value={fingerprintAiBackend} onChange={(event) => setFingerprintAiBackend(event.target.value)}>
-              <option value="ollama">Ollama</option>
-              <option value="openai">OpenAI</option>
+            <SelectField
+              label="Fingerprint provider"
+              value={fingerprintAiBackend}
+              onChange={(event) => setFingerprintAiBackend(event.target.value)}
+              help="AI backend used for fingerprint synthesis. Can be different from the analyst — a smaller/faster model works well here."
+            >
+              <option value="ollama">Ollama (local)</option>
+              <option value="openai">OpenAI / compatible API</option>
               <option value="anthropic">Anthropic</option>
             </SelectField>
           ) : (
             <div />
           )}
-          {fingerprintAiEnabled && fingerprintAiBackend === 'ollama' && hasOllamaModels ? (
-            <SelectField label="Fingerprint model" value={fingerprintAiModel} onChange={(event) => setFingerprintAiModel(event.target.value)}>
-              {ollamaModels.map((model) => (
-                <option key={`fingerprint-${model.name}`} value={model.name}>{model.name}</option>
-              ))}
-            </SelectField>
+          {fingerprintAiEnabled && fingerprintAiBackend === 'ollama' ? (
+            <OllamaModelSelect
+              label="Fingerprint model"
+              value={fingerprintAiModel}
+              installedModels={ollamaModels}
+              onModelChange={setFingerprintAiModel}
+              onQueuePull={setOllamaPullModel}
+              help="Model used for device classification. Smaller models like llama3.2:3b work well since it only needs to output structured JSON."
+            />
           ) : fingerprintAiEnabled ? (
-            <TextInputField label="Fingerprint model" value={fingerprintAiModel} onChange={(event) => setFingerprintAiModel(event.target.value)} placeholder="qwen2.5:7b" />
+            <TextInputField
+              label="Fingerprint model"
+              value={fingerprintAiModel}
+              onChange={(event) => setFingerprintAiModel(event.target.value)}
+              placeholder="gpt-4o-mini"
+              help="Model name for fingerprint synthesis. Any model that reliably outputs JSON works — it doesn't need tool use support."
+            />
           ) : (
             <div />
           )}
-          <TextInputField label="Fingerprint AI minimum confidence" value={fingerprintAiMinConfidence} type="number" min={0} max={1} step={0.05} onChange={(event) => setFingerprintAiMinConfidence(Number(event.target.value) || 0.75)} placeholder="0.75" />
-          <CheckboxField label="Enable internet lookup for unresolved assets" checked={internetLookupEnabled} onChange={(event) => setInternetLookupEnabled(event.target.checked)} />
-          <TextInputField label="Lookup budget" value={internetLookupBudget} type="number" min={1} max={10} onChange={(event) => setInternetLookupBudget(Number(event.target.value) || 3)} placeholder="3" />
-          <TextInputField label="Lookup timeout seconds" value={internetLookupTimeoutSeconds} type="number" min={1} max={30} onChange={(event) => setInternetLookupTimeoutSeconds(Number(event.target.value) || 5)} placeholder="5" />
+          {fingerprintAiEnabled && (
+            <TextInputField
+              label="Fingerprint AI minimum confidence"
+              value={fingerprintAiMinConfidence}
+              type="number"
+              min={0}
+              max={1}
+              step={0.05}
+              onChange={(event) => setFingerprintAiMinConfidence(Number(event.target.value) || 0.75)}
+              placeholder="0.75"
+              help="Score threshold from 0 to 1. AI classifications below this confidence level are discarded and the rule-based result is kept instead. 0.75 means the AI must be at least 75% confident."
+            />
+          )}
+          <CheckboxField
+            label="Enable internet lookup for unresolved assets"
+            checked={internetLookupEnabled}
+            onChange={(event) => setInternetLookupEnabled(event.target.checked)}
+            help="Allows the analyst to fetch public vendor documentation pages to help identify unknown devices. Only fetches from the allowed domains list below."
+          />
+          {internetLookupEnabled && (
+            <>
+              <TextInputField
+                label="Lookup budget"
+                value={internetLookupBudget}
+                type="number"
+                min={1}
+                max={10}
+                onChange={(event) => setInternetLookupBudget(Number(event.target.value) || 3)}
+                placeholder="3"
+                help="Maximum number of web requests the analyst can make per host. Higher values = more thorough identification but slower scans. 3 is a good default."
+              />
+              <TextInputField
+                label="Lookup timeout (seconds)"
+                value={internetLookupTimeoutSeconds}
+                type="number"
+                min={1}
+                max={30}
+                onChange={(event) => setInternetLookupTimeoutSeconds(Number(event.target.value) || 5)}
+                placeholder="5"
+                help="How long to wait for each individual internet lookup request before giving up. Increase if you have a slow connection."
+              />
+            </>
+          )}
         </div>
         {showOllamaSection && (
           <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-3">
@@ -585,12 +741,14 @@ function AiAgentCard({ scannerConfig, isUpdatingScannerConfig, isTestingAi, onSa
           onChange={(event) => setFingerprintAiPromptSuffix(event.target.value)}
           rows={3}
           placeholder="Optional extra instructions for fingerprint synthesis"
+          help="Custom instructions appended to every fingerprint synthesis request. Examples: 'All devices are on a Proxmox cluster' or 'Ignore MAC OUI vendor data'. Leave blank to use the default prompt."
         />
         <TextInputField
           label="Allowed internet lookup domains"
           value={internetLookupAllowedDomains}
           onChange={(event) => setInternetLookupAllowedDomains(event.target.value)}
           placeholder="Allowed domains, comma separated"
+          help="Comma-separated whitelist of domains the analyst may fetch during internet lookup. The AI cannot browse outside this list. Example: docs.tp-link.com,ui.com,synology.com"
         />
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1 text-xs text-zinc-500">
           <p>Provider routing is now persisted in Argus rather than requiring only env vars.</p>

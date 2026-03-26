@@ -19,14 +19,14 @@ export function QuickScan() {
   const { mutate: trigger, isPending } = useTriggerScan()
   const { activeScan } = useAppStore()
   const stageText = activeScan?.stage ? `Stage: ${formatScanStage(activeScan.stage)}` : 'Scanning…'
-  const submitButtonClass = isPending || activeScan
+  const submitButtonClass = isPending
     ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
     : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-sky-500/25'
   let submitLabel = 'Start Scan'
   if (isPending) {
     submitLabel = 'Queuing…'
   } else if (activeScan) {
-    submitLabel = 'Scan in progress…'
+    submitLabel = 'Queue Scan'
   }
 
   const targetInputId = 'quick-scan-target'
@@ -93,7 +93,7 @@ export function QuickScan() {
 
           <button
             type="submit"
-            disabled={isPending || !!activeScan}
+            disabled={isPending}
             className={cn(
               'w-full flex items-center justify-center gap-2 py-2.5 px-4 rounded-lg text-sm font-medium',
               'transition-all duration-150',
