@@ -4,12 +4,46 @@ on:
   pull_request:
     branches: [main]
 
+concurrency:
+  group: pr-checks-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
 jobs:
+  changes:
+    name: Detect changed areas
+    runs-on: ubuntu-latest
+    outputs:
+      backend: ${{ steps.filter.outputs.backend }}
+      frontend: ${{ steps.filter.outputs.frontend }}
+      docs: ${{ steps.filter.outputs.docs }}
+      shared: ${{ steps.filter.outputs.shared }}
+    steps:
+      - uses: actions/checkout@v6
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            backend:
+              - 'backend/**'
+              - 'scanner/**'
+            frontend:
+              - 'frontend/**'
+            docs:
+              - 'website/**'
+            shared:
+              - '.github/workflows/**'
+              - 'package.json'
+              - 'docker-compose.yml'
+              - 'docker-compose.dev.yml'
+              - 'scripts/**'
+
   backend-quality:
     name: Backend quality
+    needs: changes
+    if: needs.changes.outputs.backend == 'true' || needs.changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -62,9 +96,12 @@ jobs:
         with:
           name: backend-coverage-xml
           path: backend/coverage.xml
+          retention-days: 5
 
   frontend-quality:
     name: Frontend quality
+    needs: changes
+    if: needs.changes.outputs.frontend == 'true' || needs.changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -84,6 +121,8 @@ jobs:
 
   docs-quality:
     name: Docs build
+    needs: changes
+    if: needs.changes.outputs.docs == 'true' || needs.changes.outputs.shared == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
