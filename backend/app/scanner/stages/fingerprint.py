@@ -38,7 +38,14 @@ PORT_SIGNATURES: list[tuple[int | None, str | None, DeviceClass, float, str]] = 
     (8080,   "ipp",             DeviceClass.PRINTER,        0.85, "IPP on alt port"),
     (554,    None,              DeviceClass.IP_CAMERA,      0.85, "RTSP video stream"),
     (8554,   "rtsp",            DeviceClass.IP_CAMERA,      0.85, "RTSP on alt port"),
+    (37777,  None,              DeviceClass.IP_CAMERA,      0.90, "Dahua service port"),
+    (37778,  None,              DeviceClass.IP_CAMERA,      0.86, "Dahua service port"),
     (1935,   None,              DeviceClass.SMART_TV,       0.60, "RTMP streaming"),
+    (7000,   None,              DeviceClass.SMART_TV,       0.78, "AirPlay receiver"),
+    (7100,   None,              DeviceClass.SMART_TV,       0.75, "AirPlay mirroring"),
+    (8008,   None,              DeviceClass.SMART_TV,       0.84, "Chromecast HTTP service"),
+    (8009,   None,              DeviceClass.SMART_TV,       0.88, "Chromecast Cast service"),
+    (8060,   None,              DeviceClass.SMART_TV,       0.90, "Roku ECP service"),
     (3478,   None,              DeviceClass.GAME_CONSOLE,   0.64, "Console/STUN service"),
     (3479,   None,              DeviceClass.GAME_CONSOLE,   0.64, "Console/STUN service"),
     (3480,   None,              DeviceClass.GAME_CONSOLE,   0.64, "Console/STUN service"),
@@ -49,7 +56,9 @@ PORT_SIGNATURES: list[tuple[int | None, str | None, DeviceClass, float, str]] = 
     (179,    "bgp",             DeviceClass.ROUTER,         0.95, "BGP routing protocol"),
     (520,    "rip",             DeviceClass.ROUTER,         0.90, "RIP routing protocol"),
     (5060,   "sip",             DeviceClass.VOIP,           0.90, "SIP VoIP"),
+    (5061,   "sip",             DeviceClass.VOIP,           0.92, "SIP TLS VoIP"),
     (1720,   "h323",            DeviceClass.VOIP,           0.90, "H.323 VoIP"),
+    (2000,   "cisco-sccp",      DeviceClass.VOIP,           0.90, "Cisco SCCP VoIP"),
     (445,    "smb",             DeviceClass.SERVER,         0.55, "SMB file sharing"),
     (3389,   "rdp",             DeviceClass.WORKSTATION,    0.75, "Remote Desktop"),
     (5985,   "winrm",           DeviceClass.SERVER,         0.70, "WinRM"),
@@ -182,6 +191,14 @@ def _base_port_pattern_hints(port_set: set[int]) -> list[DeviceHint]:
         hints.append(DeviceHint(DeviceClass.ROUTER, 0.80, "Router port pattern (SSH+HTTP+SNMP/BGP)"))
     if port_set & {80, 443} and port_set & {22, 8080, 8443} and 161 in port_set:
         hints.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.78, "Managed AP pattern (web+ssh+snmp)"))
+    if port_set & {9100, 515, 631} and port_set & {80, 443, 8080, 8443}:
+        hints.append(DeviceHint(DeviceClass.PRINTER, 0.88, "Printer port pattern (print+web admin)"))
+    if port_set & {554, 8554, 37777, 37778} and port_set & {80, 443, 8000}:
+        hints.append(DeviceHint(DeviceClass.IP_CAMERA, 0.88, "Camera/NVR port pattern"))
+    if port_set & {7000, 7100, 8008, 8009, 8060}:
+        hints.append(DeviceHint(DeviceClass.SMART_TV, 0.82, "Streaming device port pattern"))
+    if port_set & {5060, 5061, 1720, 2000} and port_set & {80, 443}:
+        hints.append(DeviceHint(DeviceClass.VOIP, 0.84, "VoIP endpoint pattern"))
     if 445 in port_set and port_set & {2049, 548, 873}:
         hints.append(DeviceHint(DeviceClass.NAS, 0.80, "NAS port pattern (SMB+NFS/AFP/rsync)"))
     if 22 in port_set and not port_set & {161, 179, 520} and not port_set & {9100, 554}:
@@ -199,6 +216,12 @@ def _well_known_service_hints(port_set: set[int]) -> list[DeviceHint]:
         (32400, DeviceClass.NAS, 0.82, "Media/NAS service pattern"),
         (8096, DeviceClass.NAS, 0.82, "Media/NAS service pattern"),
         (8123, DeviceClass.IOT_DEVICE, 0.85, "Home Assistant service"),
+        (8060, DeviceClass.SMART_TV, 0.92, "Roku service"),
+        (8009, DeviceClass.SMART_TV, 0.90, "Chromecast Cast service"),
+        (8008, DeviceClass.SMART_TV, 0.86, "Chromecast service"),
+        (7000, DeviceClass.SMART_TV, 0.80, "AirPlay service"),
+        (7100, DeviceClass.SMART_TV, 0.78, "AirPlay mirroring service"),
+        (37777, DeviceClass.IP_CAMERA, 0.92, "Dahua camera service"),
     )
     return [
         DeviceHint(device_class, confidence, reason)
@@ -229,8 +252,20 @@ def _collect_hostname_hints(host_name: str, host: DiscoveredHost) -> list[Device
         candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.97, f"Hostname hint: {host.nmap_hostname}"))
     if any(token in host_name for token in ("nas", "truenas", "synology")):
         candidates.append(DeviceHint(DeviceClass.NAS, 0.75, f"Hostname hint: {host.nmap_hostname}"))
+    if any(token in host_name for token in ("printer", "laserjet", "officejet", "deskjet", "ecotank", "mfc-", "hl-", "xerox", "canon", "epson")):
+        candidates.append(DeviceHint(DeviceClass.PRINTER, 0.84, f"Hostname hint: {host.nmap_hostname}"))
+    if any(token in host_name for token in ("camera", "cam-", "cam_", "nvr", "dvr", "doorbell")):
+        candidates.append(DeviceHint(DeviceClass.IP_CAMERA, 0.78, f"Hostname hint: {host.nmap_hostname}"))
+    if any(token in host_name for token in ("roku", "chromecast", "bravia", "appletv", "firetv", "shield", "tv-")):
+        candidates.append(DeviceHint(DeviceClass.SMART_TV, 0.82, f"Hostname hint: {host.nmap_hostname}"))
+    if any(token in host_name for token in ("yealink", "polycom", "grandstream", "fanvil", "deskphone", "voip")):
+        candidates.append(DeviceHint(DeviceClass.VOIP, 0.82, f"Hostname hint: {host.nmap_hostname}"))
     if any(token in host_name for token in ("ps5", "playstation", "xbox", "switch")):
         candidates.append(DeviceHint(DeviceClass.GAME_CONSOLE, 0.86, f"Hostname hint: {host.nmap_hostname}"))
+    if any(token in host_name for token in ("macbook", "imac", "thinkpad", "latitude", "desktop", "laptop", "workstation")):
+        candidates.append(DeviceHint(DeviceClass.WORKSTATION, 0.74, f"Hostname hint: {host.nmap_hostname}"))
+    if any(token in host_name for token in ("iphone", "ipad", "pixel", "android")):
+        candidates.append(DeviceHint(DeviceClass.IOT_DEVICE, 0.76, f"Hostname hint: {host.nmap_hostname}"))
     return candidates
 
 
@@ -257,13 +292,24 @@ def _collect_vendor_hints(
             candidates.append(DeviceHint(DeviceClass.ACCESS_POINT, 0.86, f"Vendor and ports: {mac_vendor}"))
     if any(vendor in mac_vendor_lower for vendor in ("cisco", "juniper", "mikrotik", "netgate")):
         candidates.append(DeviceHint(DeviceClass.ROUTER, 0.72, f"Vendor hint: {mac_vendor}"))
+    if any(vendor in mac_vendor_lower for vendor in ("fortinet", "palo alto", "sonicwall", "watchguard", "checkpoint", "sophos")):
+        candidates.append(DeviceHint(DeviceClass.FIREWALL, 0.84, f"Vendor hint: {mac_vendor}"))
     if any(vendor in mac_vendor_lower for vendor in ("synology", "qnap", "asustor")):
         candidates.append(DeviceHint(DeviceClass.NAS, 0.85, f"Vendor hint: {mac_vendor}"))
-    if any(vendor in mac_vendor_lower for vendor in ("hp", "hewlett", "brother", "epson", "canon", "xerox")):
+    if any(vendor in mac_vendor_lower for vendor in ("hp", "hewlett", "brother", "epson", "canon", "xerox", "lexmark", "ricoh", "kyocera", "zebra", "oki")):
         if port_set & {9100, 515, 631, 80, 443}:
             candidates.append(DeviceHint(DeviceClass.PRINTER, 0.78, f"Vendor and ports: {mac_vendor}"))
-    if any(vendor in mac_vendor_lower for vendor in ("hikvision", "dahua", "reolink", "axis")):
+    if any(vendor in mac_vendor_lower for vendor in ("hikvision", "dahua", "reolink", "axis", "amcrest", "foscam", "wyze", "uniview")):
         candidates.append(DeviceHint(DeviceClass.IP_CAMERA, 0.82, f"Vendor hint: {mac_vendor}"))
+    if any(vendor in mac_vendor_lower for vendor in ("roku", "vizio", "hisense", "tcl", "lg", "lg electronics")) and port_set & {7000, 7100, 8008, 8009, 8060, 80, 443}:
+        candidates.append(DeviceHint(DeviceClass.SMART_TV, 0.84, f"Vendor and ports: {mac_vendor}"))
+    if "samsung" in mac_vendor_lower and port_set & {7000, 7100, 8008, 8009, 8060}:
+        candidates.append(DeviceHint(DeviceClass.SMART_TV, 0.82, f"Vendor and ports: {mac_vendor}"))
+    if "sony" in mac_vendor_lower and not port_set & {3478, 3479, 3480, 9308} and port_set & {7000, 7100, 80, 443}:
+        candidates.append(DeviceHint(DeviceClass.SMART_TV, 0.80, f"Vendor and ports: {mac_vendor}"))
+    if any(vendor in mac_vendor_lower for vendor in ("yealink", "grandstream", "polycom", "fanvil", "mitel", "obihai")):
+        if port_set & {5060, 5061, 80, 443, 2000}:
+            candidates.append(DeviceHint(DeviceClass.VOIP, 0.86, f"Vendor and ports: {mac_vendor}"))
     return candidates
 
 

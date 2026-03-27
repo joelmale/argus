@@ -30,6 +30,51 @@ def test_signature_evidence_emits_game_console_and_vendor_matches():
     assert ("vendor", "Sony") in values
 
 
+def test_printer_hostname_vendor_and_ports_classify_as_printer():
+    hint = classify(
+        DiscoveredHost(ip_address="192.168.1.60", nmap_hostname="officejet-pro-9015"),
+        [
+            PortResult(port=631, state="open", protocol="tcp", service="ipp"),
+            PortResult(port=443, state="open", protocol="tcp", service="https"),
+        ],
+        OSFingerprint(os_name="embedded"),
+        "HP Inc.",
+    )
+
+    assert hint.device_class == DeviceClass.PRINTER
+    assert hint.confidence >= 0.84
+
+
+def test_streaming_vendor_and_ports_classify_as_smart_tv():
+    hint = classify(
+        DiscoveredHost(ip_address="192.168.1.61", nmap_hostname="roku-livingroom"),
+        [
+            PortResult(port=8060, state="open", protocol="tcp", service="http"),
+            PortResult(port=443, state="open", protocol="tcp", service="https"),
+        ],
+        OSFingerprint(),
+        "Roku, Inc.",
+    )
+
+    assert hint.device_class == DeviceClass.SMART_TV
+    assert hint.confidence >= 0.84
+
+
+def test_voip_vendor_and_ports_classify_as_voip():
+    hint = classify(
+        DiscoveredHost(ip_address="192.168.1.62", nmap_hostname="yealink-frontdesk"),
+        [
+            PortResult(port=5061, state="open", protocol="tcp", service="sip"),
+            PortResult(port=443, state="open", protocol="tcp", service="https"),
+        ],
+        OSFingerprint(os_name="embedded"),
+        "Yealink Network Technology",
+    )
+
+    assert hint.device_class == DeviceClass.VOIP
+    assert hint.confidence >= 0.82
+
+
 @pytest.mark.asyncio
 async def test_ollama_model_routes_use_saved_base_url(monkeypatch):
     effective = SimpleNamespace(ollama_base_url="http://ollama.local:11434/v1")

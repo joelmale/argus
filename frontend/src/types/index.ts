@@ -534,6 +534,8 @@ export interface Asset {
   device_type_source: string;
   device_type_override: DeviceType | null;
   status: AssetStatus;
+  heartbeat_missed_count: number;
+  heartbeat_last_checked_at: string | null;
   notes: string | null;
   custom_fields: Record<string, unknown> | null;
   first_seen: string;

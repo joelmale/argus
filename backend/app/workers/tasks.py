@@ -10,8 +10,10 @@ The scanner container runs both worker + beat in the same process (see CMD
 in scanner/Dockerfile).
 """
 import asyncio
+import hashlib
 import json
 import logging
+import math
 import threading
 import time
 
@@ -21,7 +23,7 @@ from datetime import datetime, timezone
 from sqlalchemy import select
 
 from app.core.config import settings
-from app.db.models import ScanJob
+from app.db.models import Asset, AssetHistory, ScanJob
 
 log = logging.getLogger(__name__)
 _passive_arp_thread: threading.Thread | None = None
@@ -45,6 +47,10 @@ celery_app.conf.update(
         "scheduled-backups": {
             "task": "app.workers.tasks.run_scheduled_backups",
             "schedule": 60 * 60,
+        },
+        "asset-heartbeat": {
+            "task": "app.workers.tasks.run_asset_heartbeat_checks",
+            "schedule": settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
         },
         "resume-paused-scans": {
             "task": "app.workers.tasks.run_resume_paused_scans",
@@ -132,6 +138,11 @@ def run_scheduled_backups():
     asyncio.run(_run_scheduled_backups_async())
 
 
+@celery_app.task(name="app.workers.tasks.run_asset_heartbeat_checks")
+def run_asset_heartbeat_checks():
+    asyncio.run(_run_asset_heartbeat_checks_async())
+
+
 @celery_app.task(name="app.workers.tasks.run_resume_paused_scans")
 def run_resume_paused_scans():
     asyncio.run(_resume_paused_scans_async())
@@ -203,6 +214,7 @@ async def _run_job_async(job_id: str) -> None:
                 db_session=db,
                 broadcast_fn=_get_job_broadcast_fn(db, job),
                 control_fn=control_fn,
+                mark_missing_offline=False,
             )
 
             await _complete_scan_job(db, job, job_id, summary)
@@ -288,7 +300,7 @@ async def _run_parent_job_async(
             summary,
             None,
             job_id,
-            mark_missing_offline=True,
+            mark_missing_offline=False,
             stage="persist",
         )
 
@@ -746,6 +758,67 @@ async def _run_scheduled_backups_async() -> None:
     await engine.dispose()
 
 
+async def _run_asset_heartbeat_checks_async() -> None:
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from app.alerting import notify_devices_offline_if_enabled
+    from app.scanner.stages.discovery import ping_hosts_sync
+
+    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+
+    try:
+        async with session_factory() as db:
+            result = await db.execute(select(Asset).order_by(Asset.ip_address.asc()))
+            assets = [asset for asset in result.scalars().all() if asset.ip_address]
+            if not assets:
+                return
+
+            checked_at = datetime.now(timezone.utc)
+            slot_count = _heartbeat_slot_count(
+                interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
+                target_interval_seconds=settings.ASSET_HEARTBEAT_TARGET_INTERVAL_SECONDS,
+            )
+            assets = _select_assets_for_heartbeat_slot(
+                assets,
+                checked_at=checked_at,
+                interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
+                slot_count=slot_count,
+            )
+            if not assets:
+                return
+
+            responsive_hosts = await asyncio.to_thread(
+                ping_hosts_sync,
+                [asset.ip_address for asset in assets],
+                host_timeout_seconds=settings.ASSET_HEARTBEAT_TIMEOUT_SECONDS,
+                batch_size=settings.ASSET_HEARTBEAT_BATCH_SIZE,
+            )
+            responsive_ips = {host.ip_address for host in responsive_hosts}
+            status_changes, offline_notifications = _reconcile_asset_heartbeats(
+                assets,
+                responsive_ips,
+                checked_at,
+                miss_threshold=settings.ASSET_HEARTBEAT_MISS_THRESHOLD,
+            )
+
+            for asset, diff in status_changes:
+                db.add(AssetHistory(
+                    asset_id=asset.id,
+                    change_type="status_change",
+                    diff={"status": diff},
+                ))
+
+            await db.commit()
+
+            if offline_notifications:
+                await notify_devices_offline_if_enabled(db, offline_notifications)
+
+        for asset, _diff in status_changes:
+            await _publish_event(_asset_status_change_payload(asset))
+    finally:
+        await engine.dispose()
+
+
 async def _resume_paused_scans_async() -> None:
     from sqlalchemy import select
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
@@ -919,6 +992,121 @@ def _publish_event_sync(payload: dict) -> None:
 
 async def _publish_event(payload: dict) -> None:
     await asyncio.to_thread(_publish_event_sync, payload)
+
+
+def _asset_status_change_payload(asset: Asset) -> dict:
+    return {
+        "event": "device_status_change",
+        "data": {
+            "id": str(asset.id),
+            "status": asset.status,
+        },
+    }
+
+
+def _asset_offline_notification_payload(asset: Asset) -> dict[str, str | None]:
+    return {
+        "ip": asset.ip_address,
+        "hostname": asset.hostname,
+        "last_seen": asset.last_seen.isoformat() if asset.last_seen else None,
+    }
+
+
+def _heartbeat_slot_count(*, interval_seconds: int, target_interval_seconds: int) -> int:
+    if interval_seconds <= 0 or target_interval_seconds <= 0:
+        return 1
+    return max(1, math.ceil(target_interval_seconds / interval_seconds))
+
+
+def _heartbeat_slot_index(
+    checked_at: datetime,
+    *,
+    interval_seconds: int,
+    slot_count: int,
+) -> int:
+    if interval_seconds <= 0 or slot_count <= 1:
+        return 0
+    return (int(checked_at.timestamp()) // interval_seconds) % slot_count
+
+
+def _heartbeat_slot_for_asset(asset: Asset, *, slot_count: int) -> int:
+    if slot_count <= 1:
+        return 0
+    digest = hashlib.sha1(asset.ip_address.encode("utf-8")).digest()
+    return int.from_bytes(digest[:4], "big") % slot_count
+
+
+def _select_assets_for_heartbeat_slot(
+    assets: list[Asset],
+    *,
+    checked_at: datetime,
+    interval_seconds: int,
+    slot_count: int,
+) -> list[Asset]:
+    slot_index = _heartbeat_slot_index(
+        checked_at,
+        interval_seconds=interval_seconds,
+        slot_count=slot_count,
+    )
+    return [
+        asset
+        for asset in assets
+        if _heartbeat_slot_for_asset(asset, slot_count=slot_count) == slot_index
+    ]
+
+
+def _reconcile_asset_heartbeats(
+    assets: list[Asset],
+    responsive_ips: set[str],
+    checked_at: datetime,
+    *,
+    miss_threshold: int,
+) -> tuple[list[tuple[Asset, dict[str, str]]], list[dict[str, str | None]]]:
+    status_changes: list[tuple[Asset, dict[str, str]]] = []
+    offline_notifications: list[dict[str, str | None]] = []
+
+    for asset in assets:
+        status_diff = _apply_asset_heartbeat(
+            asset,
+            is_reachable=asset.ip_address in responsive_ips,
+            checked_at=checked_at,
+            miss_threshold=miss_threshold,
+        )
+        if status_diff is None:
+            continue
+        status_changes.append((asset, status_diff))
+        if status_diff["new"] == "offline":
+            offline_notifications.append(_asset_offline_notification_payload(asset))
+
+    return status_changes, offline_notifications
+
+
+def _apply_asset_heartbeat(
+    asset: Asset,
+    *,
+    is_reachable: bool,
+    checked_at: datetime,
+    miss_threshold: int,
+) -> dict[str, str] | None:
+    previous_status = asset.status
+    asset.heartbeat_last_checked_at = checked_at
+
+    if is_reachable:
+        asset.heartbeat_missed_count = 0
+        asset.last_seen = checked_at
+        if asset.status != "online":
+            asset.status = "online"
+            return {"old": previous_status, "new": "online"}
+        return None
+
+    asset.heartbeat_missed_count = min((asset.heartbeat_missed_count or 0) + 1, miss_threshold)
+    if asset.heartbeat_missed_count < miss_threshold:
+        return None
+    if asset.status == "offline":
+        return None
+
+    asset.status = "offline"
+    return {"old": previous_status, "new": "offline"}
 
 
 @worker_ready.connect

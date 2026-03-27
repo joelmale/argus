@@ -113,6 +113,8 @@ async def upsert_scan_result(
     _apply_asset_updates(existing, result, changes, new_hostname, new_vendor, new_os, new_device_type, new_device_type_source)
 
     existing.last_seen = now
+    existing.heartbeat_missed_count = 0
+    existing.heartbeat_last_checked_at = now
 
     selected_device_type = existing.effective_device_type if existing.device_type_override else new_device_type
     selected_device_type_source = existing.effective_device_type_source if existing.device_type_override else new_device_type_source
@@ -186,6 +188,8 @@ async def _create_asset(
         device_type=new_device_type,
         device_type_source=new_device_type_source,
         status="online",
+        heartbeat_missed_count=0,
+        heartbeat_last_checked_at=now,
         first_seen=now,
         last_seen=now,
     )

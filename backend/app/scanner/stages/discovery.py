@@ -146,25 +146,54 @@ async def _ping_sweep(targets: str) -> list[DiscoveredHost]:
 def _ping_sweep_sync(targets: str) -> list[DiscoveredHost]:
     results: list[DiscoveredHost] = []
     try:
-        completed = subprocess.run(
-            [
-                "nmap",
-                "-sn",
-                "-T4",
-                "--host-timeout",
-                f"{DISCOVERY_SWEEP_TIMEOUT_SECONDS}s",
-                "-oX",
-                "-",
-                *targets.replace(",", " ").split(),
-            ],
-            check=True,
-            capture_output=True,
-            text=True,
+        results = _run_nmap_ping_scan(
+            targets.replace(",", " ").split(),
+            host_timeout_seconds=DISCOVERY_SWEEP_TIMEOUT_SECONDS,
         )
-        results = _parse_ping_sweep_xml(completed.stdout)
     except Exception as exc:
         log.warning("Ping sweep error: %s", exc)
     return results
+
+
+def ping_hosts_sync(
+    ips: list[str],
+    *,
+    host_timeout_seconds: int,
+    batch_size: int,
+) -> list[DiscoveredHost]:
+    results: list[DiscoveredHost] = []
+    unique_ips = [ip for ip in dict.fromkeys(ip.strip() for ip in ips) if ip]
+    if not unique_ips:
+        return results
+
+    for start in range(0, len(unique_ips), batch_size):
+        batch = unique_ips[start : start + batch_size]
+        try:
+            results.extend(_run_nmap_ping_scan(batch, host_timeout_seconds=host_timeout_seconds))
+        except Exception as exc:
+            log.warning("Heartbeat ping batch failed for %s hosts: %s", len(batch), exc)
+    return results
+
+
+def _run_nmap_ping_scan(targets: list[str], *, host_timeout_seconds: int) -> list[DiscoveredHost]:
+    completed = subprocess.run(
+        [
+            "nmap",
+            "-sn",
+            "-T4",
+            "--max-retries",
+            "1",
+            "--host-timeout",
+            f"{host_timeout_seconds}s",
+            "-oX",
+            "-",
+            *targets,
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return _parse_ping_sweep_xml(completed.stdout)
 
 
 def _parse_ping_sweep_xml(xml_output: str) -> list[DiscoveredHost]:

@@ -99,6 +99,8 @@ def _serialize_asset(asset: Asset) -> dict:
         "device_type_source": asset.effective_device_type_source,
         "device_type_override": asset.device_type_override,
         "status": asset.status,
+        "heartbeat_missed_count": asset.heartbeat_missed_count,
+        "heartbeat_last_checked_at": asset.heartbeat_last_checked_at.isoformat() if asset.heartbeat_last_checked_at else None,
         "notes": asset.notes,
         "custom_fields": asset.custom_fields,
         "first_seen": asset.first_seen.isoformat(),
