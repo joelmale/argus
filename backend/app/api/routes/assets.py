@@ -68,7 +68,8 @@ router = APIRouter(responses=ASSET_NOT_FOUND_RESPONSE)
 
 def _probe_run_summary(details: dict, probe_success: bool) -> str | None:
     if not probe_success:
-        return None
+        error = details.get("error")
+        return str(error)[:512] if error is not None else None
     summary = details.get("title") or details.get("sys_descr") or details.get("friendly_name") or details.get("banner")
     return str(summary)[:512] if summary is not None else None
 
@@ -618,6 +619,8 @@ async def run_asset_snmp_refresh(
     )
 
     details = dict(probe_result.data or {})
+    if probe_result.error and "error" not in details:
+        details["error"] = probe_result.error
     now = datetime.now(timezone.utc)
     db.add(
         ProbeRun(

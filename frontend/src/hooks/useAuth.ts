@@ -1,5 +1,6 @@
 'use client'
 
+import axios from 'axios'
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
@@ -22,6 +23,10 @@ function getStoredToken() {
     return null
   }
   return globalThis.localStorage.getItem(TOKEN_STORAGE_KEY)
+}
+
+export function isUnauthorizedError(error: unknown): boolean {
+  return axios.isAxiosError(error) && error.response?.status === 401
 }
 
 export function setAuthToken(token: string) {
@@ -65,7 +70,8 @@ export function useCurrentUser() {
       return data
     },
     enabled: !!token,
-    retry: false,
+    retry: (failureCount, error) => !isUnauthorizedError(error) && failureCount < 2,
+    retryDelay: (attempt) => Math.min(1000 * attempt, 3000),
   })
 }
 

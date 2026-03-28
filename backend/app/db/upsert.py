@@ -317,6 +317,8 @@ def _store_evidence_items(db: AsyncSession, asset: Asset, result: HostScanResult
 def _store_probe_runs(db: AsyncSession, asset: Asset, result: HostScanResult) -> None:
     for probe in result.probes:
         details = dict(probe.data or {})
+        if probe.error and "error" not in details:
+            details["error"] = probe.error
         db.add(
             ProbeRun(
                 asset_id=asset.id,
@@ -334,7 +336,8 @@ def _store_probe_runs(db: AsyncSession, asset: Asset, result: HostScanResult) ->
 
 def _probe_run_summary(details: dict, probe_success: bool) -> str | None:
     if not probe_success:
-        return None
+        error = details.get("error")
+        return str(error)[:512] if error is not None else None
     summary = details.get("title") or details.get("sys_descr") or details.get("friendly_name") or details.get("banner")
     return str(summary)[:512] if summary is not None else None
 

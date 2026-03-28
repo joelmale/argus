@@ -19,6 +19,16 @@ from app.scanner.models import DeviceClass, DiscoveredHost, OSFingerprint, PortR
 
 log = logging.getLogger(__name__)
 
+SNMP_MANAGED_HINT_CLASSES = {
+    DeviceClass.ROUTER,
+    DeviceClass.SWITCH,
+    DeviceClass.ACCESS_POINT,
+    DeviceClass.FIREWALL,
+    DeviceClass.PRINTER,
+    DeviceClass.NAS,
+    DeviceClass.VOIP,
+}
+
 
 class DeviceHint(NamedTuple):
     device_class: DeviceClass
@@ -340,8 +350,9 @@ def probe_priority(
     if 22 in open_port_nums or 2222 in open_port_nums:
         priority.append("ssh")
 
-    # SNMP — gold mine for managed devices
-    if 161 in open_port_nums:
+    # SNMP — current port scans are TCP-first, so infra-class devices may still be
+    # good SNMP candidates even when 161/udp was never explicitly observed.
+    if 161 in open_port_nums or hint.device_class in SNMP_MANAGED_HINT_CLASSES:
         priority.append("snmp")
 
     # mDNS — IoT and Apple device identification

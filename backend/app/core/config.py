@@ -39,7 +39,7 @@ class Settings(BaseSettings):
     SNMP_V3_PRIV_PROTOCOL: str = "aes"
 
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 1440
+    JWT_EXPIRE_MINUTES: int = 90
 
     ADMIN_USERNAME: str = ""
     ADMIN_PASSWORD: SecretStr | None = None

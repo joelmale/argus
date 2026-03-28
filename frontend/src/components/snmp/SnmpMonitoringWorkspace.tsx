@@ -8,7 +8,7 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useAssets, useRefreshAssetSnmp } from '@/hooks/useAssets'
 import { cn, formatDate, timeAgo } from '@/lib/utils'
-import type { Asset, ProbeRun } from '@/types'
+import type { Asset, DeviceType, ProbeRun } from '@/types'
 
 type SnmpResourceSummary = {
   cpuAverageLoad: number | null
@@ -81,6 +81,90 @@ const EMPTY_RESOURCE_SUMMARY: SnmpResourceSummary = {
   memoryUtilization: null,
 }
 
+const SNMP_AUTO_MANAGED_DEVICE_TYPES = new Set<DeviceType>([
+  'router',
+  'switch',
+  'access_point',
+  'firewall',
+  'server',
+  'nas',
+  'printer',
+  'voip',
+])
+
+const SNMP_HOSTNAME_HINTS = [
+  'firewalla',
+  'router',
+  'gateway',
+  'switch',
+  'ap',
+  'access-point',
+  'accesspoint',
+  'wifi',
+  'unifi',
+  'printer',
+  'laserjet',
+  'officejet',
+  'deskjet',
+  'ecotank',
+  'mfc',
+  'xerox',
+  'canon',
+  'epson',
+  'nas',
+  'synology',
+  'truenas',
+  'qnap',
+  'proxmox',
+  'esxi',
+  'idrac',
+  'ilo',
+  'bmc',
+  'ipmi',
+  'yealink',
+  'grandstream',
+  'polycom',
+]
+
+const SNMP_VENDOR_HINTS = [
+  'firewalla',
+  'ubiquiti',
+  'unifi',
+  'cisco',
+  'juniper',
+  'aruba',
+  'ruckus',
+  'tp-link',
+  'mikrotik',
+  'netgate',
+  'fortinet',
+  'palo alto',
+  'sonicwall',
+  'watchguard',
+  'synology',
+  'qnap',
+  'asustor',
+  'hp',
+  'hewlett',
+  'brother',
+  'epson',
+  'canon',
+  'xerox',
+  'lexmark',
+  'ricoh',
+  'kyocera',
+  'zebra',
+  'dell',
+  'idrac',
+  'hpe',
+  'ilo',
+  'vmware',
+  'proxmox',
+  'yealink',
+  'grandstream',
+  'polycom',
+]
+
 function asRecord(value: unknown): Record<string, unknown> | null {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return null
@@ -101,6 +185,14 @@ function asRecordArray(value: unknown): Record<string, unknown>[] {
     return []
   }
   return value.map(asRecord).filter((item): item is Record<string, unknown> => item !== null)
+}
+
+function containsKeyword(value: string | null | undefined, keywords: string[]): boolean {
+  const normalized = value?.trim().toLowerCase()
+  if (!normalized) {
+    return false
+  }
+  return keywords.some((keyword) => normalized.includes(keyword))
 }
 
 function parseSnmpDetails(probe: ProbeRun | null): SnmpDetails | null {
@@ -163,13 +255,36 @@ function buildSnmpAssetSummary(asset: Asset): SnmpAssetSummary {
   const latestAttempt = snmpRuns[0] ?? null
   const latestSuccess = snmpRuns.find((probe) => probe.success) ?? null
   const hasOpenSnmpPort = (asset.ports ?? []).some((port) => port.port_number === 161 && port.state === 'open')
+  const deviceTypes = [
+    asset.device_type,
+    asset.device_type_override,
+    asset.ai_analysis?.device_class,
+  ].filter((value): value is DeviceType => typeof value === 'string' && value.length > 0)
+  const openPortSet = new Set(
+    (asset.ports ?? [])
+      .filter((port) => port.state === 'open')
+      .map((port) => port.port_number),
+  )
+  const looksLikeManagedPrinter = (openPortSet.has(9100) || openPortSet.has(515) || openPortSet.has(631))
+    && (openPortSet.has(80) || openPortSet.has(443) || openPortSet.has(8080) || openPortSet.has(8443))
+  const looksLikeGateway = openPortSet.has(53) && (openPortSet.has(22) || openPortSet.has(80) || openPortSet.has(443))
+  const looksLikeNas = openPortSet.has(445) && (openPortSet.has(2049) || openPortSet.has(548) || openPortSet.has(873))
+  const likelyCandidate = deviceTypes.some((deviceType) => SNMP_AUTO_MANAGED_DEVICE_TYPES.has(deviceType))
+    || containsKeyword(asset.hostname, SNMP_HOSTNAME_HINTS)
+    || containsKeyword(asset.vendor, SNMP_VENDOR_HINTS)
+    || containsKeyword(asset.ai_analysis?.vendor, SNMP_VENDOR_HINTS)
+    || containsKeyword(asset.ai_analysis?.model, SNMP_HOSTNAME_HINTS)
+    || containsKeyword(asset.ai_analysis?.device_role, SNMP_HOSTNAME_HINTS)
+    || looksLikeManagedPrinter
+    || looksLikeGateway
+    || looksLikeNas
 
   return {
     asset,
     latestAttempt,
     latestSuccess,
     details: parseSnmpDetails(latestSuccess),
-    managed: hasOpenSnmpPort || snmpRuns.length > 0,
+    managed: hasOpenSnmpPort || snmpRuns.length > 0 || likelyCandidate,
   }
 }
 
@@ -245,6 +360,9 @@ function buildSearchText(summary: SnmpAssetSummary): string {
     summary.asset.hostname,
     summary.asset.vendor,
     summary.asset.device_type,
+    summary.asset.ai_analysis?.vendor,
+    summary.asset.ai_analysis?.model,
+    summary.asset.ai_analysis?.device_role,
     summary.details?.sysName,
     summary.details?.sysDescr,
     summary.details?.sysObjectId,
@@ -252,6 +370,11 @@ function buildSearchText(summary: SnmpAssetSummary): string {
     .filter((value): value is string => typeof value === 'string' && value.length > 0)
     .join(' ')
     .toLowerCase()
+}
+
+function extractProbeError(probe: ProbeRun | null): string | null {
+  const details = asRecord(probe?.details)
+  return asString(details?.error) || asString(probe?.summary) || asString(probe?.raw_excerpt)
 }
 
 function renderMetric(label: string, value: string, helper?: string) {
