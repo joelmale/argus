@@ -60,6 +60,17 @@ export function useRunAssetPortScan() {
   })
 }
 
+export function useRefreshAssetSnmp() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: string) => assetsApi.refreshSnmp(id),
+    onSuccess: (_, id) => {
+      qc.invalidateQueries({ queryKey: ['assets', id] })
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
 export function useRefreshAssetAiAnalysis() {
   const qc = useQueryClient()
   return useMutation({

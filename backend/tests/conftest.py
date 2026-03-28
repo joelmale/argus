@@ -1,9 +1,17 @@
 import asyncio
+import os
 
 import pytest
 import pytest_asyncio
 from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
+
+os.environ.setdefault("APP_ENV", "test")
+_database_url_test = os.environ.get("DATABASE_URL_TEST")
+if _database_url_test:
+    # Keep pytest off the runtime database by preferring a dedicated test DSN.
+    os.environ["DATABASE_URL"] = _database_url_test
+    os.environ["DATABASE_URL_DOCKER"] = _database_url_test
 
 from app.core.security import create_access_token, hash_password
 from app.db.models import Base, User

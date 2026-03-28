@@ -12,6 +12,7 @@ import { useCurrentUser, useLogout } from '@/hooks/useAuth'
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/assets':    'Asset Inventory',
+  '/snmp':      'SNMP Monitoring',
   '/topology':  'Topology Map',
   '/scans':     'Scan Management',
   '/settings':  'Settings',

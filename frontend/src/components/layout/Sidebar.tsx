@@ -4,7 +4,7 @@ import Link from 'next/link'
 import { usePathname } from 'next/navigation'
 import {
   Eye, LayoutDashboard, Server, Network, ScanLine,
-  Settings, ChevronLeft, ChevronRight, Wifi, WifiOff, ShieldAlert,
+  Settings, ChevronLeft, ChevronRight, Wifi, WifiOff, ShieldAlert, Router,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
@@ -14,6 +14,7 @@ import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 const NAV_ITEMS = [
   { href: '/dashboard', icon: LayoutDashboard, label: 'Dashboard' },
   { href: '/assets',    icon: Server,          label: 'Assets'    },
+  { href: '/snmp',      icon: Router,          label: 'SNMP'      },
   { href: '/topology',  icon: Network,         label: 'Topology'  },
   { href: '/scans',     icon: ScanLine,        label: 'Scans'     },
   { href: '/findings',  icon: ShieldAlert,     label: 'Findings'  },

@@ -120,6 +120,7 @@ export const assetsApi = {
   delete: (id: string) => api.delete(`/api/v1/assets/${id}`),
   bulkDelete: (asset_ids: string[]) => api.post('/api/v1/assets/bulk-delete', { asset_ids }),
   runPortScan: (id: string) => api.post(`/api/v1/assets/${id}/port-scan`),
+  refreshSnmp: (id: string) => api.post(`/api/v1/assets/${id}/snmp-refresh`),
   refreshAiAnalysis: (id: string) => api.post(`/api/v1/assets/${id}/ai-analysis/refresh`),
   listNotes: (id: string) => api.get(`/api/v1/assets/${id}/notes`),
   addNote: (id: string, content: string) => api.post(`/api/v1/assets/${id}/notes`, { content }),

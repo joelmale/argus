@@ -1,6 +1,7 @@
 """Assets CRUD — the core inventory endpoints."""
 import asyncio
 import csv
+from datetime import datetime, timezone
 from io import StringIO
 from typing import Annotated
 from uuid import UUID
@@ -22,7 +23,7 @@ from app.backups import (
     list_backup_snapshots,
     upsert_backup_target,
 )
-from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetNote, AssetTag, ConfigBackupSnapshot, Finding, Port, ScanJob, User, WirelessAssociation
+from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetNote, AssetTag, ConfigBackupSnapshot, Finding, Port, ProbeRun, ScanJob, User, WirelessAssociation
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 from app.scanner.agent import get_analyst
@@ -65,6 +66,13 @@ BACKUP_SNAPSHOT_RESPONSES = {404: {"description": "Backup snapshot not found"}}
 router = APIRouter(responses=ASSET_NOT_FOUND_RESPONSE)
 
 
+def _probe_run_summary(details: dict, probe_success: bool) -> str | None:
+    if not probe_success:
+        return None
+    summary = details.get("title") or details.get("sys_descr") or details.get("friendly_name") or details.get("banner")
+    return str(summary)[:512] if summary is not None else None
+
+
 def _serialize_ai_analysis(ai: AssetAIAnalysis | None) -> dict | None:
     if ai is None:
         return None
@@ -87,6 +95,14 @@ def _serialize_ai_analysis(ai: AssetAIAnalysis | None) -> dict | None:
 
 
 def _serialize_asset(asset: Asset) -> dict:
+    sorted_probe_runs = sorted(
+        asset.probe_runs,
+        key=lambda item: (
+            item.observed_at or datetime.min.replace(tzinfo=timezone.utc),
+            item.id,
+        ),
+        reverse=True,
+    )
     return {
         "id": str(asset.id),
         "ip_address": asset.ip_address,
@@ -160,7 +176,7 @@ def _serialize_asset(asset: Asset) -> dict:
                 "raw_excerpt": row.raw_excerpt,
                 "observed_at": row.observed_at.isoformat(),
             }
-            for row in sorted(asset.probe_runs, key=lambda item: (item.probe_type, item.target_port or 0))
+            for row in sorted_probe_runs
         ],
         "observations": [
             {
@@ -571,6 +587,69 @@ async def run_asset_ai_refresh(
     from app.db.upsert import upsert_scan_result
 
     await upsert_scan_result(db, result)
+    await db.commit()
+    return _serialize_asset(await _load_asset(db, asset_id))
+
+
+@router.post("/{asset_id}/snmp-refresh", responses=ASSET_NOT_FOUND_RESPONSE)
+async def run_asset_snmp_refresh(
+    asset_id: UUID,
+    db: DBSession,
+    _: AdminUser,
+):
+    asset = await _load_asset(db, asset_id)
+    _, runtime_config = await read_effective_scanner_config(db)
+    if not runtime_config.snmp_enabled:
+        raise HTTPException(status_code=400, detail="SNMP enrichment is disabled in Settings.")
+
+    from app.scanner.probes.snmp import probe as run_snmp_probe
+    from app.scanner.topology import infer_topology_links_from_snmp
+
+    probe_result = await run_snmp_probe(
+        asset.ip_address,
+        community=runtime_config.snmp_community,
+        version=runtime_config.snmp_version,
+        timeout_seconds=runtime_config.snmp_timeout,
+        v3_username=runtime_config.snmp_v3_username or None,
+        v3_auth_key=runtime_config.snmp_v3_auth_key or None,
+        v3_priv_key=runtime_config.snmp_v3_priv_key or None,
+        v3_auth_protocol=runtime_config.snmp_v3_auth_protocol or None,
+        v3_priv_protocol=runtime_config.snmp_v3_priv_protocol or None,
+    )
+
+    details = dict(probe_result.data or {})
+    now = datetime.now(timezone.utc)
+    db.add(
+        ProbeRun(
+            asset_id=asset.id,
+            probe_type=probe_result.probe_type,
+            target_port=probe_result.target_port,
+            success=probe_result.success,
+            duration_ms=probe_result.duration_ms,
+            summary=_probe_run_summary(details, probe_result.success),
+            details=details,
+            raw_excerpt=probe_result.raw[:4000] if probe_result.raw else None,
+            observed_at=now,
+        )
+    )
+
+    asset.heartbeat_last_checked_at = now
+    if probe_result.success:
+        was_offline = asset.status == "offline"
+        asset.status = "online"
+        asset.last_seen = now
+        asset.heartbeat_missed_count = 0
+        if was_offline:
+            db.add(
+                AssetHistory(
+                    asset_id=asset.id,
+                    change_type="status_change",
+                    diff={"status": {"old": "offline", "new": "online"}},
+                )
+            )
+        if details:
+            await infer_topology_links_from_snmp(db, asset, details)
+
     await db.commit()
     return _serialize_asset(await _load_asset(db, asset_id))
 

@@ -24,8 +24,7 @@ from app.scanner.snmp import SnmpPoller
 from app.scanner.models import ProbeResult, SnmpProbeData
 
 log = logging.getLogger(__name__)
-
-SNMP_POLL_TIMEOUT_SECONDS = 5.0
+DEFAULT_SNMP_POLL_TIMEOUT_SECONDS = 5.0
 
 
 async def _await_with_deadline(awaitable, deadline_seconds: float):
@@ -51,6 +50,7 @@ async def probe(
     community: str = "public",
     port: int = 161,
     version: str = "2c",
+    timeout_seconds: float = DEFAULT_SNMP_POLL_TIMEOUT_SECONDS,
     v3_username: str | None = None,
     v3_auth_key: str | None = None,
     v3_priv_key: str | None = None,
@@ -64,22 +64,23 @@ async def probe(
         poller = SnmpPoller(
             community=community,
             version=version,
-            timeout=int(SNMP_POLL_TIMEOUT_SECONDS),
+            timeout=max(1, int(timeout_seconds)),
             v3_username=v3_username,
             v3_auth_key=v3_auth_key,
             v3_priv_key=v3_priv_key,
             v3_auth_protocol=v3_auth_protocol,
             v3_priv_protocol=v3_priv_protocol,
         )
-        system_info, interfaces, arp_table, neighbors, wireless_clients = await _await_with_deadline(
+        system_info, interfaces, arp_table, neighbors, wireless_clients, resource_summary = await _await_with_deadline(
             asyncio.gather(
                 poller.get_system_info(ip),
                 poller.get_interfaces(ip),
                 poller.get_arp_table(ip),
                 poller.get_neighbors(ip),
                 poller.get_wireless_clients(ip),
+                poller.get_resource_summary(ip),
             ),
-            SNMP_POLL_TIMEOUT_SECONDS,
+            timeout_seconds,
         )
     except asyncio.TimeoutError:
         return ProbeResult(probe_type="snmp", success=False, error="Timeout")
@@ -96,6 +97,7 @@ async def probe(
         arp_table=arp_table,
         neighbors=neighbors,
         wireless_clients=wireless_clients,
+        resource_summary=resource_summary,
     )
 
     if not data.sys_descr and not data.sys_name:
@@ -116,6 +118,12 @@ async def probe(
         f"Neighbors: {len(data.neighbors)}\n"
         f"Wireless clients: {len(data.wireless_clients)}"
     )
+    cpu_average = data.resource_summary.get("cpu_average_load")
+    if cpu_average is not None:
+        raw += f"\nCPU avg load: {cpu_average}%"
+    memory_utilization = data.resource_summary.get("memory_utilization")
+    if memory_utilization is not None:
+        raw += f"\nMemory utilization: {round(float(memory_utilization) * 100, 1)}%"
 
     return ProbeResult(
         probe_type="snmp",

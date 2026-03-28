@@ -210,6 +210,7 @@ class SnmpProbeData(BaseModel):
     interfaces: list[dict[str, Any]] = Field(default_factory=list)
     neighbors: list[dict[str, Any]] = Field(default_factory=list)
     wireless_clients: list[dict[str, Any]] = Field(default_factory=list)
+    resource_summary: dict[str, Any] = Field(default_factory=dict)
 
 
 # mDNS probe output

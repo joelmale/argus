@@ -46,13 +46,29 @@ IFACE_OIDS = {
     "name": "1.3.6.1.2.1.2.2.1.2",
     "type": "1.3.6.1.2.1.2.2.1.3",
     "speed": "1.3.6.1.2.1.2.2.1.5",
+    "high_speed_mbps": "1.3.6.1.2.1.31.1.1.1.15",
     "mac": "1.3.6.1.2.1.2.2.1.6",
     "admin_status": "1.3.6.1.2.1.2.2.1.7",
     "oper_status": "1.3.6.1.2.1.2.2.1.8",
 }
+IFACE_COUNTER_OIDS = {
+    "in_octets": "1.3.6.1.2.1.2.2.1.10",
+    "in_errors": "1.3.6.1.2.1.2.2.1.14",
+    "out_octets": "1.3.6.1.2.1.2.2.1.16",
+    "out_errors": "1.3.6.1.2.1.2.2.1.20",
+    "hc_in_octets": "1.3.6.1.2.1.31.1.1.1.6",
+    "hc_out_octets": "1.3.6.1.2.1.31.1.1.1.10",
+}
 
 VLAN_PVID_OID = "1.3.6.1.2.1.17.7.1.4.5.1.1"
 ARP_MAC_OID = "1.3.6.1.2.1.4.22.1.2"
+HR_PROCESSOR_LOAD_OID = "1.3.6.1.2.1.25.3.3.1.2"
+HR_STORAGE_OIDS = {
+    "descr": "1.3.6.1.2.1.25.2.3.1.3",
+    "allocation_units": "1.3.6.1.2.1.25.2.3.1.4",
+    "size": "1.3.6.1.2.1.25.2.3.1.5",
+    "used": "1.3.6.1.2.1.25.2.3.1.6",
+}
 LLDP_OIDS = {
     "remote_chassis": "1.0.8802.1.1.2.1.4.1.1.5",
     "remote_port": "1.0.8802.1.1.2.1.4.1.1.7",
@@ -115,7 +131,7 @@ class SnmpPoller:
         """Return interface table with speed, type, admin/oper state."""
         columns = {
             key: await self._walk(host, oid)
-            for key, oid in IFACE_OIDS.items()
+            for key, oid in {**IFACE_OIDS, **IFACE_COUNTER_OIDS}.items()
         }
         vlan_rows = await self._walk(host, VLAN_PVID_OID)
 
@@ -134,12 +150,38 @@ class SnmpPoller:
             except (TypeError, ValueError):
                 iface["vlan_id"] = None
 
+        for iface in interfaces.values():
+            iface["in_octets_total"] = iface.get("hc_in_octets")
+            if iface["in_octets_total"] is None:
+                iface["in_octets_total"] = iface.get("in_octets")
+            iface["out_octets_total"] = iface.get("hc_out_octets")
+            if iface["out_octets_total"] is None:
+                iface["out_octets_total"] = iface.get("out_octets")
+
         return [interfaces[idx] for idx in sorted(interfaces)]
 
     async def get_neighbors(self, host: str) -> list[dict]:
         lldp_columns = {key: await self._walk(host, oid) for key, oid in LLDP_OIDS.items()}
         cdp_columns = {key: await self._walk(host, oid) for key, oid in CDP_OIDS.items()}
         return _parse_lldp_rows(lldp_columns) + _parse_cdp_rows(cdp_columns)
+
+    async def get_resource_summary(self, host: str) -> dict:
+        cpu_rows = await self._walk(host, HR_PROCESSOR_LOAD_OID)
+        cpu_loads = [value for _, raw_value in cpu_rows if (value := _safe_int(raw_value)) is not None]
+
+        storage_columns = {
+            key: await self._walk(host, oid)
+            for key, oid in HR_STORAGE_OIDS.items()
+        }
+        memory_summary = _extract_memory_summary(storage_columns)
+
+        summary: dict[str, int | float | str | list[int]] = {}
+        if cpu_loads:
+            summary["cpu_loads"] = cpu_loads
+            summary["cpu_core_count"] = len(cpu_loads)
+            summary["cpu_average_load"] = round(sum(cpu_loads) / len(cpu_loads), 1)
+        summary.update(memory_summary)
+        return summary
 
     async def get_wireless_clients(self, host: str) -> list[dict]:
         # Consumer APs often expose no standard client-association tables over SNMP.
@@ -228,7 +270,19 @@ def _format_mac(value: str) -> str:
 
 
 def _normalize_value(field: str, value: str):
-    if field in {"type", "speed", "admin_status", "oper_status"}:
+    if field in {
+        "type",
+        "speed",
+        "high_speed_mbps",
+        "admin_status",
+        "oper_status",
+        "in_octets",
+        "out_octets",
+        "in_errors",
+        "out_errors",
+        "hc_in_octets",
+        "hc_out_octets",
+    }:
         try:
             return int(value)
         except ValueError:
@@ -236,6 +290,74 @@ def _normalize_value(field: str, value: str):
     if field == "mac":
         return _format_mac(value)
     return value
+
+
+def _safe_int(value: str | int | None) -> int | None:
+    try:
+        return int(value) if value is not None else None
+    except (TypeError, ValueError):
+        return None
+
+
+def _extract_memory_summary(columns: dict[str, list[tuple[str, str]]]) -> dict[str, int | float | str]:
+    rows: dict[int, dict[str, str | int]] = {}
+    for field, entries in columns.items():
+        for oid, value in entries:
+            try:
+                storage_index = int(oid.split(".")[-1])
+            except ValueError:
+                continue
+            row = rows.setdefault(storage_index, {"index": storage_index})
+            if field == "descr":
+                row[field] = value
+            else:
+                parsed_value = _safe_int(value)
+                if parsed_value is not None:
+                    row[field] = parsed_value
+
+    ranked_entries: list[tuple[int, int, str, int, int]] = []
+    for row in rows.values():
+        descr = str(row.get("descr") or "").strip()
+        if not descr:
+            continue
+        allocation_units = _safe_int(row.get("allocation_units"))
+        size = _safe_int(row.get("size"))
+        used = _safe_int(row.get("used"))
+        if not allocation_units or size is None or used is None or size <= 0:
+            continue
+        rank = _memory_rank(descr)
+        if rank == 0:
+            continue
+        total_bytes = allocation_units * size
+        used_bytes = allocation_units * used
+        ranked_entries.append((rank, total_bytes, descr, total_bytes, used_bytes))
+
+    if not ranked_entries:
+        return {}
+
+    _, _, descr, total_bytes, used_bytes = max(ranked_entries, key=lambda item: (item[0], item[1]))
+    utilization = round(used_bytes / total_bytes, 4) if total_bytes > 0 else None
+    summary: dict[str, int | float | str] = {
+        "memory_label": descr,
+        "memory_total_bytes": total_bytes,
+        "memory_used_bytes": used_bytes,
+    }
+    if utilization is not None:
+        summary["memory_utilization"] = utilization
+    return summary
+
+
+def _memory_rank(description: str) -> int:
+    normalized = description.lower()
+    if "physical memory" in normalized:
+        return 4
+    if normalized.startswith("memory") or normalized.endswith(" memory"):
+        return 3
+    if "memory" in normalized:
+        return 2
+    if "ram" in normalized:
+        return 1
+    return 0
 
 
 def _parse_lldp_rows(columns: dict[str, list[tuple[str, str]]]) -> list[dict]:
