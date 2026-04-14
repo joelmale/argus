@@ -68,12 +68,16 @@ jobs:
       - name: Prepare local scan tag
         id: scan_tag
         run: echo "value=ghcr.io/${OWNER_LC}/${{ matrix.image_name }}:scan-${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+      - name: Prepare app version
+        id: app_version
+        run: echo "value=v1.5-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
       - name: Build local image for scanning
         uses: docker/build-push-action@v6
         with:
           context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           target: ${{ matrix.target }}
+          build-args: ${{ matrix.image_name == 'argus-frontend' && format('NEXT_PUBLIC_APP_VERSION={0}', steps.app_version.outputs.value) || '' }}
           load: true
           tags: ${{ steps.scan_tag.outputs.value }}
       - name: Run Trivy image scan
@@ -109,6 +113,7 @@ jobs:
           push: true
           provenance: true
           sbom: true
+          build-args: ${{ matrix.image_name == 'argus-frontend' && format('NEXT_PUBLIC_APP_VERSION={0}', steps.app_version.outputs.value) || '' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
       - name: Resolve primary tag

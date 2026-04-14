@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation'
 import { SAVED_USERNAME_KEY, useCurrentUser, useInitializeFirstAdmin, useLogin, useSetupStatus } from '@/hooks/useAuth'
 
 type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>
+const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? 'v1.5-dev'
 
 function getLoginErrorMessage(error: unknown) {
   const apiUrl = process.env.NEXT_PUBLIC_API_URL
@@ -63,8 +64,8 @@ export default function LoginPage() {
   const { mutate: login, isPending: isPendingLogin } = useLogin()
   const { mutate: initializeFirstAdmin, isPending: isPendingSetup } = useInitializeFirstAdmin()
   const [username, setUsername] = useState(() => {
-    if (typeof globalThis.localStorage !== 'undefined') {
-      return globalThis.localStorage.getItem(SAVED_USERNAME_KEY) ?? ''
+    if (typeof globalThis.window === 'object') {
+      return globalThis.window.localStorage.getItem(SAVED_USERNAME_KEY) ?? ''
     }
     return ''
   })
@@ -285,7 +286,7 @@ export default function LoginPage() {
         )}
       </div>
       <div className="pointer-events-none absolute bottom-5 right-5 rounded-full border border-white/70 bg-white/80 px-3 py-1 text-[11px] font-medium tracking-[0.18em] text-zinc-500 shadow-sm backdrop-blur dark:border-zinc-800 dark:bg-zinc-950/80 dark:text-zinc-400">
-        v1.5
+        {APP_VERSION}
       </div>
     </main>
   )

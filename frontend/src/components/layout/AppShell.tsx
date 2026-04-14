@@ -7,7 +7,7 @@ import { Sidebar } from './Sidebar'
 import { Header } from './Header'
 import { useAppStore } from '@/store'
 import { useWebSocket } from '@/hooks/useWebSocket'
-import { clearAuthToken, isUnauthorizedError, useCurrentUser } from '@/hooks/useAuth'
+import { clearAuthToken, isUnauthorizedError, useAuthToken, useCurrentUser } from '@/hooks/useAuth'
 import { cn } from '@/lib/utils'
 
 interface AppShellProps {
@@ -18,16 +18,22 @@ export function AppShell({ children }: Readonly<AppShellProps>) {
   const router = useRouter()
   const pathname = usePathname()
   const { sidebarCollapsed } = useAppStore()
+  const token = useAuthToken()
   const { data: currentUser, error, isError, isFetching, isLoading, refetch } = useCurrentUser()
   const authExpired = isUnauthorizedError(error)
   useWebSocket(!!currentUser)  // Establish & maintain WS connection
 
   useEffect(() => {
+    if (!token) {
+      router.replace('/login')
+      return
+    }
+
     if (!isLoading && !currentUser && authExpired) {
       clearAuthToken()
       router.replace(`/login?next=${encodeURIComponent(pathname)}`)
     }
-  }, [authExpired, currentUser, isLoading, pathname, router])
+  }, [authExpired, currentUser, isLoading, pathname, router, token])
 
   if (currentUser) {
     return (
@@ -44,6 +50,10 @@ export function AppShell({ children }: Readonly<AppShellProps>) {
         </div>
       </div>
     )
+  }
+
+  if (!token) {
+    return null
   }
 
   if (isLoading || isFetching || (!currentUser && !isError)) {
