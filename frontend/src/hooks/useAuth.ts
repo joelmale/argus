@@ -75,15 +75,20 @@ export function useCurrentUser() {
   })
 }
 
+export const SAVED_USERNAME_KEY = 'argus_saved_username'
+
 export function useLogin() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async ({ username, password }: { username: string; password: string }) => {
-      const { data } = await authApi.login(username, password)
-      return data as { access_token: string; token_type: string }
+    mutationFn: async ({ username, password, rememberMe }: { username: string; password: string; rememberMe?: boolean }) => {
+      const { data } = await authApi.login(username, password, rememberMe)
+      return data as { access_token: string; token_type: string; username: string }
     },
-    onSuccess: async (data) => {
+    onSuccess: async (data, variables) => {
+      if (hasBrowserWindow()) {
+        globalThis.localStorage.setItem(SAVED_USERNAME_KEY, variables.username)
+      }
       setAuthToken(data.access_token)
       await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
     },

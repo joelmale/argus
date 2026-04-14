@@ -4,6 +4,7 @@ import base64
 import hashlib
 import json
 import re
+import secrets
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Any
@@ -75,7 +76,7 @@ def _aes_decrypt_json(key: str, iv: str, payload: str) -> dict[str, Any]:
 
 
 def _rand16() -> str:
-    return "".join(str(int.from_bytes(hashlib.sha256(f"{datetime.now().timestamp()}-{i}".encode()).digest()[:1], "big") % 10) for i in range(16))
+    return secrets.token_hex(8)
 
 
 def _parse_cookie_sysauth(headers: httpx.Headers) -> str | None:

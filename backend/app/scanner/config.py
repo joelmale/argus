@@ -581,9 +581,19 @@ async def update_scanner_config(
     return config, build_effective_scanner_config(config)
 
 
+_MASKED_SENTINEL = "***"
+
+
 def _normalize_optional_text(value: str | None) -> str | None:
     normalized = (value or "").strip()
     return normalized or None
+
+
+def _update_secret_field(current: str | None, incoming: str | None) -> str | None:
+    """Return current value unchanged if incoming is the masked sentinel."""
+    if incoming == _MASKED_SENTINEL:
+        return current
+    return _normalize_optional_text(incoming)
 
 
 def _apply_core_scanner_settings(
@@ -629,8 +639,8 @@ def _apply_core_scanner_settings(
     config.fingerprint_ai_backend = normalized_fingerprint_backend
     config.ollama_base_url = _normalize_optional_text(ollama_base_url) or settings.OLLAMA_BASE_URL
     config.openai_base_url = _normalize_optional_text(openai_base_url) or settings.OPENAI_BASE_URL
-    config.openai_api_key = _normalize_optional_text(openai_api_key)
-    config.anthropic_api_key = _normalize_optional_text(anthropic_api_key)
+    config.openai_api_key = _update_secret_field(config.openai_api_key, openai_api_key)
+    config.anthropic_api_key = _update_secret_field(config.anthropic_api_key, anthropic_api_key)
     config.passive_arp_enabled = passive_arp_enabled
     config.passive_arp_interface = _normalize_optional_text(passive_arp_interface) or settings.SCANNER_PASSIVE_ARP_INTERFACE
     config.topology_default_segment_prefix_v4 = max(8, min(30, topology_default_segment_prefix_v4))
@@ -654,8 +664,8 @@ def _apply_snmp_settings(
     config.snmp_community = _normalize_optional_text(snmp_community) or settings.SNMP_COMMUNITY
     config.snmp_timeout = max(1, snmp_timeout)
     config.snmp_v3_username = _normalize_optional_text(snmp_v3_username)
-    config.snmp_v3_auth_key = _normalize_optional_text(snmp_v3_auth_key)
-    config.snmp_v3_priv_key = _normalize_optional_text(snmp_v3_priv_key)
+    config.snmp_v3_auth_key = _update_secret_field(config.snmp_v3_auth_key, snmp_v3_auth_key)
+    config.snmp_v3_priv_key = _update_secret_field(config.snmp_v3_priv_key, snmp_v3_priv_key)
     config.snmp_v3_auth_protocol = (snmp_v3_auth_protocol or "sha").lower()
     config.snmp_v3_priv_protocol = (snmp_v3_priv_protocol or "aes").lower()
 

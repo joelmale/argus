@@ -35,6 +35,24 @@ services:
       timeout: 5s
       retries: 5
 
+  # ── Migrations (runs once before backend starts) ─────────────
+  migrate:
+    image: ${ARGUS_BACKEND_IMAGE:-ghcr.io/joelmale/argus-backend:main}
+    container_name: argus_migrate
+    restart: "no"
+    env_file: .env.production
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:change-me-db-password@db:5432/argus}
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379/0}
+    volumes:
+      - argus_secrets:/run/secrets
+    depends_on:
+      db:
+        condition: service_healthy
+    command: ["python", "scripts/migrate.py"]
+
   # ── Backend API ─────────────────────────────────────────────
   backend:
     image: ${ARGUS_BACKEND_IMAGE:-ghcr.io/joelmale/argus-backend:main}
@@ -43,7 +61,7 @@ services:
     env_file: .env.production
     environment:
       APP_ENV: ${APP_ENV:-production}
-      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-to-a-long-random-string}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
       APP_DEBUG: ${APP_DEBUG:-false}
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:change-me-db-password@db:5432/argus}
       REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379/0}
@@ -60,7 +78,7 @@ services:
       SNMP_V3_AUTH_PROTOCOL: ${SNMP_V3_AUTH_PROTOCOL:-sha}
       SNMP_V3_PRIV_PROTOCOL: ${SNMP_V3_PRIV_PROTOCOL:-aes}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
-      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-90}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-240}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost:3000"]}
       AI_BACKEND: ${AI_BACKEND:-ollama}
       AI_ENABLE_PER_SCAN: ${AI_ENABLE_PER_SCAN:-true}
@@ -76,18 +94,17 @@ services:
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_TO: ${SMTP_TO:-}
       NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
+    volumes:
+      - argus_secrets:/run/secrets
     depends_on:
-      db:
-        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
       redis:
         condition: service_healthy
     extra_hosts:
       - "host.docker.internal:host-gateway"
     ports:
       - "${ARGUS_BACKEND_BIND_HOST:-0.0.0.0}:${ARGUS_BACKEND_PORT:-8000}:8000"
-    cap_add:
-      - NET_RAW
-      - NET_ADMIN
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=5)"]
       interval: 15s
@@ -104,7 +121,7 @@ services:
     env_file: .env.production
     environment:
       APP_ENV: ${APP_ENV:-production}
-      APP_SECRET_KEY: ${APP_SECRET_KEY:-change-me-to-a-long-random-string}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
       APP_DEBUG: ${APP_DEBUG:-false}
       DATABASE_URL: ${SCANNER_DATABASE_URL:-postgresql+asyncpg://argus:change-me-db-password@127.0.0.1:5432/argus}
       REDIS_URL: ${SCANNER_REDIS_URL:-redis://127.0.0.1:6379/0}
@@ -121,7 +138,7 @@ services:
       SNMP_V3_AUTH_PROTOCOL: ${SNMP_V3_AUTH_PROTOCOL:-sha}
       SNMP_V3_PRIV_PROTOCOL: ${SNMP_V3_PRIV_PROTOCOL:-aes}
       JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
-      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-90}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-240}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost:3000"]}
       AI_BACKEND: ${AI_BACKEND:-ollama}
       AI_ENABLE_PER_SCAN: ${AI_ENABLE_PER_SCAN:-true}
@@ -130,6 +147,8 @@ services:
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
       ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+    volumes:
+      - argus_secrets:/run/secrets
     depends_on:
       backend:
         condition: service_healthy
@@ -166,3 +185,4 @@ services:
 volumes:
   postgres_data:
   redis_data:
+  argus_secrets:

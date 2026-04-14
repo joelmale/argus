@@ -7,11 +7,15 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import PlainTextResponse
+from slowapi import _rate_limit_exceeded_handler
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import func, select
 
 from app.api.routes import assets, auth, findings, scans, system, topology, websocket
 from app.bootstrap import ensure_system_defaults
 from app.core.config import settings
+from app.core.limiter import limiter
 from app.db.models import Asset, ScanJob
 from app.db.session import AsyncSessionLocal
 
@@ -30,6 +34,9 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.ALLOWED_ORIGINS,

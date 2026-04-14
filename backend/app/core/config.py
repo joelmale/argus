@@ -1,3 +1,6 @@
+import secrets
+from pathlib import Path
+
 from pydantic import SecretStr, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from sqlalchemy.engine import URL
@@ -9,6 +12,7 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     APP_SECRET_KEY: str = ""
     APP_DEBUG: bool = True
+    SECRET_KEY_FILE: str = "/run/secrets/argus_secret_key"
 
     DATABASE_URL: SecretStr | None = None
     DATABASE_URL_DOCKER: SecretStr | None = None
@@ -39,7 +43,8 @@ class Settings(BaseSettings):
     SNMP_V3_PRIV_PROTOCOL: str = "aes"
 
     JWT_ALGORITHM: str = "HS256"
-    JWT_EXPIRE_MINUTES: int = 90
+    JWT_EXPIRE_MINUTES: int = 240
+    JWT_REMEMBER_ME_EXPIRE_MINUTES: int = 5760
 
     ADMIN_USERNAME: str = ""
     ADMIN_PASSWORD: SecretStr | None = None
@@ -80,6 +85,22 @@ class Settings(BaseSettings):
     SCANNER_CONCURRENT_HOSTS: int = 10
     SCANNER_PASSIVE_ARP_INTERFACE: str = "auto"
     TOPOLOGY_DEFAULT_SEGMENT_PREFIX_V4: int = 24
+
+    @model_validator(mode="after")
+    def _resolve_secret_key(self) -> "Settings":
+        if self.APP_SECRET_KEY:
+            return self
+        key_file = Path(self.SECRET_KEY_FILE)
+        if key_file.is_file():
+            key = key_file.read_text().strip()
+            if key:
+                self.APP_SECRET_KEY = key
+                return self
+        key = secrets.token_hex(32)
+        key_file.parent.mkdir(parents=True, exist_ok=True)
+        key_file.write_text(key)
+        self.APP_SECRET_KEY = key
+        return self
 
     @model_validator(mode="after")
     def _populate_database_url(self) -> "Settings":

@@ -4,7 +4,7 @@ import { useEffect, useState, type ComponentProps } from 'react'
 import axios from 'axios'
 import { Eye, Loader2, ShieldCheck, UserCog } from 'lucide-react'
 import { useRouter } from 'next/navigation'
-import { useCurrentUser, useInitializeFirstAdmin, useLogin, useSetupStatus } from '@/hooks/useAuth'
+import { SAVED_USERNAME_KEY, useCurrentUser, useInitializeFirstAdmin, useLogin, useSetupStatus } from '@/hooks/useAuth'
 
 type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>
 
@@ -62,8 +62,14 @@ export default function LoginPage() {
   const { data: setupStatus, isLoading: isLoadingSetup } = useSetupStatus()
   const { mutate: login, isPending: isPendingLogin } = useLogin()
   const { mutate: initializeFirstAdmin, isPending: isPendingSetup } = useInitializeFirstAdmin()
-  const [username, setUsername] = useState('admin')
+  const [username, setUsername] = useState(() => {
+    if (typeof globalThis.localStorage !== 'undefined') {
+      return globalThis.localStorage.getItem(SAVED_USERNAME_KEY) ?? ''
+    }
+    return ''
+  })
   const [password, setPassword] = useState('')
+  const [rememberMe, setRememberMe] = useState(false)
   const [setupUsername, setSetupUsername] = useState('admin')
   const [setupEmail, setSetupEmail] = useState('')
   const [setupPassword, setSetupPassword] = useState('')
@@ -81,7 +87,7 @@ export default function LoginPage() {
     setError(null)
 
     login(
-      { username, password },
+      { username, password, rememberMe },
       {
         onSuccess: () => router.replace('/dashboard'),
         onError: (submitError) => setError(getLoginErrorMessage(submitError)),
@@ -241,6 +247,18 @@ export default function LoginPage() {
                 autoComplete="current-password"
               />
             </div>
+
+            <label className="flex items-center gap-2.5 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={rememberMe}
+                onChange={(event) => setRememberMe(event.target.checked)}
+                className="w-4 h-4 rounded border-zinc-300 dark:border-zinc-700 accent-sky-500"
+              />
+              <span className="text-sm text-zinc-600 dark:text-zinc-400">
+                Remember me for 4 days
+              </span>
+            </label>
 
             {error && (
               <div className="rounded-xl border border-red-200 bg-red-50 px-4 py-3 text-sm text-red-600 dark:border-red-950 dark:bg-red-950/40 dark:text-red-300">

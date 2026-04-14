@@ -29,9 +29,19 @@ async def _send_heartbeats(websocket: WebSocket) -> None:
 async def websocket_events(websocket: WebSocket):
     """
     Clients connect here to receive live scan progress and new-device events.
+    Auth: first message must be JSON {"type": "auth", "token": "<jwt>"}.
     Messages are JSON: { "event": "device_discovered" | "scan_progress" | "heartbeat", "data": {...} }
     """
-    token = websocket.query_params.get("token")
+    await websocket.accept()
+
+    try:
+        raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+        auth_msg = json.loads(raw)
+    except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Auth timeout")
+        return
+
+    token = auth_msg.get("token") if isinstance(auth_msg, dict) else None
     if not token:
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token")
         return
@@ -46,8 +56,6 @@ async def websocket_events(websocket: WebSocket):
         if user is None or not user.is_active:
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="User not found")
             return
-
-    await websocket.accept()
 
     redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
     pubsub = redis_client.pubsub()

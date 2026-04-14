@@ -16,17 +16,23 @@ COPY requirements.txt .
 RUN python -m pip install --no-cache-dir --upgrade "pip>=26.0" \
     && python -m pip install --no-cache-dir -r requirements.txt
 
+RUN useradd -r -u 1001 -s /bin/false argus && chown -R argus:argus /app
+
 FROM base AS dev
 
 COPY requirements-dev.txt .
 RUN python -m pip install --no-cache-dir -r requirements-dev.txt
 
 COPY . .
+RUN chown -R argus:argus /app
 
-CMD ["sh", "-c", "python scripts/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+USER argus
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
 
 FROM base AS runtime
 
 COPY . .
+RUN chown -R argus:argus /app
 
-CMD ["sh", "-c", "python scripts/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
+USER argus
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

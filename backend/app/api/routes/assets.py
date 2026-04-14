@@ -1,6 +1,7 @@
 """Assets CRUD — the core inventory endpoints."""
 import asyncio
 import csv
+import html
 from datetime import datetime, timezone
 from io import StringIO
 from typing import Annotated
@@ -455,7 +456,7 @@ async def export_assets_report_html(db: DBSession, _: CurrentUser):
     ) or 0
 
     rows = "".join(
-        f"<tr><td>{asset.ip_address}</td><td>{asset.hostname or ''}</td><td>{asset.vendor or ''}</td><td>{asset.effective_device_type}</td><td>{asset.status}</td><td>{', '.join(tag.tag for tag in asset.tags)}</td></tr>"
+        f"<tr><td>{html.escape(asset.ip_address)}</td><td>{html.escape(asset.hostname or '')}</td><td>{html.escape(asset.vendor or '')}</td><td>{html.escape(asset.effective_device_type)}</td><td>{html.escape(asset.status)}</td><td>{html.escape(', '.join(tag.tag for tag in asset.tags))}</td></tr>"
         for asset in assets
     )
     return HTMLResponse(

@@ -40,11 +40,12 @@ export function useWebSocket(enabled = true) {
     const token = getStoredToken()
     if (!token) return
 
-    const ws = new WebSocket(`${getWsBaseUrl()}/ws/events?token=${encodeURIComponent(token)}`)
+    const ws = new WebSocket(`${getWsBaseUrl()}/ws/events`)
     wsRef.current = ws
 
     ws.onopen = () => {
       if (!mountedRef.current) return
+      ws.send(JSON.stringify({ type: 'auth', token }))
       setWsConnected(true)
       if (reconnectTimer.current) {
         clearTimeout(reconnectTimer.current)

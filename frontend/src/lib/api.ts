@@ -41,10 +41,10 @@ api.interceptors.request.use((config) => {
 });
 
 export const authApi = {
-  login: (username: string, password: string) =>
+  login: (username: string, password: string, rememberMe = false) =>
     api.post(
       "/api/v1/auth/token",
-      new URLSearchParams({ username, password }),
+      new URLSearchParams({ username, password, remember_me: rememberMe ? "true" : "false" }),
       { headers: { "Content-Type": "application/x-www-form-urlencoded" } },
     ),
   getSetupStatus: () => api.get("/api/v1/auth/setup/status"),
