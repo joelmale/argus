@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin
+from app.core.security import mask_secret
 from app.audit import log_audit_event
 from app.backups import get_backup_policy, list_backup_drivers, update_backup_policy
 from app.db.models import Asset, User
@@ -227,8 +228,8 @@ def _serialize_scanner_config(config, effective) -> dict:
         "fingerprint_ai_backend": effective.fingerprint_ai_backend,
         "ollama_base_url": effective.ollama_base_url,
         "openai_base_url": effective.openai_base_url,
-        "openai_api_key": "***" if effective.openai_api_key else "",
-        "anthropic_api_key": "***" if effective.anthropic_api_key else "",
+        "openai_api_key": mask_secret(effective.openai_api_key),
+        "anthropic_api_key": mask_secret(effective.anthropic_api_key),
         "passive_arp_enabled": config.passive_arp_enabled,
         "passive_arp_interface": config.passive_arp_interface,
         "passive_arp_effective_interface": effective.passive_arp_effective_interface,
@@ -239,8 +240,8 @@ def _serialize_scanner_config(config, effective) -> dict:
         "snmp_community": config.snmp_community,
         "snmp_timeout": config.snmp_timeout,
         "snmp_v3_username": config.snmp_v3_username,
-        "snmp_v3_auth_key": "***" if config.snmp_v3_auth_key else "",
-        "snmp_v3_priv_key": "***" if config.snmp_v3_priv_key else "",
+        "snmp_v3_auth_key": mask_secret(config.snmp_v3_auth_key),
+        "snmp_v3_priv_key": mask_secret(config.snmp_v3_priv_key),
         "snmp_v3_auth_protocol": config.snmp_v3_auth_protocol,
         "snmp_v3_priv_protocol": config.snmp_v3_priv_protocol,
         "fingerprint_ai_enabled": config.fingerprint_ai_enabled,

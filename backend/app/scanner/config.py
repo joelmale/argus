@@ -13,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_audit_event
 from app.core.config import settings
+from app.core.security import MASKED_SENTINEL
 from app.db.models import (
     Asset,
     AssetHistory,
@@ -579,9 +580,6 @@ async def update_scanner_config(
     )
     await db.flush()
     return config, build_effective_scanner_config(config)
-
-
-_MASKED_SENTINEL = "***"
 
 
 def _normalize_optional_text(value: str | None) -> str | None:

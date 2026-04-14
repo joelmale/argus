@@ -91,11 +91,13 @@ class Settings(BaseSettings):
         if self.APP_SECRET_KEY:
             return self
         key_file = Path(self.SECRET_KEY_FILE)
-        if key_file.is_file():
+        try:
             key = key_file.read_text().strip()
             if key:
                 self.APP_SECRET_KEY = key
                 return self
+        except OSError:
+            pass
         key = secrets.token_hex(32)
         key_file.parent.mkdir(parents=True, exist_ok=True)
         key_file.write_text(key)

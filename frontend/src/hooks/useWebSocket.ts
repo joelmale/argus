@@ -3,6 +3,7 @@
 import { useEffect, useRef } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
 import { useAppStore, processWsEvent } from '@/store'
+import { TOKEN_STORAGE_KEY } from '@/lib/api'
 import type { WsEvent } from '@/types'
 
 const RECONNECT_DELAY_MS = 3000
@@ -21,7 +22,7 @@ function getStoredToken() {
   if (globalThis.window === undefined) {
     return null
   }
-  return globalThis.localStorage.getItem('argus_token')
+  return globalThis.localStorage.getItem(TOKEN_STORAGE_KEY)
 }
 
 export function useWebSocket(enabled = true) {

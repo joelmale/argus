@@ -37,7 +37,7 @@ async def websocket_events(websocket: WebSocket):
     try:
         raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
         auth_msg = json.loads(raw)
-    except (asyncio.TimeoutError, json.JSONDecodeError, Exception):
+    except (asyncio.TimeoutError, json.JSONDecodeError):
         await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Auth timeout")
         return
 

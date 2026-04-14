@@ -10,6 +10,12 @@ from app.core.config import settings
 
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+MASKED_SENTINEL = "***"
+
+
+def mask_secret(value: str | None) -> str:
+    return MASKED_SENTINEL if value else ""
+
 
 def hash_password(password: str) -> str:
     return pwd_context.hash(password)
