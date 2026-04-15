@@ -35,24 +35,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # ── Migrations (runs once before backend starts) ─────────────
-  migrate:
-    image: ${ARGUS_BACKEND_IMAGE:-ghcr.io/joelmale/argus-backend:main}
-    container_name: argus_migrate
-    restart: "no"
-    env_file: .env.production
-    environment:
-      APP_ENV: ${APP_ENV:-production}
-      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
-      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:change-me-db-password@db:5432/argus}
-      REDIS_URL: ${REDIS_URL_DOCKER:-redis://redis:6379/0}
-    volumes:
-      - argus_secrets:/run/secrets
-    depends_on:
-      db:
-        condition: service_healthy
-    command: ["python", "scripts/migrate.py"]
-
   # ── Backend API ─────────────────────────────────────────────
   backend:
     image: ${ARGUS_BACKEND_IMAGE:-ghcr.io/joelmale/argus-backend:main}
@@ -96,9 +78,10 @@ services:
       NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
     volumes:
       - argus_secrets:/run/secrets
+    command: ["sh", "-c", "python scripts/migrate.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"]
     depends_on:
-      migrate:
-        condition: service_completed_successfully
+      db:
+        condition: service_healthy
       redis:
         condition: service_healthy
     extra_hosts:
