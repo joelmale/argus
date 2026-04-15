@@ -53,12 +53,6 @@ def upgrade() -> None:
     # asset_history
     op.create_index("ix_asset_history_asset_id", "asset_history", ["asset_id"])
 
-    # probe_runs
-    op.create_index("ix_probe_runs_asset_id", "probe_runs", ["asset_id"])
-
-    # asset_evidence
-    op.create_index("ix_asset_evidence_asset_id", "asset_evidence", ["asset_id"])
-
     # scan_jobs composite index for queue and history queries
     op.create_index(
         "ix_scan_jobs_queue",
@@ -69,8 +63,6 @@ def upgrade() -> None:
 
 def downgrade() -> None:
     op.drop_index("ix_scan_jobs_queue", "scan_jobs")
-    op.drop_index("ix_asset_evidence_asset_id", "asset_evidence")
-    op.drop_index("ix_probe_runs_asset_id", "probe_runs")
     op.drop_index("ix_asset_history_asset_id", "asset_history")
     op.drop_index("ix_asset_tags_tag", "asset_tags")
     op.drop_index("ix_asset_tags_asset_id", "asset_tags")
