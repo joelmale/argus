@@ -24,6 +24,7 @@ from app.fingerprinting.evidence import derive_detected_device_type, extract_evi
 from app.fingerprinting.internet_lookup import build_lookup_query, normalize_allowed_domains, search_lookup
 from app.fingerprinting.llm import synthesize_fingerprint
 from app.fingerprinting.risk import refresh_risk_and_lifecycle
+from app.services.identity import AssetIdentityResolver
 from app.scanner.config import get_or_create_scanner_config
 from app.scanner.models import HostScanResult
 
@@ -70,10 +71,14 @@ async def upsert_scan_result(
     "discovered" | "updated" | "unchanged" | "online" | "offline"
     """
     ip = result.host.ip_address
-
-    # ── Look up existing asset ────────────────────────────────────────────────
-    stmt = select(Asset).where(Asset.ip_address == ip)
-    existing = (await db.execute(stmt)).scalar_one_or_none()
+    resolver = AssetIdentityResolver(db, source="scan")
+    existing = await resolver.resolve_asset(
+        mac=result.host.mac_address,
+        ip=ip,
+        hostname=result.reverse_hostname,
+        create_if_missing=True,
+        lookup_order=("ip", "mac", "hostname"),
+    )
 
     new_hostname, new_os, new_vendor, evidence, new_device_type, new_device_type_source = _derive_asset_fields(result)
 

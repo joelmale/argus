@@ -7,7 +7,7 @@ from io import StringIO
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Response
+from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
@@ -15,6 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from app.api.deps import get_current_admin, get_current_user
+from app.core.limiter import limiter
 from app.backups import (
     capture_backup_for_asset,
     generate_backup_diff,
@@ -48,8 +49,7 @@ from app.db.models import (
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 from app.scanner.agent import get_analyst
-from app.scanner.config import read_effective_scanner_config
-from app.scanner.config import materialize_scan_targets, validate_scan_targets_routable
+from app.scanner.config import materialize_scan_targets, read_effective_scanner_config, validate_scan_targets_routable
 from app.scanner.models import DeviceClass, DiscoveredHost, ScanProfile
 from app.scanner.pipeline import _investigate_host
 from app.scanner.stages import portscan
@@ -464,7 +464,9 @@ async def run_asset_port_scan(
 
 
 @router.post("/{asset_id}/ai-analysis/refresh", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
+@limiter.limit("3/minute")
 async def run_asset_ai_refresh(
+    request: Request,
     asset_id: UUID,
     db: DBSession,
     _: AdminUser,
@@ -501,7 +503,9 @@ async def run_asset_ai_refresh(
 
 
 @router.post("/{asset_id}/snmp-refresh", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
+@limiter.limit("3/minute")
 async def run_asset_snmp_refresh(
+    request: Request,
     asset_id: UUID,
     db: DBSession,
     _: AdminUser,

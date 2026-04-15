@@ -2,10 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime, timezone
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Asset, Finding, Port
+from app.services.identity import AssetIdentityResolver
 
 
 async def ingest_findings(db: AsyncSession, findings: list[dict], *, source_default: str = "import") -> dict[str, int]:
@@ -121,18 +122,16 @@ async def summarize_findings(db: AsyncSession) -> dict:
 async def _resolve_asset(db: AsyncSession, payload: dict) -> Asset | None:
     asset_id = payload.get("asset_id")
     if asset_id:
-      return await db.get(Asset, asset_id)
+        return await db.get(Asset, asset_id)
 
-    conditions = []
-    if payload.get("ip_address"):
-        conditions.append(Asset.ip_address == payload["ip_address"])
-    if payload.get("mac_address"):
-        conditions.append(Asset.mac_address == payload["mac_address"])
-    if payload.get("hostname"):
-        conditions.append(Asset.hostname == payload["hostname"])
-    if not conditions:
-        return None
-    return (await db.execute(select(Asset).where(or_(*conditions)))).scalar_one_or_none()
+    resolver = AssetIdentityResolver(db, source="finding")
+    return await resolver.resolve_asset(
+        mac=payload.get("mac_address"),
+        ip=payload.get("ip_address"),
+        hostname=payload.get("hostname"),
+        create_if_missing=False,
+        lookup_order=("ip", "mac", "hostname"),
+    )
 
 
 async def _resolve_port(db: AsyncSession, asset: Asset, payload: dict) -> Port | None:

@@ -5,12 +5,13 @@ from datetime import datetime, timezone
 from typing import Any
 
 import httpx
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_audit_event
 from app.db.models import Asset, AssetTag, UnifiConfig, UnifiSyncRun, User
 from app.fingerprinting.passive import record_passive_observation
+from app.services.identity import AssetIdentityResolver
 from app.scanner.topology import _upsert_topology_link
 from app.topology.segments import ensure_segment_for_asset
 
@@ -232,22 +233,8 @@ async def update_unifi_config(
 
 
 async def _resolve_asset(db: AsyncSession, *, mac: str | None, ip: str | None, hostname: str | None) -> Asset | None:
-    if mac:
-        result = await db.execute(select(Asset).where(func.lower(Asset.mac_address) == mac.lower()).limit(1))
-        asset = result.scalar_one_or_none()
-        if asset is not None:
-            return asset
-    if ip:
-        result = await db.execute(select(Asset).where(Asset.ip_address == ip).limit(1))
-        asset = result.scalar_one_or_none()
-        if asset is not None:
-            return asset
-    if not ip:
-        return None
-    asset = Asset(ip_address=ip, mac_address=mac, hostname=hostname, status="online")
-    db.add(asset)
-    await db.flush()
-    return asset
+    resolver = AssetIdentityResolver(db, source="unifi")
+    return await resolver.resolve_asset(mac=mac, ip=ip, hostname=hostname, lookup_order=("mac", "ip", "hostname"))
 
 
 async def _existing_asset_tags(db: AsyncSession, asset: Asset) -> set[str]:

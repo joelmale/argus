@@ -15,6 +15,7 @@ from sqlalchemy import func, select
 from app.api.routes import assets, auth, findings, scans, system, topology, websocket
 from app.bootstrap import ensure_system_defaults
 from app.core.config import settings
+from app.core.logging import configure_logging
 from app.core.limiter import limiter
 from app.db.models import Asset, ScanJob
 from app.db.session import AsyncSessionLocal
@@ -34,6 +35,7 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+configure_logging()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)

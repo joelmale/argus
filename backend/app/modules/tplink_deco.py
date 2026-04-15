@@ -21,6 +21,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit import log_audit_event
 from app.db.models import Asset, AssetTag, TplinkDecoConfig, TplinkDecoSyncRun, User
 from app.fingerprinting.passive import record_passive_observation
+from app.services.identity import AssetIdentityResolver
 from app.scanner.topology import _upsert_topology_link
 from app.topology.segments import ensure_segment_for_asset
 
@@ -754,41 +755,23 @@ async def update_tplink_deco_config(
 
 
 async def _resolve_asset_for_client(db: AsyncSession, client: DecoClientRecord) -> Asset | None:
-    if client.mac:
-        result = await db.execute(select(Asset).where(func_lower(Asset.mac_address) == client.mac.lower()).limit(1))
-        asset = result.scalar_one_or_none()
-        if asset is not None:
-            return asset
-    if client.ip:
-        result = await db.execute(select(Asset).where(Asset.ip_address == client.ip).limit(1))
-        asset = result.scalar_one_or_none()
-        if asset is not None:
-            return asset
-    if not client.ip:
-        return None
-    asset = Asset(ip_address=client.ip, mac_address=client.mac, hostname=client.hostname or client.nickname, status="online")
-    db.add(asset)
-    await db.flush()
-    return asset
+    resolver = AssetIdentityResolver(db, source="tplink_deco")
+    return await resolver.resolve_asset(
+        mac=client.mac,
+        ip=client.ip,
+        hostname=client.hostname or client.nickname,
+        lookup_order=("mac", "ip", "hostname"),
+    )
 
 
 async def _resolve_asset_for_deco_device(db: AsyncSession, device: DecoDeviceRecord) -> Asset | None:
-    if device.mac:
-        result = await db.execute(select(Asset).where(func_lower(Asset.mac_address) == device.mac.lower()).limit(1))
-        asset = result.scalar_one_or_none()
-        if asset is not None:
-            return asset
-    if device.ip:
-        result = await db.execute(select(Asset).where(Asset.ip_address == device.ip).limit(1))
-        asset = result.scalar_one_or_none()
-        if asset is not None:
-            return asset
-    if not device.ip:
-        return None
-    asset = Asset(ip_address=device.ip, mac_address=device.mac, hostname=device.hostname or device.nickname, status="online")
-    db.add(asset)
-    await db.flush()
-    return asset
+    resolver = AssetIdentityResolver(db, source="tplink_deco")
+    return await resolver.resolve_asset(
+        mac=device.mac,
+        ip=device.ip,
+        hostname=device.hostname or device.nickname,
+        lookup_order=("mac", "ip", "hostname"),
+    )
 
 
 def func_lower(column):
