@@ -436,7 +436,7 @@ Implemented:
 - WebSocket reconnect now uses exponential backoff and the sidebar shows a reconnecting state.
 - Query polling backs off while the websocket is healthy and resumes when the connection drops.
 
-## Phase 6: Topology, Metrics, Export Scaling, and Manual Editing
+## Phase 6: Topology and Metrics Scaling
 
 Effort: Medium to Large
 
@@ -444,11 +444,7 @@ Purpose: reduce repeated full-graph and full-inventory work, surface topology
 confidence clearly to the user, and give users the tools to correct and extend
 topology data that automated scanning cannot fully resolve.
 
-This phase is split into two delivery tracks that can ship independently.
-
----
-
-### Track A: Backend Performance and Caching
+Purpose: reduce repeated full-graph and repeated metrics work.
 
 Scope:
 
@@ -465,188 +461,30 @@ Scope:
   rather than polling or requiring a manual refresh.
 - Cache metrics or compute them from lightweight aggregate queries.
   - Avoid a growing number of live count queries on every scrape.
-- Stream or batch large exports.
-  - Keep CSV and inventory exports memory-safe for larger inventories.
-  - Ensure report JSON does not eagerly load unnecessary relationships.
-
----
-
-### Track B: Manual Topology Editing
-
-Problem: Phase 7 built evidence-based hierarchy for scan-derived data, but
-automated evidence is incomplete for mixed managed/unmanaged networks. Users have
-no way to correct wrong parent assignments, suppress phantom inferred links, or
-add relationships the scanner cannot observe. Without editing, topology accuracy
-is bounded by scanner coverage.
-
-Scope:
-
-#### Backend — manual link API and suppression
-
-- Add a `suppressed` boolean field to `TopologyLink`.
-  - Update `graph_builder.py` to skip any link where `suppressed=True` so
-    suppressed links are never rendered, even if the scanner would regenerate them.
-  - Suppression survives re-scans; only a user action can un-suppress a link.
-- Expose manual link CRUD endpoints:
-  - `POST /api/topology/links` — create a link with `source_kind="manual"` and
-    `observed=True`.
-  - `PATCH /api/topology/links/{id}` — update `observed`, `suppressed`,
-    `relationship_type`, or `confidence` on any existing link.
-  - `DELETE /api/topology/links/{id}` — hard-delete a manually created link.
-    Inferred links should be suppressed via PATCH rather than deleted.
-- Emit a `topology:updated` WebSocket event after any link mutation so connected
-  clients refresh without user intervention.
-
----
-
-### Track C: Cytoscape Lifecycle and Frontend Performance
-
-Problem: every filter interaction, segment change, or observed-only toggle
-triggers a full `cy.destroy()` and recreation in the current implementation.
-This causes a visible flash and re-animation even on small graphs. It will
-become increasingly disruptive as node count grows.
-
-Scope:
-
-- Replace the destroy/recreate pattern with `cy.json({ elements })` or
-  `cy.add()` / `cy.remove()` to hot-swap elements in place.
-  - Filter changes, segment changes, and observed-only toggles should update
-    the live instance rather than tear it down.
-  - Layout re-runs only when the layout mode itself changes, not on every
-    element update.
-- Persist node positions across refreshes using `localStorage` keyed by asset
-  ID.
-  - On mount, if saved positions exist for the current graph, apply them as the
-    preset layout rather than recomputing radial positions.
-  - Add a "Save layout" button that serialises current node positions.
-  - Add a "Reset layout" button that clears saved positions and reruns the
-    default layout.
-
----
-
-### Track D: Topology Viewing UX
-
-Scope:
-
-- Add a hierarchical layout mode using `cytoscape-dagre` with `directed: true`.
-  - Renders the Phase 7 parent-child evidence hierarchy (gateway → switches →
-    APs → endpoints) as a top-down tree rather than implicit shapes in a radial
-    layout.
-  - Add "Hierarchy" as a fourth option in the layout mode selector alongside
-    Radial, Overview, and Raw.
-- Replace the "Observed only" binary toggle with confidence-aware dimming.
-  - When the toggle is off, render inferred edges (`observed: false`) at reduced
-    opacity and thinner line weight rather than hiding them.
-  - Users see the full picture; inferred links are visually de-emphasised rather
-    than absent.
-  - The existing `mapData(confidence, ...)` width mapping already exists on edges
-    — apply the same mapping to opacity uniformly.
-- Add hover tooltips on nodes.
-  - Show hostname, IP, online/offline status, and device type on `mouseover`
-    without requiring a click.
-  - Dismiss on `mouseout`.
-- Add hover labels on edges.
-  - Show relationship type and confidence on `mouseover` so users can read link
-    metadata without selecting the edge.
-- Add graph search and spotlight.
-  - A search input in the toolbar accepts hostname or IP prefix.
-  - On match, `cy.animate()` pans and zooms to the matched node and applies a
-    temporary highlight ring.
-  - Essential for orientation once the graph exceeds ~50 nodes.
-- Add segment swimlane rendering.
-  - Draw translucent background regions behind each segment group with the
-    segment CIDR as a label.
-  - Makes subnet boundaries legible without relying on spatial proximity alone.
-  - Implement using Cytoscape compound nodes or a canvas underlay.
-- Add a mini-map overlay using `cytoscape-navigator`.
-  - Picture-in-picture mini-map in a corner of the canvas.
-  - Negligible performance cost; useful for networks that span multiple screens
-    at comfortable zoom.
-- Add a node focus mode wired to the neighborhood sub-graph endpoint.
-  - Double-clicking a node (or a "Focus" button in the node detail panel) switches
-    to a view that shows only that node plus its immediate parents and children.
-  - Reduces visual noise when investigating a single device's connectivity.
-  - An "Exit focus" button returns to the full graph.
-
----
-
-### Track E: Manual Topology Editing UI
-
-Scope:
-
-- Add Confirm and Deny actions to `EdgeDetailPanel` for inferred edges.
-  - **Confirm**: calls `PATCH /api/topology/links/{id}` with
-    `{ observed: true, source_kind: "manual" }`. Promotes the heuristic link
-    to a verified one; the dashed line becomes solid immediately.
-  - **Deny**: calls `PATCH /api/topology/links/{id}` with
-    `{ suppressed: true }`. The edge disappears and will not be recreated by
-    future scans.
-  - Only shown when `edge.data.observed === false`.
-- Add a "Link to…" action in `NodeDetailPanel`.
-  - Entering link-drawing mode highlights the canvas. The user clicks a second
-    node to complete the pair.
-  - A dialog opens to choose relationship type (`wireless_ap_for`,
-    `switch_port_for`, `uplink`, `neighbor_l2`, or `manual`).
-  - Submits `POST /api/topology/links` with `observed: true` and
-    `source_kind: "manual"`. The new edge renders immediately via optimistic
-    update.
-  - Pressing Escape exits link-drawing mode without creating a link.
-- Add a "Re-parent" action in `NodeDetailPanel`.
-  - A dropdown populated with infrastructure-role nodes in the same segment
-    (routers, switches, access points).
-  - Selecting a new parent creates a `manual` link to the chosen parent and
-    suppresses any conflicting inferred link to the previous parent.
-  - The most impactful single editing action because a misclassified AP or
-    switch can incorrectly parent dozens of endpoints.
-- Add inline device type editing in `NodeDetailPanel`.
-  - Make the "Device type" row an editable `<select>` rather than read-only
-    text.
-  - On change, calls `PATCH /api/assets/{id}` with the new `device_type`.
-  - Eliminates the need to navigate to the asset page for this common correction.
-  - Topology role re-inference happens automatically on the next scan.
-
----
+- Consider separate topology endpoints:
+  - full graph
+  - graph summary
+  - segment graph
+  - selected asset neighborhood
+- Optimize topology frontend lifecycle.
+  - Avoid destroying and recreating Cytoscape for every filter change if incremental
+    updates are practical.
+  - Keep the current behavior until graph size makes this necessary.
 
 Suggested commits:
 
 ```text
-perf(topology): cache graph responses with ETag and last-updated
-perf(topology): add segment and neighborhood sub-graph endpoints
-feat(topology): emit topology:updated WebSocket event on scan and link mutation
-feat(topology): add suppressed field to TopologyLink
-feat(topology): manual link create, update, and delete API
-perf(metrics): lightweight aggregate inventory counters endpoint
-perf(exports): stream large inventory and report exports
-perf(topology-ui): hot-swap Cytoscape elements instead of destroy/recreate
-feat(topology-ui): persist node layout positions in localStorage
-feat(topology-ui): hierarchical dagre layout mode
-feat(topology-ui): confidence-dimmed inferred edges instead of binary hide
-feat(topology-ui): hover tooltips on nodes and edges
-feat(topology-ui): graph search and spotlight
-feat(topology-ui): segment swimlane background regions
-feat(topology-ui): mini-map navigator overlay
-feat(topology-ui): node focus mode using neighborhood endpoint
-feat(topology-ui): confirm and deny actions on inferred edges
-feat(topology-ui): link-drawing mode for manual edge creation
-feat(topology-ui): re-parent action in node detail panel
-feat(topology-ui): inline device type editing in node detail panel
+perf(topology): cache graph responses with invalidation metadata
+perf(metrics): serve lightweight inventory counters
+perf(topology-ui): avoid unnecessary graph recreation
 ```
 
 Validation:
 
-- Compare topology and metrics endpoint timings before and after caching.
-- Verify graph auto-refreshes in the browser after a scan completes (WebSocket
-  invalidation).
-- Verify suppressed links do not reappear after a subsequent scan.
-- Verify manually created links survive a scan cycle unchanged.
-- Confirm / Deny actions update edge rendering immediately without a full refresh.
-- Link-drawing mode creates a visible edge of the correct type and relationship.
-- Re-parent suppresses the old inferred link and creates the new manual one.
-- Cytoscape filter changes update elements in place with no destroy/recreate flash.
-- Saved layout positions survive a page refresh.
-- Hierarchy layout renders the gateway → switch/AP → endpoint tree correctly.
-- Neighborhood focus mode loads via the sub-graph endpoint, not the full graph.
-- Verify exports remain byte-compatible where expected.
+- Compare topology and metrics timings before and after the change.
+- Verify graph updates after scans and manual link changes.
+- Verify topology still renders after cache invalidation.
+- Verify dashboard and metrics views still load.
 
 Rollback risk: Medium to High.
 - Caching: must be invalidated correctly or the UI shows stale topology.
@@ -1076,7 +914,7 @@ Implement in this order unless production pressure changes the priority:
 4. Phase 9 image build portion: scan the pushed artifact.
 5. Phase 4: service boundaries and typed contracts.
 6. Phase 5: async workflows and queue hardening.
-7. Phase 6: topology, metrics, and export scaling.
+7. Phase 6: topology and metrics scaling.
 8. Phase 7: evidence-based topology hierarchy.
 9. Phase 10: hardening and UX polish.
 10. Phase 9 E2E coverage expansion.

@@ -879,56 +879,64 @@ async def _run_scheduled_backups_async() -> None:
 async def _run_asset_heartbeat_checks_async() -> None:
     from app.alerting import notify_devices_offline_if_enabled
     from app.scanner.stages.discovery import ping_hosts_sync
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
 
-    session_factory = _get_worker_session_factory()
-    async with session_factory() as db:
-        result = await db.execute(select(Asset).order_by(Asset.ip_address.asc()))
-        assets = [asset for asset in result.scalars().all() if asset.ip_address]
-        if not assets:
-            return
+    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False, poolclass=NullPool)
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
 
-        checked_at = datetime.now(timezone.utc)
-        slot_count = _heartbeat_slot_count(
-            interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
-            target_interval_seconds=settings.ASSET_HEARTBEAT_TARGET_INTERVAL_SECONDS,
-        )
-        assets = _select_assets_for_heartbeat_slot(
-            assets,
-            checked_at=checked_at,
-            interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
-            slot_count=slot_count,
-        )
-        if not assets:
-            return
+    try:
+        async with session_factory() as db:
+            result = await db.execute(select(Asset).order_by(Asset.ip_address.asc()))
+            assets = [asset for asset in result.scalars().all() if asset.ip_address]
+            if not assets:
+                return
 
-        responsive_hosts = await asyncio.to_thread(
-            ping_hosts_sync,
-            [asset.ip_address for asset in assets],
-            host_timeout_seconds=settings.ASSET_HEARTBEAT_TIMEOUT_SECONDS,
-            batch_size=settings.ASSET_HEARTBEAT_BATCH_SIZE,
-        )
-        responsive_ips = {host.ip_address for host in responsive_hosts}
-        status_changes, offline_notifications = _reconcile_asset_heartbeats(
-            assets,
-            responsive_ips,
-            checked_at,
-            miss_threshold=settings.ASSET_HEARTBEAT_MISS_THRESHOLD,
-        )
+            checked_at = datetime.now(timezone.utc)
+            slot_count = _heartbeat_slot_count(
+                interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
+                target_interval_seconds=settings.ASSET_HEARTBEAT_TARGET_INTERVAL_SECONDS,
+            )
+            assets = _select_assets_for_heartbeat_slot(
+                assets,
+                checked_at=checked_at,
+                interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
+                slot_count=slot_count,
+            )
+            if not assets:
+                return
 
-        for asset, diff in status_changes:
-            db.add(AssetHistory(
-                asset_id=asset.id,
-                change_type="status_change",
-                diff={"status": diff},
-            ))
+            responsive_hosts = await asyncio.to_thread(
+                ping_hosts_sync,
+                [asset.ip_address for asset in assets],
+                host_timeout_seconds=settings.ASSET_HEARTBEAT_TIMEOUT_SECONDS,
+                batch_size=settings.ASSET_HEARTBEAT_BATCH_SIZE,
+            )
+            responsive_ips = {host.ip_address for host in responsive_hosts}
+            status_changes, offline_notifications = _reconcile_asset_heartbeats(
+                assets,
+                responsive_ips,
+                checked_at,
+                miss_threshold=settings.ASSET_HEARTBEAT_MISS_THRESHOLD,
+            )
 
-        await db.commit()
+            for asset, diff in status_changes:
+                db.add(AssetHistory(
+                    asset_id=asset.id,
+                    change_type="status_change",
+                    diff={"status": diff},
+                ))
+
+            await db.commit()
 
         if offline_notifications:
-            await notify_devices_offline_if_enabled(db, offline_notifications)
+            async with session_factory() as notify_db:
+                await notify_devices_offline_if_enabled(notify_db, offline_notifications)
 
-    for asset, _diff in status_changes:
-        await _publish_event(_asset_status_change_payload(asset))
+        for asset, _diff in status_changes:
+            await _publish_event(_asset_status_change_payload(asset))
+    finally:
+        await engine.dispose()
 
 
 async def _resume_paused_scans_async() -> None:
