@@ -171,7 +171,21 @@ export const findingsApi = {
 
 // ─── Topology endpoint ──────────────────────────────────────────
 export const topologyApi = {
-  getGraph: () => api.get("/api/v1/topology/graph"),
+  getGraph: (ifNoneMatch?: string) =>
+    api.get("/api/v1/topology/graph", {
+      headers: ifNoneMatch ? { "If-None-Match": ifNoneMatch } : undefined,
+    }),
+  getGraphSummary: () => api.get("/api/v1/topology/graph/summary"),
+  getSegmentGraph: (segmentId: number) =>
+    api.get(`/api/v1/topology/graph/segment/${segmentId}`),
+  getNeighborhoodGraph: (assetId: string) =>
+    api.get(`/api/v1/topology/graph/neighborhood/${assetId}`),
+  createLink: (payload: import("@/types").TopologyLinkCreateRequest) =>
+    api.post("/api/v1/topology/links", payload),
+  updateLink: (linkId: number, payload: import("@/types").TopologyLinkUpdateRequest) =>
+    api.patch(`/api/v1/topology/links/${linkId}`, payload),
+  deleteLink: (linkId: number) =>
+    api.delete(`/api/v1/topology/links/${linkId}`),
 };
 
 // ─── WebSocket helper ───────────────────────────────────────────
