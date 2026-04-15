@@ -489,7 +489,7 @@ export function TopologyMap() {
     // Hover tooltip on edges
     cy.on('mouseover', 'edge', (evt) => {
       const d = evt.target.data() as Record<string, unknown>
-      const mpos = evt.renderedPosition
+      const pos = evt.renderedPosition
       const container = containerRef.current
       const tip = tooltipRef.current
       if (!tip || !container) return
@@ -502,7 +502,6 @@ export function TopologyMap() {
         ${d.ssid ? `<div class="text-zinc-400">SSID: ${String(d.ssid)}</div>` : ''}
       `
       const rect = container.getBoundingClientRect()
-      const pos = mpos()
       tip.style.left = `${pos.x + rect.left + 12}px`
       tip.style.top = `${pos.y + rect.top - 8}px`
       tip.style.display = 'block'
