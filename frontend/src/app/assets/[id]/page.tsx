@@ -10,7 +10,7 @@ import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
 import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert, Microscope, ChevronDown, ChevronUp, Workflow, Loader2, MessageSquareText } from 'lucide-react'
 import Link from 'next/link'
-import { useParams } from 'next/navigation'
+import { useParams, useRouter } from 'next/navigation'
 import type { Asset, AssetAutopsyStage, ConfigBackupTarget } from '@/types'
 
 const DEVICE_TYPE_OPTIONS = [
@@ -716,6 +716,7 @@ function AutopsyOutputs({ stage }: Readonly<{ stage: AssetAutopsyStage }>) {
 
 export default function AssetDetailPage() {
   const params = useParams<{ id: string }>()
+  const router = useRouter()
   const assetId = Array.isArray(params.id) ? params.id[0] : params.id
   const { data: asset, isLoading, isError } = useAsset(assetId)
   const { data: currentUser } = useCurrentUser()
@@ -753,9 +754,13 @@ export default function AssetDetailPage() {
       <div className="max-w-7xl mx-auto space-y-5">
         {/* Back + header */}
         <div>
-          <Link href="/assets" className="inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white mb-3">
+          <button
+            type="button"
+            onClick={() => router.back()}
+            className="inline-flex items-center gap-1 text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white mb-3"
+          >
             <ChevronLeft className="w-4 h-4" /> Asset Inventory
-          </Link>
+          </button>
           <div className="flex items-start justify-between flex-wrap gap-3">
             <div>
               <h2 className="text-xl font-bold text-zinc-900 dark:text-white font-mono">

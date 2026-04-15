@@ -5,7 +5,7 @@ from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, Field
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
@@ -293,21 +293,23 @@ async def list_scans(
     _: CurrentUser,
     limit: int = 20,
 ):
-    result = await db.execute(select(ScanJob))
-    scans = [scan for scan in result.scalars().all() if scan.parent_id is None]
-    scans.sort(key=_scan_sort_key)
-    return scans[:limit]
-
-
-def _scan_sort_key(scan: ScanJob) -> tuple[int, int, float]:
-    status_priority = {
-        "running": 0,
-        "paused": 1,
-        "pending": 2,
-    }.get(scan.status, 3)
-    queue_position = scan.queue_position if scan.queue_position is not None else 10_000
-    created_at_sort = -(scan.created_at.timestamp() if scan.created_at else 0)
-    return status_priority, queue_position, created_at_sort
+    status_priority = case(
+        (ScanJob.status == "running", 0),
+        (ScanJob.status == "paused", 1),
+        (ScanJob.status == "pending", 2),
+        else_=3,
+    )
+    result = await db.execute(
+        select(ScanJob)
+        .where(ScanJob.parent_id.is_(None))
+        .order_by(
+            status_priority.asc(),
+            ScanJob.queue_position.asc().nullslast(),
+            ScanJob.created_at.desc(),
+        )
+        .limit(limit)
+    )
+    return result.scalars().all()
 
 
 @router.post("/trigger", responses=TRIGGER_SCAN_RESPONSES)

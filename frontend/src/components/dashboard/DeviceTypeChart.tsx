@@ -2,7 +2,7 @@
 
 import { useMemo } from 'react'
 import { PieChart, Pie, Tooltip, ResponsiveContainer, Legend } from 'recharts'
-import { useAssets } from '@/hooks/useAssets'
+import { useDashboardAssets } from '@/hooks/useAssets'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 
 const COLORS: Record<string, string> = {
@@ -17,12 +17,12 @@ function renderLegendLabel(value: string) {
 }
 
 export function DeviceTypeChart() {
-  const { data: assets = [], isLoading } = useAssets()
+  const { data: assets = [], isLoading } = useDashboardAssets()
 
   const chartData = useMemo(() => {
     const counts: Record<string, number> = {}
     for (const asset of assets) {
-      const deviceClass = (asset as any).ai_analysis?.device_class ?? 'unknown'
+      const deviceClass = asset.ai_analysis?.device_class ?? asset.device_type ?? 'unknown'
       counts[deviceClass] = (counts[deviceClass] ?? 0) + 1
     }
 

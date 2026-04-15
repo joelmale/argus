@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useAssets } from '@/hooks/useAssets'
+import { useDashboardAssets } from '@/hooks/useAssets'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { StatusBadge, DeviceClassBadge } from '@/components/ui/Badge'
 import { timeAgo } from '@/lib/utils'
@@ -16,7 +16,7 @@ const SKELETON_ROW_KEYS = [
 ]
 
 export function RecentAssets() {
-  const { data: assets = [], isLoading } = useAssets()
+  const { data: assets = [], isLoading } = useDashboardAssets()
 
   // Sort by first_seen desc, take 8
   const recent = [...assets]
@@ -59,7 +59,7 @@ export function RecentAssets() {
               </p>
               <p className="text-xs text-zinc-500 font-mono">{a.ip_address}</p>
             </div>
-            <DeviceClassBadge deviceClass={(a as any).ai_analysis?.device_class ?? a.device_type} />
+            <DeviceClassBadge deviceClass={a.ai_analysis?.device_class ?? a.device_type} />
             <StatusBadge status={a.status} />
             <span className="text-xs text-zinc-400 hidden sm:block">{timeAgo(a.first_seen)}</span>
           </Link>

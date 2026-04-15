@@ -190,18 +190,26 @@ async def create_user(
     db: DBSession,
     _: AdminUser,
 ):
-    existing = await db.execute(select(User).where(User.username == payload.username))
+    username = payload.username.strip()
+    email = payload.email.strip() if payload.email else None
+
+    if len(username) < 3:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username must be at least 3 characters")
+    if len(payload.password) < 10:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 10 characters")
+
+    existing = await db.execute(select(User).where(User.username == username))
     if existing.scalar_one_or_none() is not None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Username already exists")
 
-    if payload.email:
-        existing_email = await db.execute(select(User).where(User.email == payload.email))
+    if email:
+        existing_email = await db.execute(select(User).where(User.email == email))
         if existing_email.scalar_one_or_none() is not None:
             raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Email already exists")
 
     user = User(
-        username=payload.username,
-        email=payload.email,
+        username=username,
+        email=email,
         hashed_password=hash_password(payload.password),
         role=payload.role,
         is_active=True,

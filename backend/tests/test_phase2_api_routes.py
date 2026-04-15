@@ -49,7 +49,12 @@ async def test_auth_routes_support_login_identity_and_admin_only_actions(api_cli
     created = await api_client.post(
         "/api/v1/auth/users",
         headers={"Authorization": f"Bearer {token}"},
-        json={"username": "new-viewer", "password": "pw", "role": "viewer", "email": "new-viewer@example.com"},
+        json={
+            "username": "new-viewer",
+            "password": "new-viewer-pass",
+            "role": "viewer",
+            "email": "new-viewer@example.com",
+        },
     )
     assert created.status_code == 201
     created_user = created.json()
@@ -360,7 +365,25 @@ async def test_asset_routes_serialize_nested_inventory_context(api_client, admin
     headers = {"Authorization": f"Bearer {admin_user['token']}"}
     listing = await api_client.get("/api/v1/assets/", headers=headers)
     assert listing.status_code == 200
-    assert listing.json()[0]["device_type"] == "firewall"
+    summary = next(row for row in listing.json() if row["id"] == asset_id)
+    assert summary["device_type"] == "firewall"
+    assert summary["open_ports_count"] == 1
+    assert "evidence" not in summary
+    assert "probe_runs" not in summary
+
+    expanded = await api_client.get("/api/v1/assets/?include=ports,tags,ai,probe_runs", headers=headers)
+    assert expanded.status_code == 200
+    expanded_summary = next(row for row in expanded.json() if row["id"] == asset_id)
+    assert expanded_summary["ports"][0]["port_number"] == 22
+    assert expanded_summary["tags"][0]["tag"] == "gateway"
+    assert expanded_summary["ai_analysis"]["vendor"] == "Firewalla"
+    assert expanded_summary["probe_runs"][0]["probe_type"] == "tls"
+
+    stats = await api_client.get("/api/v1/assets/stats?new_since=1970-01-01T00:00:00Z", headers=headers)
+    assert stats.status_code == 200
+    assert stats.json()["total"] >= 1
+    assert stats.json()["online"] >= 1
+    assert stats.json()["new_today"] >= 1
 
     detail = await api_client.get(f"/api/v1/assets/{asset_id}", headers=headers)
     assert detail.status_code == 200

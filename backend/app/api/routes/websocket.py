@@ -15,6 +15,17 @@ router = APIRouter()
 
 REDIS_CHANNEL = "argus:events"
 
+# Shared connection pool: one pool for all WebSocket connections rather than
+# a new raw connection per client.
+_redis_pool: redis.Redis | None = None
+
+
+def _get_redis() -> redis.Redis:
+    global _redis_pool
+    if _redis_pool is None:
+        _redis_pool = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    return _redis_pool
+
 
 async def _send_heartbeats(websocket: WebSocket) -> None:
     while True:
@@ -57,8 +68,7 @@ async def websocket_events(websocket: WebSocket):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="User not found")
             return
 
-    redis_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
-    pubsub = redis_client.pubsub()
+    pubsub = _get_redis().pubsub()
     await pubsub.subscribe(REDIS_CHANNEL)
     heartbeat_task = asyncio.create_task(_send_heartbeats(websocket))
 
@@ -79,4 +89,3 @@ async def websocket_events(websocket: WebSocket):
             await heartbeat_task
         await pubsub.unsubscribe(REDIS_CHANNEL)
         await pubsub.aclose()
-        await redis_client.aclose()

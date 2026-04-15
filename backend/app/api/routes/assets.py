@@ -24,7 +24,27 @@ from app.backups import (
     list_backup_snapshots,
     upsert_backup_target,
 )
-from app.db.models import Asset, AssetAIAnalysis, AssetHistory, AssetNote, AssetTag, ConfigBackupSnapshot, Finding, Port, ProbeRun, ScanJob, User, WirelessAssociation
+from app.assets.serialization import (
+    SUPPORTED_ASSET_INCLUDES,
+    AssetDetail,
+    AssetStats,
+    AssetSummary,
+    serialize_asset as _serialize_asset,
+    serialize_asset_summary as _serialize_asset_summary,
+)
+from app.db.models import (
+    Asset,
+    AssetHistory,
+    AssetNote,
+    AssetTag,
+    ConfigBackupSnapshot,
+    Finding,
+    Port,
+    ProbeRun,
+    ScanJob,
+    User,
+    WirelessAssociation,
+)
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 from app.scanner.agent import get_analyst
@@ -40,9 +60,10 @@ ASSET_NOT_FOUND_DETAIL = "Asset not found"
 DBSession = Annotated[AsyncSession, Depends(get_db)]
 AdminUser = Annotated[User, Depends(get_current_admin)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
-AssetSearch = Annotated[str | None, Query(description="Search by IP, hostname, or vendor")]
+AssetSearch = Annotated[str | None, Query(description="Search by IP, hostname, or vendor", max_length=200)]
 AssetStatus = Annotated[str | None, Query(description="Filter by status: online | offline")]
 AssetTagFilter = Annotated[str | None, Query(description="Filter by tag")]
+AssetInclude = Annotated[str | None, Query(description="Comma-separated expansions: ports,tags,ai,probe_runs")]
 CompareToSnapshot = Annotated[int | None, Query()]
 PLAIN_TEXT_MEDIA_TYPE = "text/plain"
 ASSET_NOT_FOUND_RESPONSE = {404: {"description": ASSET_NOT_FOUND_DETAIL}}
@@ -75,173 +96,14 @@ def _probe_run_summary(details: dict, probe_success: bool) -> str | None:
     return str(summary)[:512] if summary is not None else None
 
 
-def _serialize_ai_analysis(ai: AssetAIAnalysis | None) -> dict | None:
-    if ai is None:
-        return None
-    return {
-        "device_class": ai.device_class,
-        "confidence": ai.confidence,
-        "vendor": ai.vendor,
-        "model": ai.model,
-        "os_guess": ai.os_guess,
-        "device_role": ai.device_role,
-        "open_services_summary": ai.open_services_summary or [],
-        "security_findings": ai.security_findings or [],
-        "investigation_notes": ai.investigation_notes or "",
-        "suggested_tags": ai.suggested_tags or [],
-        "ai_backend": ai.ai_backend,
-        "model_used": ai.model_used,
-        "agent_steps": ai.agent_steps,
-        "analyzed_at": ai.analyzed_at.isoformat(),
-    }
-
-
-def _serialize_asset(asset: Asset) -> dict:
-    sorted_probe_runs = sorted(
-        asset.probe_runs,
-        key=lambda item: (
-            item.observed_at or datetime.min.replace(tzinfo=timezone.utc),
-            item.id,
-        ),
-        reverse=True,
-    )
-    return {
-        "id": str(asset.id),
-        "ip_address": asset.ip_address,
-        "mac_address": asset.mac_address,
-        "hostname": asset.hostname,
-        "vendor": asset.vendor,
-        "os_name": asset.os_name,
-        "os_version": asset.os_version,
-        "device_type": asset.effective_device_type,
-        "device_type_source": asset.effective_device_type_source,
-        "device_type_override": asset.device_type_override,
-        "status": asset.status,
-        "heartbeat_missed_count": asset.heartbeat_missed_count,
-        "heartbeat_last_checked_at": asset.heartbeat_last_checked_at.isoformat() if asset.heartbeat_last_checked_at else None,
-        "notes": asset.notes,
-        "custom_fields": asset.custom_fields,
-        "first_seen": asset.first_seen.isoformat(),
-        "last_seen": asset.last_seen.isoformat(),
-        "ports": [
-            {
-                "id": port.id,
-                "port_number": port.port_number,
-                "protocol": port.protocol,
-                "service": port.service,
-                "version": port.version,
-                "state": port.state,
-            }
-            for port in asset.ports
-        ],
-        "tags": [{"tag": tag.tag} for tag in asset.tags],
-        "note_entries": [
-            {
-                "id": row.id,
-                "content": row.content,
-                "created_at": row.created_at.isoformat(),
-                "updated_at": row.updated_at.isoformat(),
-                "user": (
-                    {
-                        "id": str(row.user.id),
-                        "username": row.user.username,
-                    }
-                    if row.user
-                    else None
-                ),
-            }
-            for row in sorted(asset.note_entries, key=lambda item: item.created_at, reverse=True)
-        ],
-        "ai_analysis": _serialize_ai_analysis(asset.ai_analysis),
-        "evidence": [
-            {
-                "id": row.id,
-                "source": row.source,
-                "category": row.category,
-                "key": row.key,
-                "value": row.value,
-                "confidence": row.confidence,
-                "details": row.details,
-                "observed_at": row.observed_at.isoformat(),
-            }
-            for row in sorted(asset.evidence, key=lambda item: (item.category, -item.confidence, item.key))
-        ],
-        "probe_runs": [
-            {
-                "id": row.id,
-                "probe_type": row.probe_type,
-                "target_port": row.target_port,
-                "success": row.success,
-                "duration_ms": row.duration_ms,
-                "summary": row.summary,
-                "details": row.details,
-                "raw_excerpt": row.raw_excerpt,
-                "observed_at": row.observed_at.isoformat(),
-            }
-            for row in sorted_probe_runs
-        ],
-        "observations": [
-            {
-                "id": row.id,
-                "source": row.source,
-                "event_type": row.event_type,
-                "summary": row.summary,
-                "details": row.details,
-                "observed_at": row.observed_at.isoformat(),
-            }
-            for row in sorted(asset.observations, key=lambda item: item.observed_at, reverse=True)
-        ],
-        "fingerprint_hypotheses": [
-            {
-                "id": row.id,
-                "source": row.source,
-                "device_type": row.device_type,
-                "vendor": row.vendor,
-                "model": row.model,
-                "os_guess": row.os_guess,
-                "confidence": row.confidence,
-                "summary": row.summary,
-                "supporting_evidence": row.supporting_evidence or [],
-                "prompt_version": row.prompt_version,
-                "model_used": row.model_used,
-                "raw_response": row.raw_response,
-                "created_at": row.created_at.isoformat(),
-            }
-            for row in sorted(asset.fingerprint_hypotheses, key=lambda item: item.created_at, reverse=True)
-        ],
-        "internet_lookup_results": [
-            {
-                "id": row.id,
-                "query": row.query,
-                "domain": row.domain,
-                "url": row.url,
-                "title": row.title,
-                "snippet": row.snippet,
-                "confidence": row.confidence,
-                "looked_up_at": row.looked_up_at.isoformat(),
-            }
-            for row in sorted(asset.internet_lookup_results, key=lambda item: item.looked_up_at, reverse=True)
-        ],
-        "lifecycle_records": [
-            {
-                "id": row.id,
-                "product": row.product,
-                "version": row.version,
-                "support_status": row.support_status,
-                "eol_date": row.eol_date,
-                "reference": row.reference,
-                "details": row.details,
-                "observed_at": row.observed_at.isoformat(),
-            }
-            for row in sorted(asset.lifecycle_records, key=lambda item: (item.support_status, item.product))
-        ],
-        "autopsy": {
-            "id": asset.autopsy.id,
-            "trace": asset.autopsy.trace,
-            "created_at": asset.autopsy.created_at.isoformat(),
-            "updated_at": asset.autopsy.updated_at.isoformat(),
-        } if asset.autopsy else None,
-    }
+def _parse_asset_includes(include: str | None) -> set[str]:
+    if not include:
+        return set()
+    requested = {item.strip() for item in include.split(",") if item.strip()}
+    unknown = requested - SUPPORTED_ASSET_INCLUDES
+    if unknown:
+        raise HTTPException(status_code=422, detail=f"Unsupported asset include: {', '.join(sorted(unknown))}")
+    return requested
 
 
 class AssetTagRequest(BaseModel):
@@ -289,30 +151,43 @@ async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
     return asset
 
 
-@router.get("/")
+async def _load_open_port_counts(db: AsyncSession, asset_ids: list[UUID]) -> dict[UUID, int]:
+    if not asset_ids:
+        return {}
+    result = await db.execute(
+        select(Port.asset_id, func.count(Port.id))
+        .where(Port.asset_id.in_(asset_ids), Port.state == "open")
+        .group_by(Port.asset_id)
+    )
+    return {asset_id: int(count) for asset_id, count in result.all()}
+
+
+@router.get("/", response_model=list[AssetSummary], response_model_exclude_none=True)
 async def list_assets(
     search: AssetSearch = None,
     status: AssetStatus = None,
     tag: AssetTagFilter = None,
-    skip: int = 0,
-    limit: int = 100,
+    include: AssetInclude = None,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=100, le=500),
     db: DBSession = None,
     _: CurrentUser = None,
 ):
-    """Return all discovered assets with optional filtering."""
-    q = select(Asset).options(
-        selectinload(Asset.tags),
-        selectinload(Asset.note_entries).selectinload(AssetNote.user),
-        selectinload(Asset.ports),
-        selectinload(Asset.ai_analysis),
-        selectinload(Asset.evidence),
-        selectinload(Asset.probe_runs),
-        selectinload(Asset.observations),
-        selectinload(Asset.fingerprint_hypotheses),
-        selectinload(Asset.internet_lookup_results),
-        selectinload(Asset.lifecycle_records),
-        selectinload(Asset.autopsy),
-    )
+    """Return compact asset summaries with optional light expansions."""
+    includes = _parse_asset_includes(include)
+    load_options = []
+    if "tags" in includes:
+        load_options.append(selectinload(Asset.tags))
+    if "ports" in includes:
+        load_options.append(selectinload(Asset.ports))
+    if "ai" in includes:
+        load_options.append(selectinload(Asset.ai_analysis))
+    if "probe_runs" in includes:
+        load_options.append(selectinload(Asset.probe_runs))
+
+    q = select(Asset)
+    if load_options:
+        q = q.options(*load_options)
     if status:
         q = q.where(Asset.status == status)
     if search:
@@ -324,9 +199,41 @@ async def list_assets(
         )
     if tag:
         q = q.join(AssetTag).where(AssetTag.tag == tag)
-    q = q.offset(skip).limit(limit)
+    q = q.order_by(Asset.ip_address.asc()).offset(skip).limit(limit)
     result = await db.execute(q)
-    return [_serialize_asset(asset) for asset in result.scalars().all()]
+    assets = list(result.scalars().all())
+    open_port_counts = await _load_open_port_counts(db, [asset.id for asset in assets])
+    return [
+        _serialize_asset_summary(
+            asset,
+            includes=includes,
+            open_ports_count=open_port_counts.get(asset.id, 0),
+        )
+        for asset in assets
+    ]
+
+
+@router.get("/stats", response_model=AssetStats)
+async def get_asset_stats(
+    new_since: datetime | None = Query(default=None, description="Timestamp used for the New Today count"),
+    db: DBSession = None,
+    _: CurrentUser = None,
+):
+    since = new_since or datetime.now(timezone.utc).replace(hour=0, minute=0, second=0, microsecond=0)
+    if since.tzinfo is None:
+        since = since.replace(tzinfo=timezone.utc)
+
+    status_rows = await db.execute(select(Asset.status, func.count(Asset.id)).group_by(Asset.status))
+    counts = {status: int(count) for status, count in status_rows.all()}
+    total = sum(counts.values())
+    new_today = await db.scalar(select(func.count(Asset.id)).where(Asset.first_seen >= since)) or 0
+    return {
+        "total": total,
+        "online": counts.get("online", 0),
+        "offline": counts.get("offline", 0),
+        "unknown": counts.get("unknown", 0),
+        "new_today": int(new_today),
+    }
 
 
 @router.get("/export.csv")
@@ -496,7 +403,7 @@ async def export_assets_report_html(db: DBSession, _: CurrentUser):
     )
 
 
-@router.get("/{asset_id}", responses=ASSET_NOT_FOUND_RESPONSE)
+@router.get("/{asset_id}", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
 async def get_asset(asset_id: UUID, db: DBSession, _: CurrentUser):
     stmt = (
         select(Asset)
@@ -556,7 +463,7 @@ async def run_asset_port_scan(
     return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
-@router.post("/{asset_id}/ai-analysis/refresh", responses=ASSET_NOT_FOUND_RESPONSE)
+@router.post("/{asset_id}/ai-analysis/refresh", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
 async def run_asset_ai_refresh(
     asset_id: UUID,
     db: DBSession,
@@ -593,7 +500,7 @@ async def run_asset_ai_refresh(
     return _serialize_asset(await _load_asset(db, asset_id))
 
 
-@router.post("/{asset_id}/snmp-refresh", responses=ASSET_NOT_FOUND_RESPONSE)
+@router.post("/{asset_id}/snmp-refresh", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
 async def run_asset_snmp_refresh(
     asset_id: UUID,
     db: DBSession,
@@ -658,7 +565,7 @@ async def run_asset_snmp_refresh(
     return _serialize_asset(await _load_asset(db, asset_id))
 
 
-@router.patch("/{asset_id}", responses=ASSET_UPDATE_RESPONSES)
+@router.patch("/{asset_id}", response_model=AssetDetail, responses=ASSET_UPDATE_RESPONSES)
 async def update_asset(
     asset_id: UUID,
     payload: dict,
