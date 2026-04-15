@@ -522,7 +522,7 @@ export interface AssetNoteEntry {
   } | null;
 }
 
-export interface Asset {
+export interface AssetSummary {
   id: string;
   ip_address: string;
   mac_address: string | null;
@@ -536,10 +536,18 @@ export interface Asset {
   status: AssetStatus;
   heartbeat_missed_count: number;
   heartbeat_last_checked_at: string | null;
-  notes: string | null;
-  custom_fields: Record<string, unknown> | null;
   first_seen: string;
   last_seen: string;
+  open_ports_count: number;
+  ports?: Port[] | null;
+  tags?: { tag: string }[] | null;
+  ai_analysis?: AssetAIAnalysis | null;
+  probe_runs?: ProbeRun[] | null;
+}
+
+export interface Asset extends Omit<AssetSummary, "ports" | "tags" | "ai_analysis" | "probe_runs"> {
+  notes: string | null;
+  custom_fields: Record<string, unknown> | null;
   ports: Port[];
   tags: { tag: string }[];
   note_entries: AssetNoteEntry[];
@@ -551,6 +559,14 @@ export interface Asset {
   internet_lookup_results: InternetLookupResult[];
   lifecycle_records: LifecycleRecord[];
   autopsy: AssetAutopsy | null;
+}
+
+export interface AssetStats {
+  total: number;
+  online: number;
+  offline: number;
+  unknown: number;
+  new_today: number;
 }
 
 export interface ScanJob {
@@ -584,6 +600,9 @@ export interface TopologyNode {
     topology_confidence?: number | null;
     is_gateway?: boolean;
     layout_tier?: string | null;
+    tier_hint?: string | null;
+    avg_latency_ms?: number | null;
+    ttl_distance?: number | null;
     is_infrastructure?: boolean;
   };
 }
@@ -625,7 +644,7 @@ export interface TopologyGraph {
 }
 
 export type WsEvent =
-  | { event: "device_discovered"; data: Asset }
+  | { event: "device_discovered"; data: { job_id?: string; stage?: string; ip: string; mac?: string | null; hostname?: string | null; device_class?: string | null } }
   | { event: "device_updated"; data: { job_id: string; stage?: string; ip: string; hostname?: string | null } }
   | { event: "scan_progress"; data: { job_id: string; stage?: string; progress?: number; current_host?: string; hosts_found?: number; hosts_port_scanned?: number; hosts_fingerprinted?: number; hosts_deep_probed?: number; hosts_investigated?: number; assets_created?: number; assets_updated?: number; message?: string } }
   | { event: "scan_complete"; data: Record<string, unknown> }

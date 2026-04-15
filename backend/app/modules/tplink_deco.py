@@ -21,6 +21,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit import log_audit_event
 from app.db.models import Asset, AssetTag, TplinkDecoConfig, TplinkDecoSyncRun, User
 from app.fingerprinting.passive import record_passive_observation
+from app.scanner.topology import _upsert_topology_link
+from app.topology.segments import ensure_segment_for_asset
 
 DEFAULT_DECO_OWNER_USERNAME = "admin"
 DECO_ISSUE_SEVERITY_ORDER = {"high": 0, "medium": 1, "low": 2, "info": 3}
@@ -122,6 +124,11 @@ def _decode_deco_label(value: str | None) -> str | None:
         return decoded.strip() or text
     except Exception:
         return text
+
+
+def _deco_name_key(value: str | None) -> str | None:
+    text = (value or "").strip().lower()
+    return text or None
 
 
 def _parse_deco_log_summary(raw_text: str) -> str:
@@ -827,6 +834,39 @@ async def _enrich_asset_from_client(db: AsyncSession, asset: Asset, client: Deco
     )
 
 
+async def _upsert_deco_client_topology_link(
+    db: AsyncSession,
+    client_asset: Asset,
+    client: DecoClientRecord,
+    device_assets_by_name: dict[str, Asset],
+) -> int:
+    access_point_name = _deco_name_key(client.access_point_name)
+    if not access_point_name:
+        return 0
+    if client.connection_type and "wireless" not in client.connection_type.lower():
+        return 0
+    access_point = device_assets_by_name.get(access_point_name)
+    if access_point is None:
+        result = await db.execute(select(Asset).where(func_lower(Asset.hostname) == access_point_name).limit(1))
+        access_point = result.scalar_one_or_none()
+    if access_point is None or access_point.id == client_asset.id:
+        return 0
+
+    segment = await ensure_segment_for_asset(db, access_point, source="tplink_deco")
+    metadata = {
+        "source": "tplink_deco",
+        "relationship_type": "wireless_ap_for",
+        "observed": True,
+        "confidence": 0.92,
+        "segment_id": segment.id if segment else None,
+        "access_point_name": client.access_point_name,
+        "client_mac": client.mac or client_asset.mac_address,
+        "client_ip": client.ip or client_asset.ip_address,
+        "connection_type": client.connection_type,
+    }
+    return await _upsert_topology_link(db, access_point.id, client_asset.id, "wifi", metadata)
+
+
 async def _enrich_asset_from_deco_device(db: AsyncSession, asset: Asset, device: DecoDeviceRecord) -> None:
     _set_asset_identity(asset, mac=device.mac, hostname=device.hostname)
     asset.vendor = asset.vendor or "TP-Link"
@@ -1001,11 +1041,16 @@ def _augment_logs_with_summary(logs_excerpt: str | None) -> str | None:
 
 
 async def _ingest_tplink_records(db: AsyncSession, devices: list[DecoDeviceRecord], clients: list[DecoClientRecord]) -> int:
+    device_assets_by_name: dict[str, Asset] = {}
     for device_record in devices:
         asset = await _resolve_asset_for_deco_device(db, device_record)
         if asset is None:
             continue
         await _enrich_asset_from_deco_device(db, asset, device_record)
+        for name in (device_record.hostname, device_record.nickname):
+            name_key = _deco_name_key(name)
+            if name_key:
+                device_assets_by_name[name_key] = asset
 
     ingested_assets = 0
     for client_record in clients:
@@ -1013,6 +1058,7 @@ async def _ingest_tplink_records(db: AsyncSession, devices: list[DecoDeviceRecor
         if asset is None:
             continue
         await _enrich_asset_from_client(db, asset, client_record)
+        await _upsert_deco_client_topology_link(db, asset, client_record, device_assets_by_name)
         ingested_assets += 1
     return ingested_assets
 

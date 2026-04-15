@@ -1,8 +1,8 @@
 'use client'
 
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card'
-import { useAssets } from '@/hooks/useAssets'
-import type { Asset } from '@/types'
+import { useDashboardAssets } from '@/hooks/useAssets'
+import type { AssetSummary } from '@/types'
 
 const MAX_BUCKETS = 6
 const BAR_COLORS = [
@@ -21,7 +21,7 @@ type OsBucket = {
   barClassName: string
 }
 
-function getAssetOs(asset: Asset): string | null {
+function getAssetOs(asset: AssetSummary): string | null {
   return asset.os_name ?? asset.ai_analysis?.os_guess ?? null
 }
 
@@ -59,7 +59,7 @@ function normalizeOsLabel(rawValue: string | null): string {
   return value
 }
 
-function buildBuckets(assets: Asset[]): OsBucket[] {
+function buildBuckets(assets: AssetSummary[]): OsBucket[] {
   if (assets.length === 0) {
     return []
   }
@@ -92,7 +92,7 @@ function buildBuckets(assets: Asset[]): OsBucket[] {
 }
 
 export function OsCompositionWidget() {
-  const { data: assets = [], isLoading } = useAssets()
+  const { data: assets = [], isLoading } = useDashboardAssets()
   const buckets = buildBuckets(assets)
   const identifiedCount = assets.filter((asset) => normalizeOsLabel(getAssetOs(asset)) !== 'Unknown').length
 

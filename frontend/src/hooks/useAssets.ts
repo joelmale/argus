@@ -1,12 +1,27 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { assetsApi, topologyApi } from '@/lib/api'
-import type { Asset, ConfigBackupSnapshot, ConfigBackupTarget, Finding, TopologyGraph, WirelessAssociation } from '@/types'
+import type { Asset, AssetStats, AssetSummary, ConfigBackupSnapshot, ConfigBackupTarget, Finding, TopologyGraph, WirelessAssociation } from '@/types'
 
-const DAY_MS = 86_400_000
-const INITIAL_RENDER_TIME = Date.now()
+export type AssetListInclude = 'ports' | 'tags' | 'ai' | 'probe_runs'
+export type AssetListParams = {
+  search?: string
+  status?: string
+  tag?: string
+  include?: AssetListInclude[]
+  skip?: number
+  limit?: number
+}
 
-export function useAssets(params?: { search?: string; status?: string; tag?: string }) {
-  return useQuery<Asset[]>({
+const DASHBOARD_ASSET_PARAMS: AssetListParams = { include: ['ai'] }
+
+function startOfToday(): number {
+  const d = new Date()
+  d.setHours(0, 0, 0, 0)
+  return d.getTime()
+}
+
+export function useAssets(params?: AssetListParams) {
+  return useQuery<AssetSummary[]>({
     queryKey: ['assets', params],
     queryFn: async () => {
       const { data } = await assetsApi.list(params)
@@ -14,6 +29,10 @@ export function useAssets(params?: { search?: string; status?: string; tag?: str
     },
     refetchInterval: 60_000,  // Background refresh every minute
   })
+}
+
+export function useDashboardAssets() {
+  return useAssets(DASHBOARD_ASSET_PARAMS)
 }
 
 export function useAsset(id: string) {
@@ -35,6 +54,7 @@ export function useUpdateAsset() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['assets', id] })
       qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset-stats'] })
     },
   })
 }
@@ -45,6 +65,7 @@ export function useBulkDeleteAssets() {
     mutationFn: (assetIds: string[]) => assetsApi.bulkDelete(assetIds),
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset-stats'] })
     },
   })
 }
@@ -56,6 +77,7 @@ export function useRunAssetPortScan() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ['assets', id] })
       qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset-stats'] })
     },
   })
 }
@@ -67,6 +89,7 @@ export function useRefreshAssetSnmp() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ['assets', id] })
       qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset-stats'] })
     },
   })
 }
@@ -78,6 +101,7 @@ export function useRefreshAssetAiAnalysis() {
     onSuccess: (_, id) => {
       qc.invalidateQueries({ queryKey: ['assets', id] })
       qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset-stats'] })
     },
   })
 }
@@ -89,6 +113,7 @@ export function useAddAssetNote() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['assets', id] })
       qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset-stats'] })
     },
   })
 }
@@ -100,6 +125,7 @@ export function useAddAssetTag() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['assets', id] })
       qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset-stats'] })
     },
   })
 }
@@ -111,6 +137,7 @@ export function useRemoveAssetTag() {
     onSuccess: (_, { id }) => {
       qc.invalidateQueries({ queryKey: ['assets', id] })
       qc.invalidateQueries({ queryKey: ['assets'] })
+      qc.invalidateQueries({ queryKey: ['asset-stats'] })
     },
   })
 }
@@ -228,15 +255,21 @@ export function useAssetFindings(id: string, enabled = true) {
   })
 }
 
-/** Quick stats derived from the asset list — avoids a separate API call */
 export function useAssetStats() {
-  const { data: assets = [], isLoading } = useAssets()
-  const online  = assets.filter((a) => a.status === 'online').length
-  const offline = assets.filter((a) => a.status === 'offline').length
-  const newToday = assets.filter((a) => {
-    try { return INITIAL_RENDER_TIME - new Date(a.first_seen).getTime() < DAY_MS }
-    catch { return false }
-  }).length
-
-  return { total: assets.length, online, offline, newToday, isLoading }
+  const query = useQuery<AssetStats>({
+    queryKey: ['asset-stats'],
+    queryFn: async () => {
+      const { data } = await assetsApi.stats({ new_since: new Date(startOfToday()).toISOString() })
+      return data
+    },
+    refetchInterval: 60_000,
+  })
+  return {
+    total: query.data?.total ?? 0,
+    online: query.data?.online ?? 0,
+    offline: query.data?.offline ?? 0,
+    unknown: query.data?.unknown ?? 0,
+    newToday: query.data?.new_today ?? 0,
+    isLoading: query.isLoading,
+  }
 }

@@ -1,13 +1,14 @@
 'use client'
 
-import { useMemo, useState } from 'react'
+import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { AppShell } from '@/components/layout/AppShell'
 import { AssetTable } from '@/components/assets/AssetTable'
 import { useAssets, useBulkDeleteAssets } from '@/hooks/useAssets'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useTriggerScan } from '@/hooks/useScans'
 import { assetsApi } from '@/lib/api'
-import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope, Trash2 } from 'lucide-react'
+import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope, Trash2, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
@@ -50,35 +51,103 @@ async function handleExportReportJson() {
   await exportAssetFile(() => assetsApi.exportJsonReport(), 'argus-report.json')
 }
 
-export default function AssetsPage() {
-  const [search, setSearch] = useState('')
-  const [status, setStatus] = useState('')
+function useDebounced<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value)
+  const timer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  useEffect(() => {
+    if (timer.current) clearTimeout(timer.current)
+    timer.current = setTimeout(() => setDebounced(value), delayMs)
+    return () => { if (timer.current) clearTimeout(timer.current) }
+  }, [value, delayMs])
+  return debounced
+}
+
+function AssetsPageContent() {
+  const searchParams = useSearchParams()
+  const router = useRouter()
+  const pathname = usePathname()
+
+  // Local state drives the input; debouncedSearch syncs to the URL.
+  const [search, setSearch] = useState(() => searchParams.get('search') ?? '')
+  // Status reads directly from the URL; no local state needed.
+  const status = searchParams.get('status') ?? ''
+
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
   const [recentCutoff] = useState(() => Date.now() - 24 * 60 * 60 * 1000)
+  const [exportOpen, setExportOpen] = useState(false)
+  const exportRef = useRef<HTMLDivElement>(null)
+  // Keep a ref so the search-sync effect can read the current status without
+  // adding it to the dependency array (which would fire on every status change,
+  // duplicating the update already handled by handleStatusChange).
+  const statusRef = useRef(status)
+
+  useEffect(() => {
+    statusRef.current = status
+  }, [status])
+
+  useEffect(() => {
+    if (!exportOpen) return
+    function handleOutsideClick(event: MouseEvent) {
+      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
+        setExportOpen(false)
+      }
+    }
+    function handleEscape(event: KeyboardEvent) {
+      if (event.key === 'Escape') setExportOpen(false)
+    }
+    document.addEventListener('mousedown', handleOutsideClick)
+    document.addEventListener('keydown', handleEscape)
+    return () => {
+      document.removeEventListener('mousedown', handleOutsideClick)
+      document.removeEventListener('keydown', handleEscape)
+    }
+  }, [exportOpen])
+  const debouncedSearch = useDebounced(search, 300)
+
+  // Sync debounced search value to the URL so browser history captures filter state.
+  useEffect(() => {
+    const params = new URLSearchParams()
+    if (debouncedSearch) params.set('search', debouncedSearch)
+    if (statusRef.current) params.set('status', statusRef.current)
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+  }, [debouncedSearch, pathname, router])
+
+  function handleStatusChange(newStatus: string) {
+    const params = new URLSearchParams()
+    if (debouncedSearch) params.set('search', debouncedSearch)
+    if (newStatus) params.set('status', newStatus)
+    const qs = params.toString()
+    router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
+  }
 
   const { data: assets = [], isLoading, isError } = useAssets({
-    search: search || undefined,
+    search: debouncedSearch || undefined,
     status: status || undefined,
+    include: ['ports', 'ai'],
   })
   const { data: currentUser } = useCurrentUser()
   const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
   const { mutate: bulkDeleteAssets, isPending: isBulkDeleting } = useBulkDeleteAssets()
   const canManageAssets = currentUser?.role === 'admin'
 
-  const clearFilters = () => { setSearch(''); setStatus('') }
-  const hasFilters = search || status
+  const clearFilters = () => {
+    setSearch('')
+    router.replace(pathname, { scroll: false })
+  }
+  const hasFilters = debouncedSearch || status
   const recentDiscoveryTargets = assets
     .filter((asset) => new Date(asset.first_seen).getTime() >= recentCutoff)
     .map((asset) => asset.ip_address)
   const unresolvedTargets = assets
     .filter((asset) => {
-      const ai = (asset as any).ai_analysis
+      const ai = asset.ai_analysis
       return !asset.hostname || !asset.vendor || !ai?.vendor
     })
     .map((asset) => asset.ip_address)
   const unknownTargets = assets
     .filter((asset) => {
-      const ai = (asset as any).ai_analysis
+      const ai = asset.ai_analysis
       const deviceClass = ai?.device_class ?? asset.device_type ?? 'unknown'
       return deviceClass === 'unknown'
     })
@@ -192,7 +261,7 @@ export default function AssetsPage() {
           {/* Status filter */}
           <select
             value={status}
-            onChange={(e) => setStatus(e.target.value)}
+            onChange={(e) => handleStatusChange(e.target.value)}
             className={cn(
               'px-3 py-2 rounded-lg text-sm',
               'bg-white dark:bg-zinc-900',
@@ -217,40 +286,39 @@ export default function AssetsPage() {
             </button>
           )}
 
-          <button
-            onClick={handleExportCsv}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <Download className="w-3.5 h-3.5" /> Export CSV
-          </button>
-
-          <button
-            onClick={handleExportAnsible}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <Boxes className="w-3.5 h-3.5" /> Ansible inventory
-          </button>
-
-          <button
-            onClick={handleExportTerraform}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <FileCode2 className="w-3.5 h-3.5" /> Terraform data
-          </button>
-
-          <button
-            onClick={handleExportInventoryJson}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <FileJson2 className="w-3.5 h-3.5" /> Inventory JSON
-          </button>
-
-          <button
-            onClick={handleExportReportJson}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
-          >
-            <Sheet className="w-3.5 h-3.5" /> Report JSON
-          </button>
+          <div className="relative" ref={exportRef}>
+            <button
+              onClick={() => setExportOpen((o) => !o)}
+              className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
+              aria-haspopup="true"
+              aria-expanded={exportOpen}
+            >
+              <Download className="w-3.5 h-3.5" />
+              Export
+              <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', exportOpen && 'rotate-180')} />
+            </button>
+            {exportOpen && (
+              <div className="absolute right-0 top-full z-10 mt-1 min-w-[11rem] rounded-lg border border-gray-200 bg-white py-1 shadow-md dark:border-zinc-700 dark:bg-zinc-900">
+                {([
+                  { label: 'CSV', icon: Download, action: handleExportCsv },
+                  { label: 'Ansible inventory', icon: Boxes, action: handleExportAnsible },
+                  { label: 'Terraform data', icon: FileCode2, action: handleExportTerraform },
+                  { label: 'Inventory JSON', icon: FileJson2, action: handleExportInventoryJson },
+                  { label: 'Report JSON', icon: Sheet, action: handleExportReportJson },
+                ] as const).map(({ label, icon: Icon, action }) => (
+                  <button
+                    key={label}
+                    type="button"
+                    onClick={() => { action(); setExportOpen(false) }}
+                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-600 hover:bg-gray-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                  >
+                    <Icon className="w-3.5 h-3.5 shrink-0" />
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
 
           <span className="text-sm text-zinc-500 ml-auto">
             {isLoading ? '…' : `${assets.length} assets`}
@@ -299,5 +367,21 @@ export default function AssetsPage() {
         />
       </div>
     </AppShell>
+  )
+}
+
+export default function AssetsPage() {
+  return (
+    <Suspense
+      fallback={(
+        <AppShell>
+          <div className="w-full max-w-[120rem] mx-auto text-sm text-zinc-500">
+            Loading assets...
+          </div>
+        </AppShell>
+      )}
+    >
+      <AssetsPageContent />
+    </Suspense>
   )
 }

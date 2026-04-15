@@ -62,6 +62,8 @@ IFACE_COUNTER_OIDS = {
 
 VLAN_PVID_OID = "1.3.6.1.2.1.17.7.1.4.5.1.1"
 ARP_MAC_OID = "1.3.6.1.2.1.4.22.1.2"
+BRIDGE_FDB_PORT_OID = "1.3.6.1.2.1.17.4.3.1.2"
+BRIDGE_PORT_IF_INDEX_OID = "1.3.6.1.2.1.17.1.4.1.2"
 HR_PROCESSOR_LOAD_OID = "1.3.6.1.2.1.25.3.3.1.2"
 HR_STORAGE_OIDS = {
     "descr": "1.3.6.1.2.1.25.2.3.1.3",
@@ -125,6 +127,32 @@ class SnmpPoller:
             ip = ".".join(oid_parts[-4:])
             mac = _format_mac(value)
             entries.append({"ip": ip, "mac": mac, "if_index": interface_index})
+        return entries
+
+    async def get_bridge_table(self, host: str) -> list[dict]:
+        """Return Bridge MIB forwarding entries: [{mac, bridge_port, if_index}]."""
+        fdb_rows = await self._walk(host, BRIDGE_FDB_PORT_OID)
+        port_map_rows = await self._walk(host, BRIDGE_PORT_IF_INDEX_OID)
+        bridge_port_to_if_index: dict[int, int] = {}
+        for oid, value in port_map_rows:
+            try:
+                bridge_port_to_if_index[int(oid.split(".")[-1])] = int(value)
+            except (TypeError, ValueError):
+                continue
+
+        entries: list[dict] = []
+        for oid, value in fdb_rows:
+            mac = _format_bridge_mac_from_oid(oid)
+            bridge_port = _safe_int(value)
+            if mac is None or bridge_port is None:
+                continue
+            entries.append(
+                {
+                    "mac": mac,
+                    "bridge_port": bridge_port,
+                    "if_index": bridge_port_to_if_index.get(bridge_port),
+                }
+            )
         return entries
 
     async def get_interfaces(self, host: str) -> list[dict]:
@@ -267,6 +295,19 @@ def _format_mac(value: str) -> str:
     if len(value) % 2 != 0:
         return value.upper()
     return ":".join(value[i : i + 2] for i in range(0, len(value), 2)).upper()
+
+
+def _format_bridge_mac_from_oid(oid: str) -> str | None:
+    parts = oid.split(".")
+    if len(parts) < 6:
+        return None
+    try:
+        octets = [int(part) for part in parts[-6:]]
+    except ValueError:
+        return None
+    if any(octet < 0 or octet > 255 for octet in octets):
+        return None
+    return ":".join(f"{octet:02X}" for octet in octets)
 
 
 def _normalize_value(field: str, value: str):

@@ -74,6 +74,8 @@ async def list_findings(
     severity: SeverityFilter = None,
     status_filter: StatusFilter = None,
     asset_id: AssetFilter = None,
+    skip: int = Query(default=0, ge=0),
+    limit: int = Query(default=200, le=1000),
     db: DBSession = None,
     _: CurrentUser = None,
 ):
@@ -84,6 +86,7 @@ async def list_findings(
         stmt = stmt.where(Finding.status == status_filter.lower())
     if asset_id:
         stmt = stmt.where(Finding.asset_id == asset_id)
+    stmt = stmt.offset(skip).limit(limit)
     result = await db.execute(stmt)
     return [_serialize_finding(finding) for finding in result.scalars().all()]
 

@@ -63,22 +63,64 @@ class Asset(Base):
     status: Mapped[str] = mapped_column(String(16), default="online")  # online | offline | unknown
     heartbeat_missed_count: Mapped[int] = mapped_column(Integer, default=0)
     heartbeat_last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    avg_latency_ms: Mapped[float | None] = mapped_column(Float)
+    ttl_distance: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
     custom_fields: Mapped[dict | None] = mapped_column(JSONB)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
-    ports: Mapped[list["Port"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    tags: Mapped[list["AssetTag"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    history: Mapped[list["AssetHistory"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    note_entries: Mapped[list["AssetNote"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    ports: Mapped[list["Port"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (Port.port_number.asc(), Port.protocol.asc()),
+    )
+    tags: Mapped[list["AssetTag"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: AssetTag.tag.asc(),
+    )
+    history: Mapped[list["AssetHistory"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (AssetHistory.changed_at.desc(), AssetHistory.id.desc()),
+    )
+    note_entries: Mapped[list["AssetNote"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (AssetNote.created_at.desc(), AssetNote.id.desc()),
+    )
     ai_analysis: Mapped["AssetAIAnalysis | None"] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    evidence: Mapped[list["AssetEvidence"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    probe_runs: Mapped[list["ProbeRun"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    observations: Mapped[list["PassiveObservation"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    fingerprint_hypotheses: Mapped[list["FingerprintHypothesis"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    internet_lookup_results: Mapped[list["InternetLookupResult"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
-    lifecycle_records: Mapped[list["LifecycleRecord"]] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
+    evidence: Mapped[list["AssetEvidence"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (AssetEvidence.category.asc(), AssetEvidence.confidence.desc(), AssetEvidence.key.asc()),
+    )
+    probe_runs: Mapped[list["ProbeRun"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (ProbeRun.observed_at.desc(), ProbeRun.id.desc()),
+    )
+    observations: Mapped[list["PassiveObservation"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (PassiveObservation.observed_at.desc(), PassiveObservation.id.desc()),
+    )
+    fingerprint_hypotheses: Mapped[list["FingerprintHypothesis"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (FingerprintHypothesis.created_at.desc(), FingerprintHypothesis.id.desc()),
+    )
+    internet_lookup_results: Mapped[list["InternetLookupResult"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (InternetLookupResult.looked_up_at.desc(), InternetLookupResult.id.desc()),
+    )
+    lifecycle_records: Mapped[list["LifecycleRecord"]] = relationship(
+        back_populates="asset",
+        cascade=CASCADING_CHILDREN,
+        order_by=lambda: (LifecycleRecord.support_status.asc(), LifecycleRecord.product.asc()),
+    )
     autopsy: Mapped["AssetAutopsy | None"] = relationship(back_populates="asset", cascade=CASCADING_CHILDREN)
 
     __table_args__ = (UniqueConstraint("ip_address", name="uq_asset_ip"),)

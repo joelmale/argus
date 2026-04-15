@@ -190,6 +190,8 @@ async def _create_asset(
         status="online",
         heartbeat_missed_count=0,
         heartbeat_last_checked_at=now,
+        avg_latency_ms=_normalize_latency_ms(result.host.response_time_ms),
+        ttl_distance=_infer_ttl_distance(result.host.ttl),
         first_seen=now,
         last_seen=now,
     )
@@ -255,12 +257,29 @@ def _apply_asset_updates(
     _check("hostname", new_hostname)
     _check("vendor", new_vendor)
     _check("os_name", new_os)
+    _check("avg_latency_ms", _normalize_latency_ms(result.host.response_time_ms))
+    _check("ttl_distance", _infer_ttl_distance(result.host.ttl))
     if not existing.device_type_override:
         _check("device_type", new_device_type)
         if new_device_type is not None:
             _check("device_type_source", new_device_type_source)
     if result.host.mac_address and not existing.mac_address:
         _check("mac_address", result.host.mac_address)
+
+
+def _normalize_latency_ms(value: float | None) -> float | None:
+    if value is None or value < 0:
+        return None
+    return round(float(value), 2)
+
+
+def _infer_ttl_distance(ttl: int | None) -> int | None:
+    if ttl is None or ttl <= 0:
+        return None
+    for initial_ttl in (64, 128, 255):
+        if ttl <= initial_ttl:
+            return max(initial_ttl - ttl, 0)
+    return None
 
 
 def _record_discovery_history(db: AsyncSession, asset: Asset, result: HostScanResult) -> None:

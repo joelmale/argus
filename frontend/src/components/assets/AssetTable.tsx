@@ -1,20 +1,20 @@
 'use client'
 
-import { useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
+import { useMemo, useState, type Dispatch, type ReactNode, type SetStateAction } from 'react'
 import Link from 'next/link'
 import { AlertTriangle, ArrowDown, ArrowUp, ArrowUpDown, Bot, Check, ChevronDown, Loader2, Microscope } from 'lucide-react'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useTriggerScan } from '@/hooks/useScans'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { confidenceLabel, timeAgo, cn } from '@/lib/utils'
-import type { Asset } from '@/types'
+import type { AssetAIAnalysis, AssetSummary } from '@/types'
 
 type SortKey = 'ip' | 'hostname' | 'vendor' | 'type' | 'confidence' | 'ports' | 'status' | 'last_seen'
 type SortDirection = 'asc' | 'desc'
 type FilterKey = Exclude<SortKey, 'ip'>
 
 interface AssetTableProps {
-  readonly assets: Asset[]
+  readonly assets: AssetSummary[]
   readonly isLoading: boolean
   readonly isError: boolean
   readonly canManageAssets?: boolean
@@ -24,8 +24,8 @@ interface AssetTableProps {
 }
 
 type AssetView = {
-  asset: Asset
-  ai: any
+  asset: AssetSummary
+  ai: AssetAIAnalysis | null
   deviceClass: string
   openPorts: number
   vendorLabel: string
@@ -54,9 +54,9 @@ interface ColumnFilterMenuProps {
 const EMPTY_VALUE = '__empty__'
 const LAST_SEEN_BUCKETS = ['Last Hour', 'Today', 'This Week', 'Older']
 
-function buildAssetView(asset: Asset): AssetView {
-  const ai = (asset as any).ai_analysis
-  const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open').length
+function buildAssetView(asset: AssetSummary): AssetView {
+  const ai = asset.ai_analysis ?? null
+  const openPorts = asset.open_ports_count ?? (asset.ports ?? []).filter((port) => port.state === 'open').length
   const confidence = ai?.confidence ?? -1
   let confidenceText = '—'
   if (ai) {
@@ -89,13 +89,22 @@ function bucketLastSeen(value: string): string {
 }
 
 function compareIp(a: string, b: string): number {
-  const left = a.split('.').map(Number)
-  const right = b.split('.').map(Number)
-  for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
-    const delta = (left[index] ?? 0) - (right[index] ?? 0)
-    if (delta !== 0) return delta
+  const aIsV4 = !a.includes(':')
+  const bIsV4 = !b.includes(':')
+  // Sort IPv4 before IPv6
+  if (aIsV4 !== bIsV4) return aIsV4 ? -1 : 1
+  if (aIsV4) {
+    // Numeric comparison per octet
+    const left = a.split('.').map(Number)
+    const right = b.split('.').map(Number)
+    for (let index = 0; index < Math.max(left.length, right.length); index += 1) {
+      const delta = (left[index] ?? 0) - (right[index] ?? 0)
+      if (delta !== 0) return delta
+    }
+    return 0
   }
-  return 0
+  // IPv6: lexicographic is sufficient for display ordering
+  return a.localeCompare(b)
 }
 
 function normalizeFilterValue(value: string | null | undefined): string {
@@ -180,18 +189,9 @@ export function AssetTable({
   const { data: currentUser } = useCurrentUser()
   const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
 
-  if (isError) {
-    return (
-      <div className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-6 text-center">
-        <AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-2" />
-        <p className="text-sm text-red-600 dark:text-red-400">Failed to load assets. Is the backend running?</p>
-      </div>
-    )
-  }
+  const views = useMemo(() => assets.map(buildAssetView), [assets])
 
-  const views = assets.map(buildAssetView)
-
-  const columns: ColumnDef[] = [
+  const columns: ColumnDef[] = useMemo(() => [
     { key: 'ip', label: 'IP Address' },
     {
       key: 'hostname',
@@ -235,9 +235,9 @@ export function AssetTable({
       filterKey: 'last_seen',
       options: LAST_SEEN_BUCKETS.map((bucket) => ({ value: bucket, label: bucket })),
     },
-  ]
+  ], [views])
 
-  const filteredViews = views.filter((view) =>
+  const filteredViews = useMemo(() => views.filter((view) =>
     filterValueMatches(normalizeFilterValue(view.asset.hostname), filters.hostname)
     && filterValueMatches(normalizeFilterValue(view.ai?.vendor ?? view.asset.vendor ?? view.asset.os_name), filters.vendor)
     && filterValueMatches(normalizeFilterValue(view.deviceClass), filters.type)
@@ -245,7 +245,8 @@ export function AssetTable({
     && filterValueMatches(String(view.openPorts), filters.ports)
     && filterValueMatches(normalizeFilterValue(view.statusLabel), filters.status)
     && filterValueMatches(normalizeFilterValue(view.lastSeenBucket), filters.last_seen)
-  )
+  ), [views, filters])
+
   const loadingRows = Array.from({ length: 8 }, (_, index) => (
     <SkeletonRow key={`asset-skeleton-${index}`} columnCount={canManageAssets ? 10 : 9} />
   ))
@@ -254,9 +255,21 @@ export function AssetTable({
     desc: <ArrowDown className="w-3.5 h-3.5" />,
   } satisfies Record<SortDirection, ReactNode>
 
-  const sortedViews = [...filteredViews].sort((left, right) => sortAssets(left, right, sortKey, sortDirection))
-  const visibleAssetIds = sortedViews.map((view) => view.asset.id)
+  const sortedViews = useMemo(
+    () => [...filteredViews].sort((left, right) => sortAssets(left, right, sortKey, sortDirection)),
+    [filteredViews, sortKey, sortDirection],
+  )
+  const visibleAssetIds = useMemo(() => sortedViews.map((view) => view.asset.id), [sortedViews])
   const allVisibleSelected = visibleAssetIds.length > 0 && visibleAssetIds.every((assetId) => selectedAssetIds.includes(assetId))
+  if (isError) {
+    return (
+      <div className="rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-900/10 p-6 text-center">
+        <AlertTriangle className="w-8 h-8 text-red-500 mx-auto mb-2" />
+        <p className="text-sm text-red-600 dark:text-red-400">Failed to load assets. Is the backend running?</p>
+      </div>
+    )
+  }
+
   let tableRows: ReactNode = sortedViews.map((view) => (
     <AssetRow
       key={view.asset.id}
@@ -452,7 +465,7 @@ function AssetRow({
   selected,
   onToggleSelected,
 }: Readonly<{
-  asset: Asset
+  asset: AssetSummary
   canEnrich: boolean
   isEnriching: boolean
   onRunEnrichment: () => void
@@ -460,9 +473,9 @@ function AssetRow({
   selected: boolean
   onToggleSelected?: () => void
 }>) {
-  const ai = (asset as any).ai_analysis
+  const ai = asset.ai_analysis ?? null
   const deviceClass = ai?.device_class ?? asset.device_type ?? 'unknown'
-  const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open').length
+  const openPorts = asset.open_ports_count ?? (asset.ports ?? []).filter((port) => port.state === 'open').length
   const hasSecurityFindings = (ai?.security_findings?.length ?? 0) > 0
   const vendorText = ai?.vendor ?? asset.vendor
   const osText = ai?.os_guess ?? asset.os_name

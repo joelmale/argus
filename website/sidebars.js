@@ -15,6 +15,7 @@ module.exports = {
         'guides/frontend-dashboard-guide',
         'guides/ci-cd-security',
         'guides/development-workflow',
+        'guides/improvement-roadmap',
       ],
     },
     'troubleshooting',

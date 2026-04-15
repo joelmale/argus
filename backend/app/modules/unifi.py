@@ -11,6 +11,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.audit import log_audit_event
 from app.db.models import Asset, AssetTag, UnifiConfig, UnifiSyncRun, User
 from app.fingerprinting.passive import record_passive_observation
+from app.scanner.topology import _upsert_topology_link
+from app.topology.segments import ensure_segment_for_asset
 
 
 def _utcnow() -> datetime:
@@ -304,6 +306,30 @@ async def _enrich_asset_from_unifi_client(db: AsyncSession, asset: Asset, client
     )
 
 
+async def _upsert_unifi_client_topology_link(db: AsyncSession, client_asset: Asset, client: UnifiClientRecord) -> int:
+    if not client.ap_mac:
+        return 0
+    if (client_asset.mac_address or "").lower() == client.ap_mac.lower():
+        return 0
+    access_point = await _resolve_asset(db, mac=client.ap_mac, ip=None, hostname=None)
+    if access_point is None or access_point.id == client_asset.id:
+        return 0
+
+    segment = await ensure_segment_for_asset(db, access_point, source="unifi")
+    metadata = {
+        "source": "unifi",
+        "relationship_type": "wireless_ap_for",
+        "observed": True,
+        "confidence": 0.98,
+        "segment_id": segment.id if segment else None,
+        "ap_mac": client.ap_mac,
+        "client_mac": client.mac or client_asset.mac_address,
+        "client_ip": client.ip or client_asset.ip_address,
+        "ssid": client.ssid,
+    }
+    return await _upsert_topology_link(db, access_point.id, client_asset.id, "wifi", metadata)
+
+
 async def _enrich_asset_from_unifi_device(db: AsyncSession, asset: Asset, device: UnifiDeviceRecord) -> None:
     if device.mac and not asset.mac_address:
         asset.mac_address = device.mac
@@ -410,11 +436,13 @@ async def sync_unifi_module(db: AsyncSession) -> dict[str, Any]:
             await _enrich_asset_from_unifi_device(db, asset, device)
 
         ingested = 0
+        topology_links = 0
         for client in clients:
             asset = await _resolve_asset(db, mac=client.mac, ip=client.ip, hostname=client.hostname)
             if asset is None:
                 continue
             await _enrich_asset_from_unifi_client(db, asset, client)
+            topology_links += await _upsert_unifi_client_topology_link(db, asset, client)
             ingested += 1
 
         run.status = "done"
@@ -435,6 +463,7 @@ async def sync_unifi_module(db: AsyncSession) -> dict[str, Any]:
             "client_count": len(clients),
             "device_count": len(devices),
             "ingested_assets": ingested,
+            "topology_links": topology_links,
             "run_id": run.id,
         }
     except Exception as exc:

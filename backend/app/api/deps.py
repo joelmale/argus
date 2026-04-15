@@ -40,8 +40,10 @@ async def get_current_user(
         if user is None or not user.is_active:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
 
-        api_key.last_used_at = datetime.now(timezone.utc)
-        await db.commit()
+        now = datetime.now(timezone.utc)
+        if api_key.last_used_at is None or (now - api_key.last_used_at).total_seconds() > 60:
+            api_key.last_used_at = now
+            await db.commit()
         return user
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")

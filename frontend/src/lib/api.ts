@@ -105,8 +105,13 @@ export const authApi = {
 
 // ─── Asset endpoints ────────────────────────────────────────────
 export const assetsApi = {
-  list: (params?: { search?: string; status?: string; tag?: string }) =>
-    api.get("/api/v1/assets/", { params }),
+  list: (params?: { search?: string; status?: string; tag?: string; include?: string[]; skip?: number; limit?: number }) => {
+    const requestParams = params?.include
+      ? { ...params, include: params.include.join(",") }
+      : params;
+    return api.get("/api/v1/assets/", { params: requestParams });
+  },
+  stats: (params?: { new_since?: string }) => api.get("/api/v1/assets/stats", { params }),
   exportCsv: () => api.get("/api/v1/assets/export.csv", { responseType: "blob" }),
   exportAnsible: () => api.get("/api/v1/assets/export.ansible.ini", { responseType: "blob" }),
   exportTerraform: () => api.get("/api/v1/assets/export.terraform.tf.json", { responseType: "blob" }),
@@ -169,12 +174,6 @@ export const topologyApi = {
 };
 
 // ─── WebSocket helper ───────────────────────────────────────────
-export function createWsConnection(onMessage: (e: MessageEvent) => void): WebSocket {
-  const baseWsUrl = getWsBaseUrl();
-  const token = getBrowserStorageToken();
-  const tokenQuery = token ? `?token=${encodeURIComponent(token)}` : "";
-  const wsUrl = `${baseWsUrl}/ws/events${tokenQuery}`;
-  const ws = new WebSocket(wsUrl);
-  ws.onmessage = onMessage;
-  return ws;
+export function getWsEventsUrl(): string {
+  return `${getWsBaseUrl()}/ws/events`;
 }

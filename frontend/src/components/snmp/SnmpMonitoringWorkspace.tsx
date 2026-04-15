@@ -8,7 +8,7 @@ import { StatusBadge } from '@/components/ui/Badge'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useAssets, useRefreshAssetSnmp } from '@/hooks/useAssets'
 import { cn, formatDate, timeAgo } from '@/lib/utils'
-import type { Asset, DeviceType, ProbeRun } from '@/types'
+import type { AssetSummary, DeviceType, ProbeRun } from '@/types'
 
 type SnmpResourceSummary = {
   cpuAverageLoad: number | null
@@ -64,7 +64,7 @@ type SnmpDetails = {
 }
 
 type SnmpAssetSummary = {
-  asset: Asset
+  asset: AssetSummary
   latestAttempt: ProbeRun | null
   latestSuccess: ProbeRun | null
   details: SnmpDetails | null
@@ -250,7 +250,7 @@ function parseSnmpDetails(probe: ProbeRun | null): SnmpDetails | null {
   }
 }
 
-function buildSnmpAssetSummary(asset: Asset): SnmpAssetSummary {
+function buildSnmpAssetSummary(asset: AssetSummary): SnmpAssetSummary {
   const snmpRuns = (asset.probe_runs ?? []).filter((probe) => probe.probe_type === 'snmp')
   const latestAttempt = snmpRuns[0] ?? null
   const latestSuccess = snmpRuns.find((probe) => probe.success) ?? null
@@ -427,7 +427,7 @@ function DetailsTable({
 }
 
 export function SnmpMonitoringWorkspace() {
-  const { data: assets = [], isLoading, isError } = useAssets()
+  const { data: assets = [], isLoading, isError } = useAssets({ include: ['ports', 'ai', 'probe_runs'] })
   const { data: currentUser } = useCurrentUser()
   const { mutate: refreshSnmp, isPending: isRefreshing } = useRefreshAssetSnmp()
   const [selectedAssetId, setSelectedAssetId] = useState<string | null>(null)
