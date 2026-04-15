@@ -405,69 +405,36 @@ Validation:
 Rollback risk: Medium. Behavior should not change, but refactors touch many files.
 Use multiple commits and avoid bundling unrelated services into one commit.
 
-## Phase 5: Async Workflows and Scan Queue Hardening
+## Phase 5A: Queued Refreshes and Scan Dispatch Locking
 
-Effort: Medium to Large
+Status: Complete.
 
-Purpose: make long-running work resilient and prevent scan dispatch races.
+Implemented:
 
-Scope:
+- Asset AI and SNMP refresh actions now enqueue jobs and return a job id.
+- Scan queue writes and dispatch are protected with a PostgreSQL advisory lock.
+- Queue progress and completion events now follow the same job lifecycle as scans.
 
-- Queue manual refresh operations instead of running network work inside HTTP requests.
-  - AI refresh should enqueue a job and return a job ID.
-  - SNMP refresh should enqueue a job or use a short dedicated background task.
-  - UI should show queued/running/completed state like scan actions.
-- Add database-backed concurrency protection around scan dispatch.
-  - Use PostgreSQL advisory locks, row locks, or a queue invariant.
-  - Make "start next scan if idle" idempotent.
-  - Ensure concurrent trigger requests cannot start multiple root jobs.
-- Split Celery beat from the scanner worker for production.
-  - Add a separate scheduler service in compose.
-  - Keep the current single-container path available for simple local development if useful.
-- Reduce repeated async engine construction in worker tasks.
-  - Prefer a shared worker session factory where safe.
-  - Keep explicit disposal during shutdown.
-- Improve event consistency.
-  - Treat WebSocket updates as hints and keep API state authoritative.
-  - Ensure queued refresh jobs emit predictable progress and completion events.
-- Queue export operations as background jobs instead of blocking HTTP requests.
-  - CSV, JSON, and HTML exports enqueue a job and return a job ID.
-  - Add polling or a WebSocket completion event for export readiness.
-  - Fits naturally into the `AssetExportService` and job dispatch patterns introduced
-    in this phase; prevents export timeout for large inventories.
-- Implement WebSocket automatic reconnection in the frontend client.
-  - Use exponential backoff (1 s, 2 s, 4 s, cap at 30 s).
-  - Show a small "Reconnecting…" indicator in the UI when the connection is lost.
-  - Suppress the 60-second polling fallback while the WebSocket is connected; only
-    fall back to polling when the connection cannot be re-established.
+## Phase 5B: Worker Topology and Session Lifecycle
 
-Suggested commits:
+Status: Complete.
 
-```text
-feat(assets): queue manual ai and snmp refresh actions
-fix(scans): protect queue dispatch with database locking
-refactor(worker): share scanner session factory lifecycle
-ops(scanner): split celery beat into scheduler service
-test(scans): cover concurrent trigger and queue dispatch behavior
-feat(exports): queue csv and json exports as background jobs
-feat(websocket-client): add exponential backoff reconnection
-```
+Implemented:
 
-Validation:
+- The worker now shares a lazy async session factory across long-running tasks.
+- Worker shutdown disposes the shared database engine explicitly.
+- Celery beat now runs in a separate scheduler service in both prod and dev compose files.
 
-- Backend tests for concurrent scan trigger attempts.
-- Backend tests for queued refresh job creation and completion.
-- Backend tests for export job creation and completion events.
-- Manual smoke:
-  - trigger two scans at once
-  - pause, resume, cancel, and start-now queue actions
-  - trigger AI refresh and SNMP refresh from asset detail
-  - restart scanner while pending jobs exist
-  - trigger a CSV export and verify job ID is returned and file downloads on completion
-  - disconnect and reconnect network; verify WebSocket reconnects without page reload
+## Phase 5C: Export Jobs and WebSocket Reconnection
 
-Rollback risk: Medium to High. Queue semantics and worker topology are operationally
-sensitive, so ship behind clear commits and avoid mixing with UI refactors.
+Status: Complete.
+
+Implemented:
+
+- CSV, Ansible, Terraform, inventory JSON, report JSON, and report HTML exports now queue background jobs and expose a download endpoint when complete.
+- The asset inventory page polls scan job status until an export artifact is ready, then downloads it.
+- WebSocket reconnect now uses exponential backoff and the sidebar shows a reconnecting state.
+- Query polling backs off while the websocket is healthy and resumes when the connection drops.
 
 ## Phase 6: Topology, Metrics, and Export Scaling
 
