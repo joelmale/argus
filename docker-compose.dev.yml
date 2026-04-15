@@ -32,8 +32,24 @@ services:
     # Celery watchdog reloads worker when Python files change
     command: >
       celery -A app.workers.tasks.celery_app worker
-        --loglevel=info -B
+        --loglevel=info
         --autoscale=4,1
+    environment:
+      DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@localhost:5432/argus}
+      REDIS_URL: ${REDIS_URL_DOCKER:-redis://localhost:6379/0}
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    volumes:
+      - ./backend:/app
+    network_mode: host
+
+  scanner-beat:
+    build:
+      context: .
+      dockerfile: scanner/Dockerfile
+    command: >
+      celery -A app.workers.tasks.celery_app beat
+        --loglevel=info
     environment:
       DATABASE_URL: ${DATABASE_URL_DOCKER:-postgresql+asyncpg://argus:argus_dev_password@localhost:5432/argus}
       REDIS_URL: ${REDIS_URL_DOCKER:-redis://localhost:6379/0}

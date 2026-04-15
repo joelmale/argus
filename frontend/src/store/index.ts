@@ -32,6 +32,8 @@ interface AppState {
   // WebSocket connection status
   wsConnected: boolean
   setWsConnected: (v: boolean) => void
+  wsReconnecting: boolean
+  setWsReconnecting: (v: boolean) => void
 
   // Live events feed (capped at 100)
   events: LiveEvent[]
@@ -61,6 +63,8 @@ export const useAppStore = create<AppState>()(
 
       wsConnected: false,
       setWsConnected: (v) => set({ wsConnected: v }),
+      wsReconnecting: false,
+      setWsReconnecting: (v) => set({ wsReconnecting: v }),
 
       events: [],
       addEvent: (event) =>

@@ -4,6 +4,7 @@ import axios from 'axios'
 import { useSyncExternalStore } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { authApi, TOKEN_STORAGE_KEY } from '@/lib/api'
+import { useAppStore } from '@/store'
 import type { AlertRule, ApiKey, AuditLogEntry, BackupDriver, ConfigBackupPolicy, CurrentUser, FirewallaConfig, FirewallaSyncRun, FingerprintDataset, HomeAssistantExport, IntegrationEvent, OllamaModelsResponse, OllamaPullResponse, PfsenseConfig, PfsenseSyncRun, PluginInfo, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UnifiConfig, UnifiSyncRun, UserRole } from '@/types'
 
 const AUTH_EVENT = 'argus-auth-changed'
@@ -211,6 +212,7 @@ export function useDeleteApiKey() {
 }
 
 export function useAuditLogs(enabled = true) {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<AuditLogEntry[]>({
     queryKey: ['auth', 'audit-logs'],
     queryFn: async () => {
@@ -218,7 +220,7 @@ export function useAuditLogs(enabled = true) {
       return data
     },
     enabled,
-    refetchInterval: 60_000,
+    refetchInterval: wsConnected ? false : 60_000,
   })
 }
 
@@ -266,6 +268,7 @@ export function useBackupDrivers(enabled = true) {
 }
 
 export function usePlugins(enabled = true) {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<PluginInfo[]>({
     queryKey: ['system', 'plugins'],
     queryFn: async () => {
@@ -273,7 +276,7 @@ export function usePlugins(enabled = true) {
       return data
     },
     enabled,
-    refetchInterval: 60_000,
+    refetchInterval: wsConnected ? false : 60_000,
   })
 }
 

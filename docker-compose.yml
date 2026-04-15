@@ -160,6 +160,52 @@ services:
       - NET_RAW
       - NET_ADMIN
 
+  # ── Scanner Scheduler ───────────────────────────────────────
+  scanner-beat:
+    image: ${ARGUS_SCANNER_IMAGE:-ghcr.io/joelmale/argus-scanner:main}
+    container_name: argus_scanner_beat
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env.production
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      DATABASE_URL: ${SCANNER_DATABASE_URL:-postgresql+asyncpg://argus:change-me-db-password@127.0.0.1:5432/argus}
+      REDIS_URL: ${SCANNER_REDIS_URL:-redis://127.0.0.1:6379/0}
+      SCANNER_DEFAULT_TARGETS: ${SCANNER_DEFAULT_TARGETS:-192.168.1.0/24}
+      SCANNER_INTERVAL_MINUTES: ${SCANNER_INTERVAL_MINUTES:-60}
+      SCANNER_DEFAULT_PROFILE: ${SCANNER_DEFAULT_PROFILE:-balanced}
+      SCANNER_PASSIVE_ARP: ${SCANNER_PASSIVE_ARP:-true}
+      SNMP_COMMUNITY: ${SNMP_COMMUNITY:-public}
+      SNMP_VERSION: ${SNMP_VERSION:-2c}
+      SNMP_TIMEOUT: ${SNMP_TIMEOUT:-5}
+      SNMP_V3_USERNAME: ${SNMP_V3_USERNAME:-}
+      SNMP_V3_AUTH_KEY: ${SNMP_V3_AUTH_KEY:-}
+      SNMP_V3_PRIV_KEY: ${SNMP_V3_PRIV_KEY:-}
+      SNMP_V3_AUTH_PROTOCOL: ${SNMP_V3_AUTH_PROTOCOL:-sha}
+      SNMP_V3_PRIV_PROTOCOL: ${SNMP_V3_PRIV_PROTOCOL:-aes}
+      JWT_ALGORITHM: ${JWT_ALGORITHM:-HS256}
+      JWT_EXPIRE_MINUTES: ${JWT_EXPIRE_MINUTES:-240}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-["http://localhost:3000"]}
+      AI_BACKEND: ${AI_BACKEND:-ollama}
+      AI_ENABLE_PER_SCAN: ${AI_ENABLE_PER_SCAN:-true}
+      AI_MAX_CONCURRENT_HOSTS: ${AI_MAX_CONCURRENT_HOSTS:-5}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+    volumes:
+      - argus_secrets:/run/secrets
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["celery", "-A", "app.workers.tasks.celery_app", "beat", "--loglevel=info"]
+
   # ── Frontend ────────────────────────────────────────────────
   frontend:
     image: ${ARGUS_FRONTEND_IMAGE:-ghcr.io/joelmale/argus-frontend:main}

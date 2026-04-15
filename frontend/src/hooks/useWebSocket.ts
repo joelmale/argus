@@ -6,8 +6,6 @@ import { useAppStore, processWsEvent } from '@/store'
 import { TOKEN_STORAGE_KEY } from '@/lib/api'
 import type { WsEvent } from '@/types'
 
-const RECONNECT_DELAY_MS = 3000
-
 function getWsBaseUrl() {
   if (process.env.NEXT_PUBLIC_WS_URL) {
     return process.env.NEXT_PUBLIC_WS_URL
@@ -28,18 +26,38 @@ function getStoredToken() {
 export function useWebSocket(enabled = true) {
   const wsRef = useRef<WebSocket | null>(null)
   const reconnectTimer = useRef<NodeJS.Timeout | null>(null)
+  const reconnectAttempt = useRef(0)
   const mountedRef = useRef(true)
   const queryClient = useQueryClient()
 
-  const { setWsConnected } = useAppStore()
+  const { setWsConnected, setWsReconnecting } = useAppStore()
+
+  function clearReconnectTimer() {
+    if (reconnectTimer.current) {
+      clearTimeout(reconnectTimer.current)
+      reconnectTimer.current = null
+    }
+  }
+
+  function scheduleReconnect() {
+    clearReconnectTimer()
+    setWsReconnecting(true)
+    const delayMs = Math.min(1000 * 2 ** reconnectAttempt.current, 30_000)
+    reconnectAttempt.current += 1
+    reconnectTimer.current = setTimeout(connect, delayMs)
+  }
 
   function connect() {
     if (!enabled) return
     if (!mountedRef.current) return
-    if (wsRef.current?.readyState === WebSocket.OPEN) return
+    if (wsRef.current?.readyState === WebSocket.OPEN || wsRef.current?.readyState === WebSocket.CONNECTING) return
 
     const token = getStoredToken()
-    if (!token) return
+    if (!token) {
+      setWsConnected(false)
+      setWsReconnecting(false)
+      return
+    }
 
     const ws = new WebSocket(`${getWsBaseUrl()}/ws/events`)
     wsRef.current = ws
@@ -47,11 +65,10 @@ export function useWebSocket(enabled = true) {
     ws.onopen = () => {
       if (!mountedRef.current) return
       ws.send(JSON.stringify({ type: 'auth', token }))
+      reconnectAttempt.current = 0
       setWsConnected(true)
-      if (reconnectTimer.current) {
-        clearTimeout(reconnectTimer.current)
-        reconnectTimer.current = null
-      }
+      setWsReconnecting(false)
+      clearReconnectTimer()
     }
 
     ws.onmessage = (e: MessageEvent) => {
@@ -78,8 +95,11 @@ export function useWebSocket(enabled = true) {
       if (!mountedRef.current) return
       setWsConnected(false)
       wsRef.current = null
-      // Auto-reconnect after delay
-      reconnectTimer.current = setTimeout(connect, RECONNECT_DELAY_MS)
+      if (!enabled || !getStoredToken()) {
+        setWsReconnecting(false)
+        return
+      }
+      scheduleReconnect()
     }
 
     ws.onerror = () => {
@@ -92,7 +112,8 @@ export function useWebSocket(enabled = true) {
     connect()
     return () => {
       mountedRef.current = false
-      if (reconnectTimer.current) clearTimeout(reconnectTimer.current)
+      clearReconnectTimer()
+      setWsReconnecting(false)
       wsRef.current?.close()
     }
   }, [enabled]) // eslint-disable-line react-hooks/exhaustive-deps

@@ -23,7 +23,7 @@ const NAV_ITEMS = [
 
 export function Sidebar() {
   const pathname = usePathname()
-  const { sidebarCollapsed, toggleSidebar, wsConnected } = useAppStore()
+  const { sidebarCollapsed, toggleSidebar, wsConnected, wsReconnecting } = useAppStore()
   const { data: currentUser } = useCurrentUser()
 
   const navItems = currentUser?.role === 'viewer'
@@ -111,18 +111,22 @@ export function Sidebar() {
         {/* Connection status */}
         <div className={cn(
           'flex items-center gap-2 px-2 py-1.5 rounded-lg text-xs',
-          wsConnected
+          wsReconnecting
+            ? 'text-amber-600 dark:text-amber-400'
+            : wsConnected
             ? 'text-emerald-600 dark:text-emerald-400'
             : 'text-zinc-500 dark:text-zinc-500',
           sidebarCollapsed && 'justify-center px-0',
         )}>
-          {wsConnected
+          {wsReconnecting
+            ? <WifiOff className="w-4 h-4 flex-shrink-0 animate-pulse" />
+            : wsConnected
             ? <Wifi className="w-4 h-4 flex-shrink-0" />
             : <WifiOff className="w-4 h-4 flex-shrink-0" />}
           {!sidebarCollapsed && (
-            <span>{wsConnected ? 'Live' : 'Disconnected'}</span>
+            <span>{wsReconnecting ? 'Reconnecting…' : wsConnected ? 'Live' : 'Disconnected'}</span>
           )}
-          {wsConnected && !sidebarCollapsed && (
+          {wsConnected && !wsReconnecting && !sidebarCollapsed && (
             <span className="ml-auto w-2 h-2 rounded-full bg-emerald-500 animate-pulse" />
           )}
         </div>

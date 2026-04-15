@@ -1,14 +1,9 @@
 """Assets CRUD — the core inventory endpoints."""
-import asyncio
-import csv
-import html
 from datetime import datetime, timezone
-from io import StringIO
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -41,19 +36,25 @@ from app.db.models import (
     ConfigBackupSnapshot,
     Finding,
     Port,
-    ProbeRun,
     ScanJob,
     User,
     WirelessAssociation,
 )
 from app.db.session import get_db
-from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
-from app.scanner.agent import get_analyst
 from app.scanner.config import materialize_scan_targets, read_effective_scanner_config, validate_scan_targets_routable
-from app.scanner.models import DeviceClass, DiscoveredHost, ScanProfile
-from app.scanner.pipeline import _investigate_host
-from app.scanner.stages import portscan
-from app.workers.tasks import _has_active_scan, _next_queue_position, run_scan_job
+from app.scanner.models import DeviceClass, ScanProfile
+from app.services.asset_exports import (
+    EXPORT_ANSIBLE_JOB_TYPE,
+    EXPORT_CSV_JOB_TYPE,
+    EXPORT_INVENTORY_JSON_JOB_TYPE,
+    EXPORT_REPORT_HTML_JOB_TYPE,
+    EXPORT_REPORT_JSON_JOB_TYPE,
+    EXPORT_TERRAFORM_JOB_TYPE,
+    enqueue_asset_export_job,
+    export_download_info,
+)
+from app.services.asset_refresh import AI_REFRESH_JOB_TYPE, SNMP_REFRESH_JOB_TYPE
+from app.services.scan_queue import enqueue_scan_job
 
 VALID_DEVICE_TYPES = {member.value for member in DeviceClass}
 ASSET_NOT_FOUND_DETAIL = "Asset not found"
@@ -88,14 +89,6 @@ BACKUP_SNAPSHOT_RESPONSES = {404: {"description": "Backup snapshot not found"}}
 router = APIRouter(responses=ASSET_NOT_FOUND_RESPONSE)
 
 
-def _probe_run_summary(details: dict, probe_success: bool) -> str | None:
-    if not probe_success:
-        error = details.get("error")
-        return str(error)[:512] if error is not None else None
-    summary = details.get("title") or details.get("sys_descr") or details.get("friendly_name") or details.get("banner")
-    return str(summary)[:512] if summary is not None else None
-
-
 def _parse_asset_includes(include: str | None) -> set[str]:
     if not include:
         return set()
@@ -125,6 +118,12 @@ class ConfigBackupTargetRequest(BaseModel):
 
 class BulkDeleteAssetsRequest(BaseModel):
     asset_ids: list[UUID]
+
+
+class JobSubmissionResponse(BaseModel):
+    job_id: str
+    status: str
+    queue_position: int | None = None
 
 
 async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
@@ -236,170 +235,71 @@ async def get_asset_stats(
     }
 
 
+async def _queue_export_job(export_type: str, db: DBSession) -> dict[str, int | str | None]:
+    job, should_start = await enqueue_asset_export_job(db, export_type=export_type)
+    if should_start:
+        from app.workers.tasks import run_scan_job
+
+        run_scan_job.delay(str(job.id))
+        return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
+    return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
+
+
 @router.get("/export.csv")
 async def export_assets_csv(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-
-    buffer = StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow([
-        "id",
-        "ip_address",
-        "hostname",
-        "mac_address",
-        "vendor",
-        "os_name",
-        "device_type",
-        "status",
-        "first_seen",
-        "last_seen",
-        "tags",
-        "custom_fields",
-    ])
-    for asset in assets:
-        writer.writerow(
-            [
-                str(asset.id),
-                asset.ip_address,
-                asset.hostname or "",
-                asset.mac_address or "",
-                asset.vendor or "",
-                asset.os_name or "",
-                asset.effective_device_type,
-                asset.status,
-                asset.first_seen.isoformat(),
-                asset.last_seen.isoformat(),
-                ",".join(sorted(tag.tag for tag in asset.tags)),
-                asset.custom_fields or {},
-            ]
-        )
-
-    return Response(
-        content=buffer.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="argus-assets.csv"'},
-    )
+    return await _queue_export_job(EXPORT_CSV_JOB_TYPE, db)
 
 
 @router.get("/export.ansible.ini")
 async def export_assets_ansible(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-    return Response(
-        content=render_ansible_inventory(assets),
-        media_type=PLAIN_TEXT_MEDIA_TYPE,
-        headers={"Content-Disposition": 'attachment; filename="argus-inventory.ini"'},
-    )
+    return await _queue_export_job(EXPORT_ANSIBLE_JOB_TYPE, db)
 
 
 @router.get("/export.terraform.tf.json")
 async def export_assets_terraform(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-    return Response(
-        content=render_terraform_inventory(assets),
-        media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="argus-assets.tf.json"'},
-    )
+    return await _queue_export_job(EXPORT_TERRAFORM_JOB_TYPE, db)
 
 
 @router.get("/export.inventory.json")
 async def export_assets_inventory_json(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-    return build_inventory_snapshot(assets)
+    return await _queue_export_job(EXPORT_INVENTORY_JSON_JOB_TYPE, db)
 
 
 @router.get("/report.json")
 async def export_assets_report_json(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-    open_findings = await db.scalar(select(func.count()).select_from(Finding).where(Finding.status == "open")) or 0
-    total_findings = await db.scalar(select(func.count()).select_from(Finding)) or 0
-    successful_backups = await db.scalar(
-        select(func.count()).select_from(ConfigBackupSnapshot).where(ConfigBackupSnapshot.status == "done")
-    ) or 0
-    recent_changes_result = await db.execute(
-        select(AssetHistory)
-        .order_by(AssetHistory.changed_at.desc())
-        .limit(10)
-    )
-    recent_changes = recent_changes_result.scalars().all()
-
-    return {
-        "summary": {
-            "total_assets": len(assets),
-            "online_assets": sum(1 for asset in assets if asset.status == "online"),
-            "offline_assets": sum(1 for asset in assets if asset.status == "offline"),
-            "total_findings": total_findings,
-            "open_findings": open_findings,
-            "successful_backups": successful_backups,
-        },
-        "recent_changes": [
-            {
-                "asset_id": str(change.asset_id),
-                "change_type": change.change_type,
-                "changed_at": change.changed_at.isoformat(),
-                "diff": change.diff or {},
-            }
-            for change in recent_changes
-        ],
-        "inventory": build_inventory_snapshot(assets),
-    }
+    return await _queue_export_job(EXPORT_REPORT_JSON_JOB_TYPE, db)
 
 
-@router.get("/report.html", response_class=HTMLResponse)
+@router.get("/report.html")
 async def export_assets_report_html(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
-    assets = result.scalars().all()
+    return await _queue_export_job(EXPORT_REPORT_HTML_JOB_TYPE, db)
 
-    total = len(assets)
-    online = sum(1 for asset in assets if asset.status == "online")
-    offline = sum(1 for asset in assets if asset.status == "offline")
-    open_findings = await db.scalar(select(func.count()).select_from(Finding).where(Finding.status == "open")) or 0
-    successful_backups = await db.scalar(
-        select(func.count()).select_from(ConfigBackupSnapshot).where(ConfigBackupSnapshot.status == "done")
-    ) or 0
 
-    rows = "".join(
-        f"<tr><td>{html.escape(asset.ip_address)}</td><td>{html.escape(asset.hostname or '')}</td><td>{html.escape(asset.vendor or '')}</td><td>{html.escape(asset.effective_device_type)}</td><td>{html.escape(asset.status)}</td><td>{html.escape(', '.join(tag.tag for tag in asset.tags))}</td></tr>"
-        for asset in assets
-    )
-    return HTMLResponse(
-        f"""
-        <html>
-          <head>
-            <title>Argus Inventory Report</title>
-            <style>
-              body {{ font-family: sans-serif; margin: 32px; color: #18181b; }}
-              h1 {{ margin-bottom: 8px; }}
-              .summary {{ display: flex; gap: 16px; margin: 16px 0 24px; }}
-              .card {{ border: 1px solid #d4d4d8; border-radius: 12px; padding: 12px 16px; }}
-              table {{ width: 100%; border-collapse: collapse; }}
-              th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e4e4e7; font-size: 14px; }}
-              th {{ background: #f4f4f5; }}
-            </style>
-          </head>
-          <body>
-            <h1>Argus Inventory Report</h1>
-            <p>Generated from the current inventory snapshot.</p>
-            <div class="summary">
-              <div class="card"><strong>Total assets:</strong> {total}</div>
-              <div class="card"><strong>Online:</strong> {online}</div>
-              <div class="card"><strong>Offline:</strong> {offline}</div>
-              <div class="card"><strong>Open findings:</strong> {open_findings}</div>
-              <div class="card"><strong>Successful backups:</strong> {successful_backups}</div>
-            </div>
-            <table>
-              <thead>
-                <tr><th>IP</th><th>Hostname</th><th>Vendor</th><th>Type</th><th>Status</th><th>Tags</th></tr>
-              </thead>
-              <tbody>{rows}</tbody>
-            </table>
-          </body>
-        </html>
-        """
+@router.get("/export-jobs/{job_id}/download")
+async def download_export_artifact(job_id: UUID, db: DBSession, _: CurrentUser):
+    job = await db.get(ScanJob, job_id)
+    if job is None or job.scan_type not in {
+        EXPORT_CSV_JOB_TYPE,
+        EXPORT_ANSIBLE_JOB_TYPE,
+        EXPORT_TERRAFORM_JOB_TYPE,
+        EXPORT_INVENTORY_JSON_JOB_TYPE,
+        EXPORT_REPORT_JSON_JOB_TYPE,
+        EXPORT_REPORT_HTML_JOB_TYPE,
+    }:
+        raise HTTPException(status_code=404, detail="Export job not found")
+
+    try:
+        artifact_path, filename, content_type = export_download_info(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if not artifact_path.exists():
+        raise HTTPException(status_code=404, detail="Export artifact is not ready")
+
+    return Response(
+        content=artifact_path.read_bytes(),
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
@@ -429,7 +329,7 @@ async def get_asset(asset_id: UUID, db: DBSession, _: CurrentUser):
     return _serialize_asset(asset)
 
 
-@router.post("/{asset_id}/port-scan", responses=ASSET_NOT_FOUND_RESPONSE)
+@router.post("/{asset_id}/port-scan", response_model=JobSubmissionResponse, responses=ASSET_NOT_FOUND_RESPONSE)
 async def run_asset_port_scan(
     asset_id: UUID,
     db: DBSession,
@@ -441,29 +341,26 @@ async def run_asset_port_scan(
     if route_error:
         raise HTTPException(status_code=400, detail=route_error)
 
-    job = ScanJob(
+    job, should_start = await enqueue_scan_job(
+        db,
         targets=targets,
         scan_type=ScanProfile.DEEP_ENRICHMENT.value,
         triggered_by="manual",
-        queue_position=await _next_queue_position(db),
         result_summary={
             "stage": "queued",
             "message": f"Queued targeted deep port scan for {asset.ip_address}",
             "asset_id": str(asset.id),
         },
     )
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    should_start = not await _has_active_scan(db) and job.queue_position == 1
     if should_start:
+        from app.workers.tasks import run_scan_job
+
         run_scan_job.delay(str(job.id))
         return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
     return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
-@router.post("/{asset_id}/ai-analysis/refresh", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
+@router.post("/{asset_id}/ai-analysis/refresh", response_model=JobSubmissionResponse, responses=ASSET_NOT_FOUND_RESPONSE)
 @limiter.limit("3/minute")
 async def run_asset_ai_refresh(
     request: Request,
@@ -472,37 +369,27 @@ async def run_asset_ai_refresh(
     _: AdminUser,
 ):
     asset = await _load_asset(db, asset_id)
-    _, runtime_config = await read_effective_scanner_config(db)
-    host = DiscoveredHost(
-        ip_address=asset.ip_address,
-        mac_address=asset.mac_address,
-        discovery_method="manual",
-        nmap_hostname=asset.hostname,
+    job, should_start = await enqueue_scan_job(
+        db,
+        targets=asset.ip_address,
+        scan_type=AI_REFRESH_JOB_TYPE,
+        triggered_by="manual",
+        result_summary={
+            "stage": "queued",
+            "message": f"Queued AI analysis refresh for {asset.ip_address}",
+            "asset_id": str(asset.id),
+            "asset_ip": asset.ip_address,
+        },
     )
-    ports, os_fp = await portscan.scan_host(host, ScanProfile.DEEP_ENRICHMENT)
-    result = await _investigate_host(
-        host=host,
-        ports=ports,
-        os_fp=os_fp,
-        nmap_hostname=host.nmap_hostname,
-        nmap_vendor=asset.vendor,
-        profile=ScanProfile.DEEP_ENRICHMENT,
-        analyst=get_analyst(runtime_config),
-        run_deep_probes=True,
-        deep_probe_timeout_seconds=6,
-        semaphore=asyncio.Semaphore(1),
-        broadcast_fn=None,
-        job_id=f"asset-{asset.id}",
-    )
+    if should_start:
+        from app.workers.tasks import run_scan_job
 
-    from app.db.upsert import upsert_scan_result
-
-    await upsert_scan_result(db, result)
-    await db.commit()
-    return _serialize_asset(await _load_asset(db, asset_id))
+        run_scan_job.delay(str(job.id))
+        return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
+    return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
-@router.post("/{asset_id}/snmp-refresh", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
+@router.post("/{asset_id}/snmp-refresh", response_model=JobSubmissionResponse, responses=ASSET_NOT_FOUND_RESPONSE)
 @limiter.limit("3/minute")
 async def run_asset_snmp_refresh(
     request: Request,
@@ -514,59 +401,24 @@ async def run_asset_snmp_refresh(
     _, runtime_config = await read_effective_scanner_config(db)
     if not runtime_config.snmp_enabled:
         raise HTTPException(status_code=400, detail="SNMP enrichment is disabled in Settings.")
-
-    from app.scanner.probes.snmp import probe as run_snmp_probe
-    from app.scanner.topology import infer_topology_links_from_snmp
-
-    probe_result = await run_snmp_probe(
-        asset.ip_address,
-        community=runtime_config.snmp_community,
-        version=runtime_config.snmp_version,
-        timeout_seconds=runtime_config.snmp_timeout,
-        v3_username=runtime_config.snmp_v3_username or None,
-        v3_auth_key=runtime_config.snmp_v3_auth_key or None,
-        v3_priv_key=runtime_config.snmp_v3_priv_key or None,
-        v3_auth_protocol=runtime_config.snmp_v3_auth_protocol or None,
-        v3_priv_protocol=runtime_config.snmp_v3_priv_protocol or None,
+    job, should_start = await enqueue_scan_job(
+        db,
+        targets=asset.ip_address,
+        scan_type=SNMP_REFRESH_JOB_TYPE,
+        triggered_by="manual",
+        result_summary={
+            "stage": "queued",
+            "message": f"Queued SNMP refresh for {asset.ip_address}",
+            "asset_id": str(asset.id),
+            "asset_ip": asset.ip_address,
+        },
     )
+    if should_start:
+        from app.workers.tasks import run_scan_job
 
-    details = dict(probe_result.data or {})
-    if probe_result.error and "error" not in details:
-        details["error"] = probe_result.error
-    now = datetime.now(timezone.utc)
-    db.add(
-        ProbeRun(
-            asset_id=asset.id,
-            probe_type=probe_result.probe_type,
-            target_port=probe_result.target_port,
-            success=probe_result.success,
-            duration_ms=probe_result.duration_ms,
-            summary=_probe_run_summary(details, probe_result.success),
-            details=details,
-            raw_excerpt=probe_result.raw[:4000] if probe_result.raw else None,
-            observed_at=now,
-        )
-    )
-
-    asset.heartbeat_last_checked_at = now
-    if probe_result.success:
-        was_offline = asset.status == "offline"
-        asset.status = "online"
-        asset.last_seen = now
-        asset.heartbeat_missed_count = 0
-        if was_offline:
-            db.add(
-                AssetHistory(
-                    asset_id=asset.id,
-                    change_type="status_change",
-                    diff={"status": {"old": "offline", "new": "online"}},
-                )
-            )
-        if details:
-            await infer_topology_links_from_snmp(db, asset, details)
-
-    await db.commit()
-    return _serialize_asset(await _load_asset(db, asset_id))
+        run_scan_job.delay(str(job.id))
+        return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
+    return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
 @router.patch("/{asset_id}", response_model=AssetDetail, responses=ASSET_UPDATE_RESPONSES)

@@ -7,7 +7,7 @@ import { AssetTable } from '@/components/assets/AssetTable'
 import { useAssets, useBulkDeleteAssets } from '@/hooks/useAssets'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useTriggerScan } from '@/hooks/useScans'
-import { assetsApi } from '@/lib/api'
+import { assetsApi, scansApi } from '@/lib/api'
 import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope, Trash2, ChevronDown } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -23,32 +23,39 @@ function downloadBlob(data: Blob, filename: string) {
   URL.revokeObjectURL(url)
 }
 
+async function waitForExportJob(jobId: string) {
+  for (;;) {
+    const { data } = await scansApi.get(jobId)
+    if (data.status === 'done') {
+      return data
+    }
+    if (data.status === 'failed' || data.status === 'cancelled') {
+      throw new Error(typeof data.result_summary?.error === 'string' ? data.result_summary.error : 'Export failed')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+  }
+}
+
 async function exportAssetFile(
-  exporter: () => Promise<{ data: Blob }>,
+  exporter: () => Promise<{ data: { job_id?: string; status?: string } }>,
   filename: string,
+  setMessage?: (message: string | null) => void,
 ) {
-  const response = await exporter()
-  downloadBlob(response.data, filename)
-}
-
-async function handleExportCsv() {
-  await exportAssetFile(() => assetsApi.exportCsv(), 'argus-assets.csv')
-}
-
-async function handleExportAnsible() {
-  await exportAssetFile(() => assetsApi.exportAnsible(), 'argus-inventory.ini')
-}
-
-async function handleExportTerraform() {
-  await exportAssetFile(() => assetsApi.exportTerraform(), 'argus-assets.tf.json')
-}
-
-async function handleExportInventoryJson() {
-  await exportAssetFile(() => assetsApi.exportInventoryJson(), 'argus-inventory.json')
-}
-
-async function handleExportReportJson() {
-  await exportAssetFile(() => assetsApi.exportJsonReport(), 'argus-report.json')
+  try {
+    const response = await exporter()
+    const jobId = response.data.job_id
+    if (!jobId) {
+      throw new Error('Export job was not created')
+    }
+    setMessage?.(`Export queued as job ${jobId.slice(0, 8)}. Waiting for completion…`)
+    await waitForExportJob(jobId)
+    const file = await assetsApi.downloadExportJob(jobId)
+    downloadBlob(file.data, filename)
+    setMessage?.(`Downloaded ${filename}.`)
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Export failed'
+    setMessage?.(`Export failed: ${message}`)
+  }
 }
 
 function useDebounced<T>(value: T, delayMs: number): T {
@@ -75,6 +82,7 @@ function AssetsPageContent() {
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
   const [recentCutoff] = useState(() => Date.now() - 24 * 60 * 60 * 1000)
   const [exportOpen, setExportOpen] = useState(false)
+  const [exportMessage, setExportMessage] = useState<string | null>(null)
   const exportRef = useRef<HTMLDivElement>(null)
   // Keep a ref so the search-sync effect can read the current status without
   // adding it to the dependency array (which would fire on every status change,
@@ -103,6 +111,26 @@ function AssetsPageContent() {
     }
   }, [exportOpen])
   const debouncedSearch = useDebounced(search, 300)
+
+  async function handleExportCsv() {
+    await exportAssetFile(() => assetsApi.exportCsv(), 'argus-assets.csv', setExportMessage)
+  }
+
+  async function handleExportAnsible() {
+    await exportAssetFile(() => assetsApi.exportAnsible(), 'argus-inventory.ini', setExportMessage)
+  }
+
+  async function handleExportTerraform() {
+    await exportAssetFile(() => assetsApi.exportTerraform(), 'argus-assets.tf.json', setExportMessage)
+  }
+
+  async function handleExportInventoryJson() {
+    await exportAssetFile(() => assetsApi.exportInventoryJson(), 'argus-inventory.json', setExportMessage)
+  }
+
+  async function handleExportReportJson() {
+    await exportAssetFile(() => assetsApi.exportJsonReport(), 'argus-report.json', setExportMessage)
+  }
 
   // Sync debounced search value to the URL so browser history captures filter state.
   useEffect(() => {
@@ -299,7 +327,7 @@ function AssetsPageContent() {
             </button>
             {exportOpen && (
               <div className="absolute right-0 top-full z-10 mt-1 min-w-[11rem] rounded-lg border border-gray-200 bg-white py-1 shadow-md dark:border-zinc-700 dark:bg-zinc-900">
-                {([
+                  {([
                   { label: 'CSV', icon: Download, action: handleExportCsv },
                   { label: 'Ansible inventory', icon: Boxes, action: handleExportAnsible },
                   { label: 'Terraform data', icon: FileCode2, action: handleExportTerraform },
@@ -309,7 +337,7 @@ function AssetsPageContent() {
                   <button
                     key={label}
                     type="button"
-                    onClick={() => { action(); setExportOpen(false) }}
+                    onClick={() => { void action(); setExportOpen(false) }}
                     className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-600 hover:bg-gray-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
                   >
                     <Icon className="w-3.5 h-3.5 shrink-0" />
@@ -319,6 +347,12 @@ function AssetsPageContent() {
               </div>
             )}
           </div>
+
+          {exportMessage && (
+            <p className="text-xs text-zinc-500">
+              {exportMessage}
+            </p>
+          )}
 
           <span className="text-sm text-zinc-500 ml-auto">
             {isLoading ? '…' : `${assets.length} assets`}
