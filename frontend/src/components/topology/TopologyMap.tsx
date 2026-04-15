@@ -1106,7 +1106,7 @@ function EdgeDetailPanel({
 
 // ─── utilities ────────────────────────────────────────────────────────────────
 
-function buildCytoscapeStyle(labelColor: string): cytoscape.Stylesheet[] {
+function buildCytoscapeStyle(labelColor: string): cytoscape.StylesheetJson {
   return [
     {
       selector: 'node',
