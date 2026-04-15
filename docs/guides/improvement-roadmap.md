@@ -27,7 +27,8 @@ Recommended branch names:
 - `perf/phase-2-query-shape`
 - `perf/phase-3-asset-payloads`
 - `refactor/phase-4-service-boundaries`
-- `feature/phase-7-asset-identity`
+- `feature/phase-7-evidence-topology`
+- `feature/phase-8-asset-identity`
 
 Commit after each major behavior boundary, not after every small edit. Each commit
 should describe one outcome and include its test or validation work.
@@ -341,7 +342,7 @@ Scope:
   - Add conflict detection hooks for cases like same IP with a different stable MAC,
     same MAC on a new IP, or locally administered/randomized MAC sightings.
   - Record these as history or structured warnings first; defer the full
-    sighting-first schema to Phase 7.
+    sighting-first schema to Phase 8.
 - Add response models to endpoints that currently return ad hoc dicts or ORM objects.
 - Decide on API client strategy:
   - generate TypeScript from OpenAPI, or
@@ -494,7 +495,144 @@ Validation:
 
 Rollback risk: Medium. Caching must be invalidated correctly to avoid stale UI.
 
-## Phase 7: Sighting-First Inventory Model Evolution
+## Phase 7: Evidence-Based Topology Hierarchy
+
+Effort: Medium to Large
+
+Purpose: move topology graph construction away from broad gateway fallback edges and
+toward observed or defensible parent-child relationships between infrastructure and
+endpoints.
+
+Problem statement:
+
+- `backend/app/topology/graph_builder.py` currently has to connect many assets
+  directly to the gateway because explicit `TopologyLink` records are missing for
+  intermediate nodes such as access points, switches, and bridge ports.
+- The topology should prefer verified controller and SNMP evidence first, use
+  heuristics only when evidence is absent, and make gateway fallback the last resort.
+
+Scope:
+
+- Enrich controller link ingestion for UniFi and TP-Link.
+  - Update `backend/app/modules/unifi.py` so `sync_unifi_module` creates explicit
+    `TopologyLink` records when a `UnifiClientRecord` has `ap_mac`.
+  - Resolve `ap_mac` to the existing access point `Asset`.
+  - Reuse `_upsert_topology_link` from `backend/app/scanner/topology.py`.
+  - Create `wireless_ap_for` links from AP asset to client asset with `observed=True`
+    for API-verified controller data.
+  - Add the equivalent behavior to the TP-Link integration if it exposes AP-to-client
+    association data.
+- Add latency and TTL evidence.
+  - Add fields such as `avg_latency_ms` and `ttl_distance` to `Asset`, or equivalent
+    observation fields if the sighting model from Phase 8 lands first.
+  - Update the scanner pipeline to persist latency and TTL-distance values from active
+    probes.
+  - Treat sub-1.5 ms latency clustering as weak evidence that assets are on the same
+    local switching fabric.
+  - Use TTL carefully as hop-distance evidence. A Linux-like TTL of 64 often means no
+    routed hop from the scanner, while 63 suggests one hop, but inference should be
+    relative to common starting TTL families rather than an absolute device fact.
+  - Include a node `tier_hint` in topology serialization, for example `< 2 ms` as
+    `tier_1_local`.
+- Add Layer 2 bridge table mapping through SNMP.
+  - Extend `backend/app/scanner/topology.py` to query Bridge MIB
+    `1.3.6.1.2.1.17.4.3`.
+  - Map learned MAC addresses to switch `if_index` ports.
+  - Create observed switch-to-endpoint links when a MAC can be mapped to a physical
+    switch port.
+  - Preserve enough detail to distinguish a directly attached wired endpoint from a
+    downstream unmanaged switch or AP when evidence is ambiguous.
+- Make role inference confidence-weighted.
+  - Update `backend/app/topology/segments.py` so tags and vendor data contribute to
+    topology role scoring.
+  - Give a strong role score, up to `1.0`, to assets tagged `access-point` or
+    `switch` when no stronger conflicting evidence exists.
+  - Increase gateway or infrastructure candidate scores for Ubiquiti and TP-Link
+    vendor data only when supported by tags, services, controller data, or observed
+    link evidence.
+- Restrict gateway fallback in `backend/app/topology/graph_builder.py`.
+  - Modify `_build_inferred_gateway_edges` so it only creates gateway edges when no
+    observed or higher-confidence inferred parent exists.
+  - If an asset has a `wifi` tag but no observed link, look for an access point on the
+    same `segment_id` and create an `inferred_wireless` edge with `observed=False`
+    instead of defaulting to a gateway edge.
+  - Keep heuristic links visibly distinct from observed links in API responses and
+    graph metadata.
+
+Suggested commits:
+
+```text
+feat(topology): ingest controller client ap links
+feat(topology): persist latency and ttl distance evidence
+feat(snmp): map bridge mib forwarding entries to switch ports
+refactor(topology): weight role inference by tags and vendor evidence
+refactor(topology): restrict gateway fallback edges
+test(topology): cover observed ap and switch parent relationships
+```
+
+Validation:
+
+- Unit tests for UniFi and TP-Link sync:
+  - AP MAC resolves to an existing asset.
+  - Client asset receives a `wireless_ap_for` parent link.
+  - Controller-derived links use `observed=True`.
+  - Missing AP assets do not create broken links.
+- Unit tests for graph building:
+  - Observed AP links suppress gateway fallback.
+  - Observed switch-port links suppress gateway fallback.
+  - Wi-Fi assets without observed links prefer same-segment AP inference before
+    gateway fallback.
+  - Heuristic links use `observed=False`.
+- Unit tests for role inference:
+  - `access-point` and `switch` tags produce strong infrastructure roles.
+  - Ubiquiti and TP-Link vendor data improves infrastructure confidence without
+    overriding stronger conflicting evidence.
+- SNMP fixture tests for Bridge MIB parsing and MAC-to-`if_index` mapping.
+- Manual smoke:
+  - UniFi client appears under its AP in topology.
+  - Wired endpoint appears under its switch when Bridge MIB evidence is present.
+  - Assets without evidence still render through gateway fallback.
+
+Implementation prompt:
+
+```text
+Act as a Senior Backend Engineer. Refactor the Argus topology system away from a
+flat network map.
+
+Goal: Improve build_topology_graph in backend/app/topology/graph_builder.py by
+ensuring intermediate infrastructure, such as APs and switches, correctly claims
+its children.
+
+Tasks:
+
+1. Update backend/app/modules/unifi.py. In sync_unifi_module, when a
+   UnifiClientRecord has ap_mac, resolve that MAC to the access point Asset and
+   reuse _upsert_topology_link from backend/app/scanner/topology.py to create a
+   wireless_ap_for link between the AP Asset and the Client Asset.
+2. Refine backend/app/topology/segments.py. Update infer_topology_role to give a
+   1.0 role confidence score to assets tagged access-point or switch, and update
+   score_gateway_candidate to incorporate access-point tags plus Ubiquiti or
+   TP-Link vendor evidence.
+3. Enhance backend/app/topology/graph_builder.py. Make _build_inferred_gateway_edges
+   more restrictive. If an asset has a wifi tag but no observed parent link,
+   attempt to find an access point role on the same segment_id and create an
+   inferred_wireless edge instead of a gateway edge.
+4. Add latency evidence. Add a latency field to Asset if no equivalent exists, and
+   update topology node serialization to include a tier_hint, for example latency
+   below 2 ms as Tier 1 / Local.
+
+Constraints:
+
+- Do not use TypeScript `any` types if frontend changes are required.
+- Use SQLAlchemy AsyncSession for all database interactions.
+- Use observed=True for API-verified data and observed=False for heuristic data.
+```
+
+Rollback risk: Medium to High. The graph should remain renderable through gateway
+fallback, but incorrect link confidence can materially change the user's mental model
+of the network. Ship controller-derived observed links before heuristic graph changes.
+
+## Phase 8: Sighting-First Inventory Model Evolution
 
 Effort: Large
 
@@ -612,7 +750,7 @@ Validation:
 Rollback risk: High. This is a model change and should be implemented only after the
 smaller API and service-boundary phases make the code easier to modify.
 
-## Phase 8: Release Pipeline and Browser Test Coverage
+## Phase 9: Release Pipeline and Browser Test Coverage
 
 Effort: Medium to Large
 
@@ -656,7 +794,7 @@ Validation:
 Rollback risk: Medium. CI changes affect release flow, so keep them separate from
 runtime application changes.
 
-## Phase 9: Hardening and UX Polish
+## Phase 10: Hardening and UX Polish
 
 Effort: Medium
 
@@ -759,13 +897,14 @@ Implement in this order unless production pressure changes the priority:
 1. ~~Phase 1: correctness fixes.~~ ✓ Done (2026-04-14)
 2. ~~Phase 2: query shape and client-side performance.~~ ✓ Done (2026-04-14, completed 2026-04-15).
 3. ~~Phase 3: asset API payload split.~~ ✓ Done (2026-04-15).
-4. Phase 8 image build portion: scan the pushed artifact.
+4. Phase 9 image build portion: scan the pushed artifact.
 5. Phase 4: service boundaries and typed contracts.
 6. Phase 5: async workflows and queue hardening.
 7. Phase 6: topology, metrics, and export scaling.
-8. Phase 9: hardening and UX polish.
-9. Phase 8 E2E coverage expansion.
-10. Phase 7: sighting-first inventory model evolution.
+8. Phase 7: evidence-based topology hierarchy.
+9. Phase 10: hardening and UX polish.
+10. Phase 9 E2E coverage expansion.
+11. Phase 8: sighting-first inventory model evolution.
 
 Reasoning:
 
@@ -776,7 +915,10 @@ Reasoning:
   identity resolver in Phase 4 keeps later identity changes from touching every
   scanner and integration path at once.
 - Queue and worker changes should happen after service boundaries clarify ownership.
-- Phase 9 security and configuration items (headers, nmap validation, pool config)
+- Phase 7 topology hierarchy work should follow the cheaper topology serving work in
+  Phase 6 so graph correctness changes can be validated without fighting full-graph
+  performance bottlenecks.
+- Phase 10 security and configuration items (headers, nmap validation, pool config)
   are low-blast-radius and can land in parallel with Phase 6; the UX items follow
   naturally once the payload and async work from Phases 3 and 5 are stable.
 - The sighting-first inventory redesign should wait until the surrounding code is
@@ -791,6 +933,11 @@ The roadmap is complete when:
 - ✓ Relationship collections are sorted in SQL, not in the application layer.
 - ✓ Dashboard views avoid duplicate heavy fetches.
 - Topology views avoid duplicate heavy fetches.
+- Topology graph uses observed controller and SNMP links before gateway fallback.
+- Gateway fallback is reserved for assets with no observed or higher-confidence
+  inferred parent.
+- AP and switch role inference uses tags, vendor data, controller evidence, and
+  observed links rather than gateway proximity alone.
 - ✓ Asset search uses GIN-indexed trigram ILIKE instead of unbounded unindexed queries.
 - Long-running manual refresh actions and exports are queued and observable.
 - Scan dispatch is concurrency-safe.
