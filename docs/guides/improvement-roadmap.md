@@ -438,7 +438,11 @@ Implemented:
 
 ## Phase 6: Topology and Metrics Scaling
 
-Effort: Medium
+Effort: Medium to Large
+
+Purpose: reduce repeated full-graph and full-inventory work, surface topology
+confidence clearly to the user, and give users the tools to correct and extend
+topology data that automated scanning cannot fully resolve.
 
 Purpose: reduce repeated full-graph and repeated metrics work.
 
@@ -447,6 +451,14 @@ Scope:
 - Cache or materialize topology graph output.
   - Rebuild when assets, links, segments, or topology-relevant settings change.
   - Add ETag or last-updated metadata for client-side caching.
+- Add separate topology sub-graph endpoints so clients can request less data:
+  - full graph
+  - graph summary (node count, edge count, segment list)
+  - segment graph (nodes and edges within one segment)
+  - selected asset neighborhood (node plus immediate parents and children)
+- Emit a `topology:updated` WebSocket event after each scan completion and after
+  any manual link mutation. The frontend subscribes and refetches automatically
+  rather than polling or requiring a manual refresh.
 - Cache metrics or compute them from lightweight aggregate queries.
   - Avoid a growing number of live count queries on every scrape.
 - Consider separate topology endpoints:
@@ -474,7 +486,13 @@ Validation:
 - Verify topology still renders after cache invalidation.
 - Verify dashboard and metrics views still load.
 
-Rollback risk: Medium. Caching must be invalidated correctly to avoid stale UI.
+Rollback risk: Medium to High.
+- Caching: must be invalidated correctly or the UI shows stale topology.
+- Suppression: ship behind a guard so a bug cannot silently hide all edges.
+- Manual links: ship the API before the UI so the backend contract is tested
+  independently.
+- Cytoscape hot-swap: keep the destroy path reachable as a fallback if element
+  diffing produces layout corruption on large graphs.
 
 ## Phase 7: Evidence-Based Topology Hierarchy ✓ Complete
 

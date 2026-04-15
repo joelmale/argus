@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { assetsApi, topologyApi } from '@/lib/api'
 import { useAppStore } from '@/store'
-import type { Asset, AssetStats, AssetSummary, ConfigBackupSnapshot, ConfigBackupTarget, Finding, TopologyGraph, WirelessAssociation } from '@/types'
+import type { Asset, AssetStats, AssetSummary, ConfigBackupSnapshot, ConfigBackupTarget, Finding, TopologyGraph, TopologyLinkCreateRequest, TopologyLinkUpdateRequest, WirelessAssociation } from '@/types'
 
 export type AssetListInclude = 'ports' | 'tags' | 'ai' | 'probe_runs'
 export type AssetListParams = {
@@ -153,6 +153,48 @@ export function useTopologyGraph() {
       return data
     },
     refetchInterval: wsConnected ? false : 120_000,
+  })
+}
+
+export function useNeighborhoodGraph(assetId: string | null) {
+  return useQuery<TopologyGraph>({
+    queryKey: ['topology', 'neighborhood', assetId],
+    queryFn: async () => {
+      const { data } = await topologyApi.getNeighborhoodGraph(assetId!)
+      return data
+    },
+    enabled: !!assetId,
+  })
+}
+
+export function useCreateTopologyLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: TopologyLinkCreateRequest) => topologyApi.createLink(payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['topology'] })
+    },
+  })
+}
+
+export function useUpdateTopologyLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ linkId, payload }: { linkId: number; payload: TopologyLinkUpdateRequest }) =>
+      topologyApi.updateLink(linkId, payload),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['topology'] })
+    },
+  })
+}
+
+export function useDeleteTopologyLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (linkId: number) => topologyApi.deleteLink(linkId),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['topology'] })
+    },
   })
 }
 

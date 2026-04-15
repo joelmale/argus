@@ -86,6 +86,9 @@ export function useWebSocket(enabled = true) {
         if (payload.event === 'scan_complete' || payload.event === 'scan_progress') {
           queryClient.invalidateQueries({ queryKey: ['scans'] })
         }
+        if (payload.event === 'topology:updated' || payload.event === 'scan_complete') {
+          queryClient.invalidateQueries({ queryKey: ['topology'] })
+        }
       } catch {
         // Ignore malformed messages
       }

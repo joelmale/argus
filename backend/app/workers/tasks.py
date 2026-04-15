@@ -691,6 +691,7 @@ async def _complete_scan_job(db, job: ScanJob, job_id: str, summary) -> None:
     job.result_summary = summary.model_dump(mode="json")
     await db.commit()
     log.info("Scan job %s completed: %s", job_id, summary.model_dump(mode="json"))
+    await _publish_event({"event": "topology:updated", "data": {}})
 
 
 async def _complete_background_job(db, job: ScanJob, job_id: str, summary: dict) -> None:
