@@ -273,6 +273,81 @@ export function TopologyMap() {
     return [...nodes, ...edges]
   }, [filteredGraph])
 
+  const stylesheet = useMemo<cytoscape.StylesheetJson>(() => [
+    {
+      selector: 'node',
+      style: {
+        'background-color': 'data(color)',
+        'border-color': 'data(border)',
+        'border-width': 3,
+        shape: (ele: cytoscape.NodeSingular) => String(ele.data('shape')) as cytoscape.Css.NodeShape,
+        label: 'data(label)',
+        color: labelColor,
+        'font-size': 11,
+        'text-valign': 'bottom',
+        'text-margin-y': 6,
+        'text-max-width': '110px',
+        'text-overflow-wrap': 'anywhere',
+        width: 46,
+        height: 46,
+      },
+    },
+    {
+      selector: 'node[is_gateway = 1], node[is_gateway = true]',
+      style: {
+        width: 56,
+        height: 56,
+        'border-width': 4,
+      },
+    },
+    {
+      selector: 'edge',
+      style: {
+        width: (ele: cytoscape.EdgeSingular) => {
+          const confidence = Number(ele.data('confidence') ?? 0.5)
+          return 1.5 + (4 - 1.5) * confidence
+        },
+        'line-color': 'data(color)',
+        'target-arrow-color': 'data(color)',
+        'target-arrow-shape': 'triangle',
+        'curve-style': 'bezier',
+        opacity: (ele: cytoscape.EdgeSingular) => {
+          const confidence = Number(ele.data('confidence') ?? 0.5)
+          return 0.3 + (0.95 - 0.3) * confidence
+        },
+        'line-style': (ele: cytoscape.EdgeSingular) => String(ele.data('lineStyle') ?? 'solid') as 'solid' | 'dashed',
+      },
+    },
+    {
+      selector: 'node:selected, edge:selected',
+      style: {
+        'overlay-color': '#0ea5e9',
+        'overlay-opacity': 0.15,
+        'overlay-padding': 6,
+      },
+    },
+  ], [labelColor])
+
+  const layoutOptions = useMemo<cytoscape.LayoutOptions>(() => {
+    if (layoutMode === 'raw') {
+      return {
+        name: 'fcose',
+        quality: 'default',
+        randomize: true,
+        animate: true,
+        animationDuration: 600,
+        fit: true,
+        padding: 40,
+        nodeSeparation: 100,
+        idealEdgeLength: 140,
+      } as cytoscape.LayoutOptions
+    }
+    if (layoutMode === 'overview') {
+      return { name: 'preset', fit: true, padding: 60 }
+    }
+    return { name: 'preset', fit: true, padding: 80 }
+  }, [layoutMode])
+
   useEffect(() => {
     if (!containerRef.current || !graph) return
 
@@ -284,69 +359,8 @@ export function TopologyMap() {
     const cy = cytoscape({
       container: containerRef.current,
       elements,
-      style: [
-        {
-          selector: 'node',
-          style: {
-            'background-color': 'data(color)',
-            'border-color': 'data(border)',
-            'border-width': 3,
-            'shape': 'data(shape)' as any,
-            'label': 'data(label)',
-            'color': labelColor,
-            'font-size': 11,
-            'text-valign': 'bottom',
-            'text-margin-y': 6,
-            'text-max-width': '110px',
-            'text-overflow-wrap': 'anywhere',
-            'width': 46,
-            'height': 46,
-          },
-        },
-        {
-          selector: 'node[is_gateway = 1], node[is_gateway = true]',
-          style: {
-            'width': 56,
-            'height': 56,
-            'border-width': 4,
-          },
-        },
-        {
-          selector: 'edge',
-          style: {
-            'width': 'mapData(confidence, 0, 1, 1.5, 4)' as any,
-            'line-color': 'data(color)',
-            'target-arrow-color': 'data(color)',
-            'target-arrow-shape': 'triangle',
-            'curve-style': 'bezier',
-            'opacity': 'mapData(confidence, 0, 1, 0.3, 0.95)' as any,
-            'line-style': 'data(lineStyle)' as any,
-          },
-        },
-        {
-          selector: 'node:selected, edge:selected',
-          style: {
-            'overlay-color': '#0ea5e9',
-            'overlay-opacity': 0.15,
-            'overlay-padding': 6,
-          },
-        },
-      ],
-      layout: layoutMode === 'raw'
-        ? {
-            name: 'fcose',
-            quality: 'default',
-            randomize: true,
-            animate: true,
-            animationDuration: 600,
-            fit: true,
-            padding: 40,
-            nodeSeparation: 100,
-            idealEdgeLength: 140,
-          } as any
-        : layoutMode === 'overview'
-        ? { name: 'preset', fit: true, padding: 60 }
-        : { name: 'preset', fit: true, padding: 80 },
+      style: stylesheet,
+      layout: layoutOptions,
       wheelSensitivity: 0.3,
     })
 
@@ -367,7 +381,7 @@ export function TopologyMap() {
       cy.destroy()
       cyRef.current = null
     }
-  }, [elements, graph, layoutMode, labelColor])
+  }, [elements, graph, layoutOptions, stylesheet])
 
   function handleZoomIn() { cyRef.current?.zoom(cyRef.current.zoom() * 1.2) }
   function handleZoomOut() { cyRef.current?.zoom(cyRef.current.zoom() * 0.8) }

@@ -8,12 +8,13 @@ from typing import Any
 from uuid import uuid4
 
 import httpx
-from sqlalchemy import desc, func, select
+from sqlalchemy import desc, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.audit import log_audit_event
 from app.db.models import Asset, AssetTag, PfsenseConfig, PfsenseSyncRun, User
 from app.fingerprinting.passive import record_passive_observation
+from app.services.identity import AssetIdentityResolver
 
 
 def _utcnow() -> datetime:
@@ -360,22 +361,14 @@ async def _resolve_asset_by_mac_or_ip(
     hostname: str | None,
     create_if_missing: bool = True,
 ) -> Asset | None:
-    if mac:
-        result = await db.execute(select(Asset).where(func.lower(Asset.mac_address) == mac.lower()).limit(1))
-        asset = result.scalar_one_or_none()
-        if asset is not None:
-            return asset
-    if ip:
-        result = await db.execute(select(Asset).where(Asset.ip_address == ip).limit(1))
-        asset = result.scalar_one_or_none()
-        if asset is not None:
-            return asset
-    if not ip or not create_if_missing:
-        return None
-    asset = Asset(ip_address=ip, mac_address=mac, hostname=hostname, status="online")
-    db.add(asset)
-    await db.flush()
-    return asset
+    resolver = AssetIdentityResolver(db, source="pfsense")
+    return await resolver.resolve_asset(
+        mac=mac,
+        ip=ip,
+        hostname=hostname,
+        create_if_missing=create_if_missing,
+        lookup_order=("mac", "ip", "hostname"),
+    )
 
 
 async def _enrich_asset_from_dhcp_lease(db: AsyncSession, asset: Asset, lease: DhcpLeaseRecord) -> None:

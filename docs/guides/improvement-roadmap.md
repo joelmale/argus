@@ -314,12 +314,29 @@ Validation:
 Rollback risk: Medium. This phase changes API contracts, so it should be isolated and
 well tested.
 
-## Phase 4: Service Boundaries and Typed Client Contracts
+## Phase 4: Service Boundaries and Typed Client Contracts ✓ Complete
 
 Effort: Medium
 
 Purpose: make the codebase easier to evolve by reducing route-file responsibility and
 frontend/backend type drift.
+
+Shipped (2026-04-15):
+
+- Added shared backend services for asset identity resolution, manual scan queue
+  enqueueing, and topology graph reads.
+- Route handlers for scan trigger, topology graph reads, and manual enrichment
+  now delegate through smaller service helpers instead of carrying all of the
+  orchestration inline.
+- Asset identity resolution now normalizes MACs, avoids treating randomized
+  locally administered MACs as durable primary keys, and records history entries
+  for identity conflicts or randomized sightings.
+- Backend scan trigger and asset enrichment endpoints are rate limited with the
+  existing `slowapi` limiter.
+- Backend logs now go through a JSON formatter at startup.
+- Frontend asset detail and topology code removed avoidable `any` casts around
+  `ai_analysis` and Cytoscape styling data.
+- Added resolver coverage for randomized MAC handling and stable-MAC relocation.
 
 Scope:
 

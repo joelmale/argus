@@ -3,12 +3,13 @@ from datetime import datetime, timedelta, timezone
 from typing import Annotated
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 from pydantic import BaseModel, Field
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
+from app.core.limiter import limiter
 from app.db.models import ScanJob
 from app.db.models import User
 from app.db.session import get_db
@@ -16,13 +17,8 @@ from app.db.upsert import upsert_scan_result
 from app.fingerprinting.passive import record_passive_observation
 from app.ingestion.logs import parse_dns_dhcp_logs
 from app.notifications import notify_new_device
-from app.scanner.config import (
-    get_or_create_scanner_config,
-    materialize_scan_targets,
-    resolve_scan_targets,
-    split_scan_targets,
-    validate_scan_targets_routable,
-)
+from app.scanner.config import split_scan_targets
+from app.services.scans import enqueue_manual_scan
 from app.workers.tasks import (
     _get_active_scan_task_ids,
     _get_next_queued_job,
@@ -313,34 +309,16 @@ async def list_scans(
 
 
 @router.post("/trigger", responses=TRIGGER_SCAN_RESPONSES)
+@limiter.limit("5/minute")
 async def trigger_scan(
+    request: Request,
     payload: TriggerScanRequest,
     db: DBSession,
     _: AdminUser,
 ):
     """Enqueue a manual scan. The scanner worker picks this up via Redis."""
-    config = await get_or_create_scanner_config(db)
-    try:
-        targets = resolve_scan_targets(config, payload.targets)
-        materialized_targets = materialize_scan_targets(targets)
-    except ValueError as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    route_error = validate_scan_targets_routable(materialized_targets)
-    if route_error:
-        raise HTTPException(status_code=400, detail=route_error)
-    job, _ = await _create_scan_job_graph(
-        db,
-        targets=materialized_targets,
-        scan_type=payload.scan_type,
-        triggered_by="manual",
-    )
-    await db.commit()
-    await db.refresh(job)
-    should_start = not await _has_active_scan(db) and job.queue_position == 1
-    if should_start:
-        run_scan_job.delay(str(job.id))
-        return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
-    return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
+    job, should_start = await enqueue_manual_scan(db, targets=payload.targets, scan_type=payload.scan_type)
+    return {"job_id": str(job.id), "status": "started" if should_start else "queued", "queue_position": job.queue_position}
 
 
 @router.post("/ingest/logs")

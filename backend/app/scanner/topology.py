@@ -1,9 +1,10 @@
 from __future__ import annotations
 
-from sqlalchemy import and_, or_, select
+from sqlalchemy import and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Asset, TopologyLink, WirelessAssociation
+from app.services.identity import AssetIdentityResolver
 from app.topology.segments import ensure_segment_for_asset
 
 
@@ -147,27 +148,13 @@ async def _process_wireless_clients(db: AsyncSession, source_asset: Asset, wirel
 
 
 async def _resolve_asset_by_ip_or_mac(db: AsyncSession, ip_address: str | None, mac_address: str | None) -> Asset | None:
-    conditions = []
-    if ip_address:
-        conditions.append(Asset.ip_address == ip_address)
-    if mac_address:
-        conditions.append(Asset.mac_address == mac_address)
-    return await _resolve_asset(db, conditions)
+    resolver = AssetIdentityResolver(db, source="topology")
+    return await resolver.resolve_asset(mac=mac_address, ip=ip_address, lookup_order=("ip", "mac"))
 
 
 async def _resolve_asset_by_hostname_or_mac(db: AsyncSession, hostname: str | None, mac_address: str | None) -> Asset | None:
-    conditions = []
-    if mac_address:
-        conditions.append(Asset.mac_address == mac_address)
-    if hostname:
-        conditions.append(Asset.hostname == hostname)
-    return await _resolve_asset(db, conditions)
-
-
-async def _resolve_asset(db: AsyncSession, conditions: list) -> Asset | None:
-    if not conditions:
-        return None
-    return (await db.execute(select(Asset).where(or_(*conditions)))).scalar_one_or_none()
+    resolver = AssetIdentityResolver(db, source="topology")
+    return await resolver.resolve_asset(mac=mac_address, hostname=hostname, create_if_missing=False, lookup_order=("mac", "hostname"))
 
 
 async def _upsert_topology_link(

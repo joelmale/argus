@@ -9,6 +9,7 @@ import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { severityColor, formatDate, timeAgo } from '@/lib/utils'
 import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert, Microscope, ChevronDown, ChevronUp, Workflow, Loader2, MessageSquareText } from 'lucide-react'
+import { isAxiosError } from 'axios'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import type { Asset, AssetAutopsyStage, ConfigBackupTarget } from '@/types'
@@ -28,6 +29,14 @@ const DEVICE_TYPE_OPTIONS = [
   'voip',
   'unknown',
 ] as const
+
+function getErrorDetail(error: Error): string | undefined {
+  if (!isAxiosError(error)) {
+    return undefined
+  }
+  const detail = error.response?.data?.detail
+  return typeof detail === 'string' ? detail : undefined
+}
 
 function AssetMetadataEditor({ asset }: Readonly<{ asset: Asset }>) {
   const { mutate: updateAsset, isPending: isSaving } = useUpdateAsset()
@@ -174,8 +183,8 @@ function AssetNotesCard({ asset }: Readonly<{ asset: Asset }>) {
       { id: asset.id, content: normalized },
       {
         onSuccess: () => setContent(''),
-        onError: (err: any) => {
-          const detail = err?.response?.data?.detail
+        onError: (err: Error) => {
+          const detail = getErrorDetail(err)
           setError(typeof detail === 'string' ? detail : 'Unable to save note right now.')
         },
       },
@@ -746,8 +755,9 @@ export default function AssetDetailPage() {
     </AppShell>
   )
 
-  const ai = (asset as any).ai_analysis
-  const openPorts = (asset.ports ?? []).filter((p: any) => p.state === 'open')
+  const ai = asset.ai_analysis ?? null
+  const securityFindings = ai?.security_findings ?? []
+  const openPorts = (asset.ports ?? []).filter((port) => port.state === 'open')
 
   return (
     <AppShell>
@@ -789,8 +799,8 @@ export default function AssetDetailPage() {
                                 : `Deep enrichment ${status}. Check Scans for progress.`,
                             )
                           },
-                          onError: (error: any) => {
-                            const detail = error?.response?.data?.detail
+                          onError: (error: Error) => {
+                            const detail = getErrorDetail(error)
                             setEnrichmentStatus(
                               typeof detail === 'string'
                                 ? `Unable to queue deep enrichment: ${detail}`
@@ -858,7 +868,7 @@ export default function AssetDetailPage() {
                 {/* Tags */}
                 {asset.tags && asset.tags.length > 0 && (
                   <div className="mt-4 flex flex-wrap gap-1.5">
-                    {asset.tags.map((t: any) => (
+                    {asset.tags.map((t) => (
                       <span key={t.tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-sky-500/10 text-sky-600 dark:text-sky-400 border border-sky-500/20">
                         <Tag className="w-3 h-3" />{t.tag}
                       </span>
@@ -891,8 +901,8 @@ export default function AssetDetailPage() {
                                   : `Targeted port scan ${status}.`,
                               )
                             },
-                            onError: (error: any) => {
-                              const detail = error?.response?.data?.detail
+                            onError: (error: Error) => {
+                              const detail = getErrorDetail(error)
                               setPortScanStatus(
                                 typeof detail === 'string'
                                   ? `Unable to queue port scan: ${detail}`
@@ -928,7 +938,7 @@ export default function AssetDetailPage() {
                   <tbody className="divide-y divide-gray-100 dark:divide-zinc-800">
                     {openPorts.length === 0 ? (
                       <tr><td colSpan={4} className="px-5 py-6 text-center text-zinc-400 text-xs">No open ports found</td></tr>
-                    ) : openPorts.map((p: any) => (
+                    ) : openPorts.map((p) => (
                       <tr key={`${p.port_number}-${p.protocol}`} className="hover:bg-gray-50 dark:hover:bg-zinc-800/50">
                         <td className="px-5 py-2.5 font-mono font-medium text-sky-600 dark:text-sky-400 tabular">{p.port_number}</td>
                         <td className="px-5 py-2.5 text-zinc-500">{p.protocol}</td>
@@ -1047,14 +1057,14 @@ export default function AssetDetailPage() {
           <div className="xl:col-span-4 space-y-5">
             <FingerprintHypothesesCard asset={asset} />
             <LookupProvenanceCard asset={asset} />
-            {ai?.security_findings?.length > 0 && (
+            {securityFindings.length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle><Shield className="w-4 h-4 inline mr-1.5 text-yellow-500" />Security Findings</CardTitle>
-                  <span className="text-xs text-zinc-400">{ai.security_findings.length}</span>
+                  <span className="text-xs text-zinc-400">{securityFindings.length}</span>
                 </CardHeader>
                 <CardBody className="space-y-3 p-0">
-                  {ai.security_findings.map((finding: any) => (
+                  {securityFindings.map((finding) => (
                     <div key={`${finding.severity}:${finding.title}`} className="px-5 py-3 border-b last:border-0 border-gray-100 dark:border-zinc-800">
                       <div className="flex items-start gap-2">
                         <span className={`mt-0.5 inline-flex px-1.5 py-0.5 rounded text-xs font-medium border ${severityColor(finding.severity)}`}>
