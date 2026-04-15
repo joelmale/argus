@@ -607,8 +607,14 @@ export function SnmpMonitoringWorkspace() {
                           onClick={() => {
                             setRefreshMessage(null)
                             refreshSnmp(selectedSummary.asset.id, {
-                              onSuccess: () => {
-                                setRefreshMessage(`SNMP refresh completed for ${selectedSummary.asset.ip_address}.`)
+                              onSuccess: (response) => {
+                                const jobId = response?.data?.job_id
+                                const status = response?.data?.status ?? 'queued'
+                                setRefreshMessage(
+                                  jobId
+                                    ? `SNMP refresh ${status} as job ${jobId.slice(0, 8)}. Check Scans for progress.`
+                                    : `SNMP refresh ${status}. Check Scans for progress.`,
+                                )
                               },
                               onError: (error: any) => {
                                 const detail = error?.response?.data?.detail

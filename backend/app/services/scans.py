@@ -8,8 +8,9 @@ from app.scanner.config import (
     resolve_scan_targets,
     validate_scan_targets_routable,
 )
-from app.workers.tasks import _has_active_scan, _next_queue_position, run_scan_job
 from app.db.models import ScanJob
+from app.services.scan_queue import enqueue_scan_job
+from app.workers.tasks import run_scan_job
 
 
 async def enqueue_manual_scan(db: AsyncSession, *, targets: str | None, scan_type: str) -> tuple[ScanJob, bool]:
@@ -20,18 +21,12 @@ async def enqueue_manual_scan(db: AsyncSession, *, targets: str | None, scan_typ
     if route_error:
         raise ValueError(route_error)
 
-    job = ScanJob(
+    job, should_start = await enqueue_scan_job(
+        db,
         targets=materialized_targets,
         scan_type=scan_type,
         triggered_by="manual",
-        queue_position=await _next_queue_position(db),
     )
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    should_start = not await _has_active_scan(db) and job.queue_position == 1
     if should_start:
         run_scan_job.delay(str(job.id))
     return job, should_start
-

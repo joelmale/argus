@@ -16,6 +16,7 @@ import logging
 import math
 import threading
 import time
+from uuid import UUID
 
 from celery import Celery
 from celery.signals import worker_ready
@@ -24,6 +25,8 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.models import Asset, AssetHistory, ScanJob
+from app.services.asset_refresh import AI_REFRESH_JOB_TYPE, SNMP_REFRESH_JOB_TYPE, run_asset_ai_refresh, run_asset_snmp_refresh
+from app.services.scan_queue import acquire_scan_queue_lock
 
 log = logging.getLogger(__name__)
 _passive_arp_thread: threading.Thread | None = None
@@ -164,6 +167,9 @@ async def _run_job_async(job_id: str) -> None:
             if job is None:
                 return
 
+            if await _run_refresh_job_async(db, job, job_id):
+                return
+
             if await _should_run_parent_job(db, job):
                 await _run_parent_job_async(
                     db,
@@ -229,6 +235,58 @@ async def _run_job_async(job_id: str) -> None:
             await _dispatch_next_scan_if_idle(db)
     finally:
         await engine.dispose()
+
+
+async def _run_refresh_job_async(db, job: ScanJob, job_id: str) -> bool:
+    if job.scan_type not in {AI_REFRESH_JOB_TYPE, SNMP_REFRESH_JOB_TYPE}:
+        return False
+
+    asset_id = _extract_refresh_asset_id(job)
+    job_label = "AI analysis refresh" if job.scan_type == AI_REFRESH_JOB_TYPE else "SNMP refresh"
+    await _mark_job_running(db, job, message=f"Queued {job_label} for {job.targets}")
+    await _publish_event({
+        "event": "scan_progress",
+        "data": {
+            "job_id": job_id,
+            "stage": "running",
+            "progress": 0.0,
+            "message": f"Running {job_label}",
+            "asset_id": str(asset_id),
+            "job_type": job.scan_type,
+        },
+    })
+
+    try:
+        if job.scan_type == AI_REFRESH_JOB_TYPE:
+            await run_asset_ai_refresh(db, asset_id, job_id=job_id)
+        else:
+            await run_asset_snmp_refresh(db, asset_id, job_id=job_id)
+
+        await _complete_background_job(
+            db,
+            job,
+            job_id,
+            {
+                "job_type": job.scan_type,
+                "asset_id": str(asset_id),
+                "stage": "done",
+                "message": f"{job_label} completed",
+            },
+        )
+    except Exception as exc:
+        await _publish_scan_failure(db, job, job_id, exc)
+        raise
+    finally:
+        await _dispatch_next_scan_if_idle(db)
+    return True
+
+
+def _extract_refresh_asset_id(job: ScanJob) -> UUID:
+    summary = job.result_summary or {}
+    asset_id = summary.get("asset_id")
+    if not asset_id:
+        raise ValueError("Refresh job missing asset_id")
+    return UUID(str(asset_id))
 
 
 async def _should_run_parent_job(db, job: ScanJob) -> bool:
@@ -526,7 +584,7 @@ async def _fail_scan_job(db, job: ScanJob, job_id: str, route_error: str) -> Non
     await _dispatch_next_scan_if_idle(db)
 
 
-async def _mark_job_running(db, job: ScanJob) -> None:
+async def _mark_job_running(db, job: ScanJob, message: str | None = None) -> None:
     job.status = "running"
     job.queue_position = None
     job.control_action = None
@@ -535,7 +593,7 @@ async def _mark_job_running(db, job: ScanJob) -> None:
     job.result_summary = {
         "stage": "queued",
         "progress": 0.0,
-        "message": f"Queued scan for {job.targets}",
+        "message": message or f"Queued scan for {job.targets}",
     }
     await db.commit()
 
@@ -586,6 +644,22 @@ async def _complete_scan_job(db, job: ScanJob, job_id: str, summary) -> None:
     job.result_summary = summary.model_dump(mode="json")
     await db.commit()
     log.info("Scan job %s completed: %s", job_id, summary.model_dump(mode="json"))
+
+
+async def _complete_background_job(db, job: ScanJob, job_id: str, summary: dict) -> None:
+    job.status = "done"
+    job.finished_at = datetime.now(timezone.utc)
+    job.result_summary = summary
+    await db.commit()
+    log.info("Background job %s completed: %s", job_id, summary)
+    await _publish_event({
+        "event": "scan_complete",
+        "data": {
+            "job_id": job_id,
+            "status": "done",
+            **summary,
+        },
+    })
 
 
 async def _handle_scan_interrupt(db, job, job_id: str, exc, summary, persist_results) -> None:
@@ -686,6 +760,7 @@ async def _enqueue_scheduled_scan() -> None:
 
     try:
         async with session_factory() as db:
+            await acquire_scan_queue_lock(db)
             config = await get_or_create_scanner_config(db)
             if not should_enqueue_scheduled_scan(config):
                 if not getattr(config, "scheduled_scans_enabled", False):
@@ -837,6 +912,7 @@ async def _resume_paused_scans_async() -> None:
 
     try:
         async with session_factory() as db:
+            await acquire_scan_queue_lock(db)
             result = await db.execute(
                 select(ScanJob).where(
                     ScanJob.status == "paused",
@@ -923,6 +999,7 @@ async def _get_next_queued_job(db):
 
 
 async def _dispatch_next_scan_if_idle(db) -> None:
+    await acquire_scan_queue_lock(db)
     if await _has_active_scan(db):
         return
     next_job = await _get_next_queued_job(db)
@@ -941,6 +1018,7 @@ async def _resume_pending_queue_on_startup() -> None:
 
     try:
         async with session_factory() as db:
+            await acquire_scan_queue_lock(db)
             if await _has_active_scan(db):
                 return
             next_job = await _get_next_queued_job(db)

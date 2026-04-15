@@ -1,5 +1,4 @@
 """Assets CRUD — the core inventory endpoints."""
-import asyncio
 import csv
 import html
 from datetime import datetime, timezone
@@ -41,19 +40,16 @@ from app.db.models import (
     ConfigBackupSnapshot,
     Finding,
     Port,
-    ProbeRun,
     ScanJob,
     User,
     WirelessAssociation,
 )
 from app.db.session import get_db
 from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
-from app.scanner.agent import get_analyst
 from app.scanner.config import materialize_scan_targets, read_effective_scanner_config, validate_scan_targets_routable
-from app.scanner.models import DeviceClass, DiscoveredHost, ScanProfile
-from app.scanner.pipeline import _investigate_host
-from app.scanner.stages import portscan
-from app.workers.tasks import _has_active_scan, _next_queue_position, run_scan_job
+from app.scanner.models import DeviceClass, ScanProfile
+from app.services.asset_refresh import AI_REFRESH_JOB_TYPE, SNMP_REFRESH_JOB_TYPE
+from app.services.scan_queue import enqueue_scan_job
 
 VALID_DEVICE_TYPES = {member.value for member in DeviceClass}
 ASSET_NOT_FOUND_DETAIL = "Asset not found"
@@ -88,14 +84,6 @@ BACKUP_SNAPSHOT_RESPONSES = {404: {"description": "Backup snapshot not found"}}
 router = APIRouter(responses=ASSET_NOT_FOUND_RESPONSE)
 
 
-def _probe_run_summary(details: dict, probe_success: bool) -> str | None:
-    if not probe_success:
-        error = details.get("error")
-        return str(error)[:512] if error is not None else None
-    summary = details.get("title") or details.get("sys_descr") or details.get("friendly_name") or details.get("banner")
-    return str(summary)[:512] if summary is not None else None
-
-
 def _parse_asset_includes(include: str | None) -> set[str]:
     if not include:
         return set()
@@ -125,6 +113,12 @@ class ConfigBackupTargetRequest(BaseModel):
 
 class BulkDeleteAssetsRequest(BaseModel):
     asset_ids: list[UUID]
+
+
+class JobSubmissionResponse(BaseModel):
+    job_id: str
+    status: str
+    queue_position: int | None = None
 
 
 async def _load_asset(db: AsyncSession, asset_id: UUID) -> Asset:
@@ -429,7 +423,7 @@ async def get_asset(asset_id: UUID, db: DBSession, _: CurrentUser):
     return _serialize_asset(asset)
 
 
-@router.post("/{asset_id}/port-scan", responses=ASSET_NOT_FOUND_RESPONSE)
+@router.post("/{asset_id}/port-scan", response_model=JobSubmissionResponse, responses=ASSET_NOT_FOUND_RESPONSE)
 async def run_asset_port_scan(
     asset_id: UUID,
     db: DBSession,
@@ -441,29 +435,26 @@ async def run_asset_port_scan(
     if route_error:
         raise HTTPException(status_code=400, detail=route_error)
 
-    job = ScanJob(
+    job, should_start = await enqueue_scan_job(
+        db,
         targets=targets,
         scan_type=ScanProfile.DEEP_ENRICHMENT.value,
         triggered_by="manual",
-        queue_position=await _next_queue_position(db),
         result_summary={
             "stage": "queued",
             "message": f"Queued targeted deep port scan for {asset.ip_address}",
             "asset_id": str(asset.id),
         },
     )
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    should_start = not await _has_active_scan(db) and job.queue_position == 1
     if should_start:
+        from app.workers.tasks import run_scan_job
+
         run_scan_job.delay(str(job.id))
         return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
     return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
-@router.post("/{asset_id}/ai-analysis/refresh", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
+@router.post("/{asset_id}/ai-analysis/refresh", response_model=JobSubmissionResponse, responses=ASSET_NOT_FOUND_RESPONSE)
 @limiter.limit("3/minute")
 async def run_asset_ai_refresh(
     request: Request,
@@ -472,37 +463,27 @@ async def run_asset_ai_refresh(
     _: AdminUser,
 ):
     asset = await _load_asset(db, asset_id)
-    _, runtime_config = await read_effective_scanner_config(db)
-    host = DiscoveredHost(
-        ip_address=asset.ip_address,
-        mac_address=asset.mac_address,
-        discovery_method="manual",
-        nmap_hostname=asset.hostname,
+    job, should_start = await enqueue_scan_job(
+        db,
+        targets=asset.ip_address,
+        scan_type=AI_REFRESH_JOB_TYPE,
+        triggered_by="manual",
+        result_summary={
+            "stage": "queued",
+            "message": f"Queued AI analysis refresh for {asset.ip_address}",
+            "asset_id": str(asset.id),
+            "asset_ip": asset.ip_address,
+        },
     )
-    ports, os_fp = await portscan.scan_host(host, ScanProfile.DEEP_ENRICHMENT)
-    result = await _investigate_host(
-        host=host,
-        ports=ports,
-        os_fp=os_fp,
-        nmap_hostname=host.nmap_hostname,
-        nmap_vendor=asset.vendor,
-        profile=ScanProfile.DEEP_ENRICHMENT,
-        analyst=get_analyst(runtime_config),
-        run_deep_probes=True,
-        deep_probe_timeout_seconds=6,
-        semaphore=asyncio.Semaphore(1),
-        broadcast_fn=None,
-        job_id=f"asset-{asset.id}",
-    )
+    if should_start:
+        from app.workers.tasks import run_scan_job
 
-    from app.db.upsert import upsert_scan_result
-
-    await upsert_scan_result(db, result)
-    await db.commit()
-    return _serialize_asset(await _load_asset(db, asset_id))
+        run_scan_job.delay(str(job.id))
+        return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
+    return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
-@router.post("/{asset_id}/snmp-refresh", response_model=AssetDetail, responses=ASSET_NOT_FOUND_RESPONSE)
+@router.post("/{asset_id}/snmp-refresh", response_model=JobSubmissionResponse, responses=ASSET_NOT_FOUND_RESPONSE)
 @limiter.limit("3/minute")
 async def run_asset_snmp_refresh(
     request: Request,
@@ -514,59 +495,24 @@ async def run_asset_snmp_refresh(
     _, runtime_config = await read_effective_scanner_config(db)
     if not runtime_config.snmp_enabled:
         raise HTTPException(status_code=400, detail="SNMP enrichment is disabled in Settings.")
-
-    from app.scanner.probes.snmp import probe as run_snmp_probe
-    from app.scanner.topology import infer_topology_links_from_snmp
-
-    probe_result = await run_snmp_probe(
-        asset.ip_address,
-        community=runtime_config.snmp_community,
-        version=runtime_config.snmp_version,
-        timeout_seconds=runtime_config.snmp_timeout,
-        v3_username=runtime_config.snmp_v3_username or None,
-        v3_auth_key=runtime_config.snmp_v3_auth_key or None,
-        v3_priv_key=runtime_config.snmp_v3_priv_key or None,
-        v3_auth_protocol=runtime_config.snmp_v3_auth_protocol or None,
-        v3_priv_protocol=runtime_config.snmp_v3_priv_protocol or None,
+    job, should_start = await enqueue_scan_job(
+        db,
+        targets=asset.ip_address,
+        scan_type=SNMP_REFRESH_JOB_TYPE,
+        triggered_by="manual",
+        result_summary={
+            "stage": "queued",
+            "message": f"Queued SNMP refresh for {asset.ip_address}",
+            "asset_id": str(asset.id),
+            "asset_ip": asset.ip_address,
+        },
     )
+    if should_start:
+        from app.workers.tasks import run_scan_job
 
-    details = dict(probe_result.data or {})
-    if probe_result.error and "error" not in details:
-        details["error"] = probe_result.error
-    now = datetime.now(timezone.utc)
-    db.add(
-        ProbeRun(
-            asset_id=asset.id,
-            probe_type=probe_result.probe_type,
-            target_port=probe_result.target_port,
-            success=probe_result.success,
-            duration_ms=probe_result.duration_ms,
-            summary=_probe_run_summary(details, probe_result.success),
-            details=details,
-            raw_excerpt=probe_result.raw[:4000] if probe_result.raw else None,
-            observed_at=now,
-        )
-    )
-
-    asset.heartbeat_last_checked_at = now
-    if probe_result.success:
-        was_offline = asset.status == "offline"
-        asset.status = "online"
-        asset.last_seen = now
-        asset.heartbeat_missed_count = 0
-        if was_offline:
-            db.add(
-                AssetHistory(
-                    asset_id=asset.id,
-                    change_type="status_change",
-                    diff={"status": {"old": "offline", "new": "online"}},
-                )
-            )
-        if details:
-            await infer_topology_links_from_snmp(db, asset, details)
-
-    await db.commit()
-    return _serialize_asset(await _load_asset(db, asset_id))
+        run_scan_job.delay(str(job.id))
+        return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
+    return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
 @router.patch("/{asset_id}", response_model=AssetDetail, responses=ASSET_UPDATE_RESPONSES)
