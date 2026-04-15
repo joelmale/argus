@@ -28,7 +28,13 @@ Recommended branch names:
 - `perf/phase-3-asset-payloads`
 - `refactor/phase-4-service-boundaries`
 - `feature/phase-7-evidence-topology`
-- `feature/phase-8-asset-identity`
+- `fix/phase-10a-security-ops`
+- `ci/phase-9a-build-once`
+- `feature/phase-10b-ux-polish`
+- `ci/phase-9b-e2e-contract`
+- `feature/phase-8a-identity-models`
+- `feature/phase-8b-identity-resolver`
+- `feature/phase-8c-identity-api-ui`
 
 Commit after each major behavior boundary, not after every small edit. Each commit
 should describe one outcome and include its test or validation work.
@@ -648,27 +654,26 @@ of the network. Ship controller-derived observed links before heuristic graph ch
 
 ## Phase 8: Sighting-First Inventory Model Evolution
 
-Effort: Large
+Effort: Large (split into three sub-phases — ship each independently)
 
 Purpose: return quick discovery results while separating temporary network sightings
 from durable assets.
 
+This phase is broken into three sub-phases to limit branch lifetime and rollback
+scope. Each sub-phase must pass validation independently before the next begins.
+
+### Phase 8a: Data Models and Backfill Migration
+
 Scope:
 
-- Rework inventory around three concepts:
+- Add the three core model concepts without changing any existing behavior.
   - `IdentityObservation`: a raw fact from scan, ARP, DHCP, mDNS, SNMP, controller
     APIs, logs, or manual input.
   - `Endpoint`: a currently observed network presence such as IP, MAC, hostname,
     source, network scope, and time window.
   - `Asset`: the durable device, VM, service host, router, printer, phone, or other
-    thing the user cares about.
-- Keep discovery fast by creating provisional records immediately.
-  - New scan results should appear in the UI without waiting for strong correlation.
-  - Add `identity_state` values such as `provisional`, `confirmed`, `conflicted`,
-    `retired`, and `ignored`.
-  - Add `identity_confidence` and `primary_signal` so users can see why a record
-    exists and how certain the system is.
-- Add sighting and assignment tables.
+    thing the user cares about (existing model, extended with new columns).
+- Add new tables:
   - `asset_identity_observations` for raw observed IP, MAC, hostname, source,
     controller ID, DHCP client ID, SNMP identity, TLS certificate fingerprint, and
     confidence details.
@@ -677,6 +682,35 @@ Scope:
     site, or integration source where available.
   - Support multiple IPs per asset, reused IPs over time, and overlapping private
     address space across network scopes.
+- Add `identity_state` column to `Asset` with values `provisional`, `confirmed`,
+  `conflicted`, `retired`, and `ignored`. Default existing assets to `confirmed`.
+- Add `identity_confidence` and `primary_signal` columns to `Asset`.
+- Write a backfill migration that populates observations, interfaces, and address
+  assignments from current `Asset.ip_address`, `Asset.mac_address`, hostname,
+  evidence, and passive observations.
+- Keep `Asset.ip_address` and `Asset.mac_address` as denormalized display fields;
+  do not change any read or write paths in this sub-phase.
+- No scanner, resolver, or API behavior changes.
+
+Suggested commits:
+
+```text
+feat(inventory): add sighting and address assignment models
+feat(inventory): add identity_state identity_confidence and primary_signal to asset
+migration(inventory): backfill observations and assignments from existing assets
+```
+
+Validation:
+
+- Migration test with existing inventory data — all existing assets present and
+  status unaffected.
+- Asset list and detail pages load without errors.
+- New columns visible in the database with correct backfilled values.
+
+### Phase 8b: Resolver and Upsert Behavior
+
+Scope:
+
 - Replace single-field primacy with confidence-based reconciliation.
   - Strong signals: controller device ID, serial number, SNMP serial, stable TLS
     certificate fingerprint, or manually confirmed identity.
@@ -685,6 +719,9 @@ Scope:
   - Weak signals: IP address alone, hostname alone, one passive log line, or a locally
     administered/randomized MAC by itself.
   - Use IP as a presence/address signal, not a durable identity signal.
+- Keep discovery fast by creating provisional records immediately.
+  - New scan results should appear in the UI without waiting for strong correlation.
+  - Use IP-only matches as provisional unless corroborated by stronger signals.
 - Handle randomized MACs without flooding inventory.
   - Detect locally administered MAC addresses and treat them as weak identity signals.
   - Store one-time randomized sightings as observations or provisional endpoints,
@@ -700,47 +737,30 @@ Scope:
   - Mark noisy or unwanted records as ignored so future scans do not recreate them.
   - Record `identity_conflicts` instead of silently merging when strong signals
     disagree.
+- Route scanner results, passive logs, and integrations through the shared
+  `AssetIdentityResolver` introduced in Phase 4.
+- Add a settings toggle to disable automatic promotion of provisional records.
+  Operators can require manual confirmation during initial rollout.
 - Migrate from destructive fingerprint refresh to separate snapshot and history.
   - Keep current evidence snapshot for the asset detail summary.
   - Preserve probe-run history with retention policies.
   - Add `scan_id` or `job_id` references to evidence/probe records.
-- Add migration strategy.
-  - Backfill observations, interfaces, and address assignments from current
-    `Asset.ip_address`, `Asset.mac_address`, hostname, evidence, and passive
-    observations.
-  - Preserve existing asset IDs where possible.
-  - Keep `Asset.ip_address` and `Asset.mac_address` temporarily as denormalized
-    current/display fields until API consumers are migrated.
-- Update resolver and upsert behavior.
-  - Route scanner results, passive logs, and integrations through the shared
-    `AssetIdentityResolver` introduced in Phase 4.
-  - Score observations by signal strength and source confidence.
-  - Use IP-only matches as provisional unless corroborated by stronger signals.
-  - Avoid merging unrelated devices solely because an IP was reused.
-  - Avoid creating durable assets solely because a randomized MAC appeared once.
-- Update API and UI contracts.
-  - Show provisional, confirmed, conflicted, ignored, and retired states in asset
-    summary/detail responses.
-  - Expose identity evidence, current address assignments, and conflicts on asset
-    detail.
-  - Add review actions for promote, merge, split, ignore, and retire.
+- Keep `Asset.ip_address` and `Asset.mac_address` as denormalized display fields
+  (updated by the resolver after each commit) until Phase 8c removes them.
 
 Suggested commits:
 
 ```text
-feat(inventory): add sighting and address assignment models
 feat(inventory): add provisional asset lifecycle states
 refactor(upsert): reconcile assets with identity resolver scores
 feat(inventory): handle randomized mac sightings as weak signals
 feat(inventory): add identity conflict and review actions
 feat(fingerprints): separate current evidence snapshot from probe history
-migration(inventory): backfill observations and assignments from existing assets
-test(inventory): cover dhcp churn randomized macs and multi-interface assets
+feat(settings): add toggle to require manual confirmation of provisional records
 ```
 
 Validation:
 
-- Migration test with existing inventory data.
 - Resolver tests for:
   - quick provisional creation from IP-only discovery
   - promotion when stronger evidence appears later
@@ -758,65 +778,131 @@ Validation:
 - Flood-control tests for weak one-time sightings, retention, and per-scan caps.
 - Notification tests proving low-confidence randomized sightings do not trigger
   "new asset" alerts.
-- Manual smoke on existing asset detail and topology pages.
+- Manual smoke on existing asset detail and topology pages — no regressions.
+
+### Phase 8c: API and UI Contracts
+
+Scope:
+
+- Update API and UI contracts.
+  - Show provisional, confirmed, conflicted, ignored, and retired states in asset
+    summary/detail responses.
+  - Expose identity evidence, current address assignments, and conflicts on asset
+    detail.
+  - Add review actions for promote, merge, split, ignore, and retire.
+- Remove the temporary denormalized `Asset.ip_address` and `Asset.mac_address`
+  fields from the primary write path after confirming 8b has been stable for at
+  least 30 days. Retain them as computed/display columns only.
+
+Suggested commits:
+
+```text
+feat(assets-api): expose identity state evidence and conflicts on asset detail
+feat(assets-ui): add promote merge split ignore retire review actions
+chore(inventory): remove ip_address mac_address from primary write path
+test(inventory): cover dhcp churn randomized macs and multi-interface assets
+```
+
+Validation:
+
 - Manual smoke for promote, merge, split, ignore, and retire review flows.
+- Confirm API consumers updated for removed write-path fields.
+- E2E test covering provisional asset promotion flow.
 
 Rollback risk: High. This is a model change and should be implemented only after the
-smaller API and service-boundary phases make the code easier to modify.
+smaller API and service-boundary phases make the code easier to modify. Sub-phase 8a
+is low risk (additive schema only). Sub-phase 8b is medium-high risk (behavior
+change). Sub-phase 8c is medium risk (API contract change).
 
 ## Phase 9: Release Pipeline and Browser Test Coverage
 
-Effort: Medium to Large
+Effort: Medium to Large (split into two sub-phases — ship each independently)
 
 Purpose: improve deployment confidence and catch frontend/session regressions before
 release images publish.
+
+### Phase 9a: Build-Once Release Pipeline
 
 Scope:
 
 - Build release images once and scan the exact artifact that will be pushed.
   - Avoid the current build-for-scan, build-for-push duplication.
   - Preserve SBOM, provenance, signing, and SARIF upload.
-- Add frontend/browser CI coverage.
+- This sub-phase is independent of all other phases and can land at any time.
+
+Suggested commits:
+
+```text
+ci(images): scan the same image digest that is pushed
+```
+
+Validation:
+
+- Release image workflow publishes backend, scanner, and frontend images.
+- Trivy scans still upload SARIF artifacts.
+
+Rollback risk: Low. CI-only change with no runtime impact.
+
+### Phase 9b: E2E Browser Tests and API Contract Checks
+
+Scope:
+
+- Add frontend/browser CI coverage using a Playwright-based test suite.
   - Auth/login setup flow.
   - Logout returns to `/login`.
   - Session expiry redirects and clears invalid token.
   - Asset search and sort.
   - Scan queue controls.
   - Version badge shows build metadata.
-- Add API contract checks where feasible.
-  - OpenAPI schema generation.
-  - TypeScript client generation or schema drift detection.
+  - Topology map renders with at least one node after a scan.
+  - Link-draw dialog opens and can be cancelled.
+  - Neighborhood focus returns to overview on dismiss.
+- Add API contract checks.
+  - Generate the OpenAPI schema from FastAPI at test time.
+  - Use `openapi-typescript` to generate TypeScript client types from the schema.
+  - Diff generated types against the committed `frontend/src/types/index.ts` to
+    detect schema drift.
 - Add phase-specific CI jobs only when affected files change, matching the existing
   development workflow.
 
 Suggested commits:
 
 ```text
-ci(images): scan the same image digest that is pushed
 test(e2e): cover auth setup logout and session expiry
 test(e2e): cover asset table and scan queue workflows
-ci(contract): validate openapi and frontend api types
+test(e2e): cover topology map render focus and link-draw flows
+ci(contract): validate openapi schema and detect frontend type drift
 ```
 
 Validation:
 
 - Pull request checks pass.
-- Release image workflow publishes backend, scanner, and frontend images.
-- Trivy scans still upload SARIF artifacts.
 - E2E tests pass locally and in CI.
+- Schema drift check catches a deliberate mismatch between the API and the types file.
+- Topology page renders without console errors in E2E run.
 
 Rollback risk: Medium. CI changes affect release flow, so keep them separate from
 runtime application changes.
 
 ## Phase 10: Hardening and UX Polish
 
-Effort: Medium
+Effort: Medium (split into security/ops track and UX track — ship security items first)
 
 Purpose: harden security and operational configuration, and improve accessibility,
 empty-state handling, and first-use experience without touching core data paths.
 
+### Phase 10a: Security and Ops Hardening
+
+These items are low blast-radius fixes that should land as soon as possible,
+independent of the UX work below.
+
 Scope:
 
+- Validate nmap arguments in custom scan profiles before enqueueing.
+  - Reject arguments containing shell metacharacters (`$`, `;`, `|`, backticks, etc.)
+    or use an allowlist of safe nmap flags.
+  - Prevents command injection through the custom scan profile path.
+  - Priority: ship this before any other Phase 10 item.
 - Add security headers middleware to the FastAPI app.
   - Set `X-Content-Type-Options: nosniff`, `X-Frame-Options: DENY`, and a baseline
     Content Security Policy on every response.
@@ -825,20 +911,44 @@ Scope:
   services in Docker Compose.
   - Prevents startup race conditions where Celery or the WebSocket handler fails
     silently because Redis is not yet accepting connections.
-- Validate nmap arguments in custom scan profiles before enqueueing.
-  - Reject arguments containing shell metacharacters (`$`, `;`, `|`, backticks, etc.)
-    or use an allowlist of safe nmap flags.
-  - Prevents command injection through the custom scan profile path.
 - Configure the SQLAlchemy async engine connection pool explicitly.
   - Set `pool_size`, `max_overflow`, `pool_recycle`, and `pool_pre_ping=True` as
     environment-variable-tunable settings.
   - Prevents connection pool exhaustion under concurrent scan load and eliminates
     stale-connection failures after database restarts.
+
+Suggested commits:
+
+```text
+fix(scanner): validate nmap arguments before scan dispatch
+fix(security): add security headers middleware to fastapi app
+ops(compose): add redis health dependency for backend and scanner
+perf(db): configure sqlalchemy connection pool via env vars
+```
+
+Validation:
+
+- Attempt a custom scan profile with shell metacharacters in the nmap args field;
+  confirm the job is rejected before enqueueing.
+- Verify security headers are present on all API responses with a curl or browser
+  network tab check.
+- Verify `docker compose up` starts cleanly without backend/scanner errors when Redis
+  takes a few extra seconds.
+- Confirm pool settings take effect under concurrent load (no idle connection errors
+  in backend logs).
+
+Rollback risk: Low. All changes are additive or narrow correctness fixes.
+
+### Phase 10b: UX Polish
+
+Scope:
+
 - Add pagination UI to the asset table.
   - Wire the existing `skip`/`limit` backend parameters to pagination controls in the
     frontend.
   - Move sort column and direction into the server-side query so the browser is not
-    sorting the full dataset.
+    sorting the full dataset in memory.
+  - Preserve all existing `search`, `tag`, and `status` filters across page changes.
 - Replace `window.confirm` dialogs with accessible modal dialogs.
   - Use the existing shadcn/ui `AlertDialog` component for bulk delete and other
     destructive confirmations.
@@ -849,7 +959,7 @@ Scope:
     DeviceTypeChart, and OsCompositionWidget.
   - Eliminates layout shift and makes loading state explicit rather than blank.
 - Add empty states for pages with no data.
-  - Assets page, findings page, topology view, and dashboard should each show a
+  - Assets page, findings page, topology map, and dashboard should each show a
     contextual message and a primary action (e.g. "Run a scan to discover your network")
     when the inventory is empty.
   - Reduces confusion for first-time users after initial setup.
@@ -863,15 +973,11 @@ Scope:
   - Show a "Last updated N seconds ago" timestamp with a manual refresh button on
     asset list and dashboard widgets.
   - Suppress the 60-second polling interval when the WebSocket is connected (relies
-    on the reconnection work in Phase 5).
+    on the reconnection work in Phase 5, which is complete).
 
 Suggested commits:
 
 ```text
-fix(security): add security headers middleware to fastapi app
-ops(compose): add redis health dependency for backend and scanner
-fix(scanner): validate nmap arguments before scan dispatch
-perf(db): configure sqlalchemy connection pool via env vars
 feat(assets-ui): add server-side pagination to asset table
 fix(ui): replace window.confirm with accessible alert dialogs
 feat(ui): add skeleton loaders to dashboard widgets
@@ -883,19 +989,13 @@ feat(ui): show last-updated indicator on polling components
 
 Validation:
 
-- Verify security headers are present on all API responses with a curl or browser
-  network tab check.
-- Verify `docker compose up` starts cleanly without backend/scanner errors when Redis
-  takes a few extra seconds.
-- Attempt a custom scan profile with shell metacharacters in the nmap args field;
-  confirm the job is rejected before enqueueing.
-- Confirm pool settings take effect under concurrent load (no idle connection errors
-  in backend logs).
 - Manual smoke:
   - asset table pagination and server-side sort
+  - existing search, tag, and status filters preserved across page changes
   - bulk delete confirmation uses modal, not browser confirm
   - dashboard skeleton appears during initial load
-  - fresh install (empty database) shows empty states on all affected pages
+  - fresh install (empty database) shows empty states on all affected pages, including
+    the topology map
   - screen reader or axe audit confirms no icon-only button violations
   - throw a deliberate error in a component; confirm error boundary catches it
   - disconnect from the network; confirm stale indicator appears in asset table
@@ -911,32 +1011,33 @@ Implement in this order unless production pressure changes the priority:
 1. ~~Phase 1: correctness fixes.~~ ✓ Done (2026-04-14)
 2. ~~Phase 2: query shape and client-side performance.~~ ✓ Done (2026-04-14, completed 2026-04-15).
 3. ~~Phase 3: asset API payload split.~~ ✓ Done (2026-04-15).
-4. Phase 9 image build portion: scan the pushed artifact.
-5. Phase 4: service boundaries and typed contracts.
-6. Phase 5: async workflows and queue hardening.
-7. Phase 6: topology and metrics scaling.
-8. Phase 7: evidence-based topology hierarchy.
-9. Phase 10: hardening and UX polish.
-10. Phase 9 E2E coverage expansion.
-11. Phase 8: sighting-first inventory model evolution.
+4. ~~Phase 4: service boundaries and typed contracts.~~ ✓ Done (2026-04-15).
+5. ~~Phase 5: async workflows and queue hardening.~~ ✓ Done (2026-04-15).
+6. ~~Phase 6: topology, metrics, and export scaling.~~ ✓ Done (2026-04-15).
+7. ~~Phase 7: evidence-based topology hierarchy.~~ ✓ Done (2026-04-15).
+8. **Phase 10a**: nmap validation, security headers, Redis healthcheck, pool config.
+9. **Phase 9a**: build-once CI image fix (independent, can land in parallel with 10a).
+10. **Phase 10b**: UX polish — pagination, modals, skeletons, empty states, aria, error boundary, stale indicators.
+11. **Phase 9b**: E2E browser tests (including topology flows) and OpenAPI drift detection.
+12. **Phase 8a**: data models and backfill migration only.
+13. **Phase 8b**: resolver and upsert behavior.
+14. **Phase 8c**: API and UI contracts, remove denormalized write-path fields.
 
 Reasoning:
 
-- Phases 1 and 2 reduce immediate risk with low complexity.
-- Phase 3 removes the biggest performance bottleneck before larger refactors.
-- The release workflow improvement is independent and can land early.
-- Service extraction is safer after compact response contracts exist, and the shared
-  identity resolver in Phase 4 keeps later identity changes from touching every
-  scanner and integration path at once.
-- Queue and worker changes should happen after service boundaries clarify ownership.
-- Phase 7 topology hierarchy work should follow the cheaper topology serving work in
-  Phase 6 so graph correctness changes can be validated without fighting full-graph
-  performance bottlenecks.
-- Phase 10 security and configuration items (headers, nmap validation, pool config)
-  are low-blast-radius and can land in parallel with Phase 6; the UX items follow
-  naturally once the payload and async work from Phases 3 and 5 are stable.
-- The sighting-first inventory redesign should wait until the surrounding code is
-  cleaner and contract coverage is stronger.
+- Phases 1–7 are complete.
+- Phase 10a security items (nmap command injection, headers) are fixes, not
+  improvements — they should not wait behind a larger UX milestone.
+- Phase 9a is independent of all runtime code and can land any time.
+- Phase 10b UX polish follows once the core data and async paths are stable (already
+  true after Phases 3 and 5).
+- Phase 9b E2E coverage should be in place before Phase 8b ships so resolver
+  behavior changes are caught by CI before reaching production.
+- Phase 8 is split into three sub-phases to limit branch lifetime and blast radius.
+  Sub-phase 8a is schema-additive only, 8b changes behavior, 8c changes API
+  contracts. Each must be validated before the next begins.
+- The sighting-first inventory redesign should wait until E2E coverage is in place
+  and the surrounding code is stable.
 
 ## Done Criteria
 
