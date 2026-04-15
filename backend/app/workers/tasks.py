@@ -19,7 +19,7 @@ import time
 from uuid import UUID
 
 from celery import Celery
-from celery.signals import worker_ready
+from celery.signals import worker_ready, worker_shutdown
 from datetime import datetime, timezone
 from sqlalchemy import select
 
@@ -31,6 +31,8 @@ from app.services.scan_queue import acquire_scan_queue_lock
 log = logging.getLogger(__name__)
 _passive_arp_thread: threading.Thread | None = None
 _queue_resume_thread: threading.Thread | None = None
+_worker_engine = None
+_worker_session_factory = None
 
 celery_app = Celery("argus", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
 
@@ -115,6 +117,24 @@ def revoke_active_scan_job(job_id: str) -> bool:
     return revoked
 
 
+def _get_worker_session_factory():
+    global _worker_engine, _worker_session_factory
+    if _worker_session_factory is None:
+        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+
+        _worker_engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
+        _worker_session_factory = async_sessionmaker(_worker_engine, expire_on_commit=False)
+    return _worker_session_factory
+
+
+async def _dispose_worker_database() -> None:
+    global _worker_engine, _worker_session_factory
+    if _worker_engine is not None:
+        await _worker_engine.dispose()
+    _worker_engine = None
+    _worker_session_factory = None
+
+
 @celery_app.task(name="app.workers.tasks.run_scan_job", bind=True, max_retries=2)
 def run_scan_job(self, job_id: str):
     """
@@ -153,88 +173,83 @@ def run_resume_paused_scans():
 
 async def _run_job_async(job_id: str) -> None:
     """Async implementation of the scan job — runs the full pipeline."""
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.scanner.config import get_or_create_scanner_config, materialize_scan_targets, validate_scan_targets_routable
     from app.scanner.models import ScanProfile, ScanSummary
     from app.scanner.pipeline import ScanControlDecision, ScanControlInterrupt, _persist_results, run_scan
 
-    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = _get_worker_session_factory()
 
-    try:
-        async with session_factory() as db:
-            job = await _get_runnable_job(db, job_id)
-            if job is None:
-                return
+    async with session_factory() as db:
+        job = await _get_runnable_job(db, job_id)
+        if job is None:
+            return
 
-            if await _run_refresh_job_async(db, job, job_id):
-                return
+        if await _run_refresh_job_async(db, job, job_id):
+            return
 
-            if await _should_run_parent_job(db, job):
-                await _run_parent_job_async(
-                    db,
-                    job,
-                    job_id,
-                    config_factory=get_or_create_scanner_config,
-                    scan_profile_enum=ScanProfile,
-                    scan_summary_model=ScanSummary,
-                    run_scan_fn=run_scan,
-                    persist_results=_persist_results,
-                    scan_control_decision=ScanControlDecision,
-                    scan_control_interrupt=ScanControlInterrupt,
-                )
-                return
-
-            route_error = _prepare_scan_job_targets(
+        if await _should_run_parent_job(db, job):
+            await _run_parent_job_async(
+                db,
                 job,
-                materialize_scan_targets,
-                validate_scan_targets_routable,
+                job_id,
+                config_factory=get_or_create_scanner_config,
+                scan_profile_enum=ScanProfile,
+                scan_summary_model=ScanSummary,
+                run_scan_fn=run_scan,
+                persist_results=_persist_results,
+                scan_control_decision=ScanControlDecision,
+                scan_control_interrupt=ScanControlInterrupt,
             )
-            if route_error:
-                await _fail_scan_job(db, job, job_id, route_error)
-                return
-            config = await get_or_create_scanner_config(db)
-            await _mark_job_running(db, job)
-            control_fn = _build_control_fn(db, job, ScanControlDecision)
+            return
 
-            try:
-                profile = _resolve_scan_profile(job.scan_type, ScanProfile)
-                summary = ScanSummary(job_id=job_id, targets=job.targets, profile=profile)
+        route_error = _prepare_scan_job_targets(
+            job,
+            materialize_scan_targets,
+            validate_scan_targets_routable,
+        )
+        if route_error:
+            await _fail_scan_job(db, job, job_id, route_error)
+            return
+        config = await get_or_create_scanner_config(db)
+        await _mark_job_running(db, job)
+        control_fn = _build_control_fn(db, job, ScanControlDecision)
 
-                summary = await run_scan(
-                    job_id=job_id,
-                    targets=job.targets,
-                    profile=profile,
-                    enable_ai=_scan_config_value(
-                        config,
-                        "ai_after_scan_enabled",
-                        settings.AI_ENABLE_PER_SCAN,
-                    ),
-                    concurrent_hosts=config.concurrent_hosts,
-                    host_chunk_size=_scan_config_value(config, "host_chunk_size", 64),
-                    top_ports_count=_scan_config_value(config, "top_ports_count", 1000),
-                    deep_probe_timeout_seconds=_scan_config_value(
-                        config,
-                        "deep_probe_timeout_seconds",
-                        6,
-                    ),
-                    db_session=db,
-                    broadcast_fn=_get_job_broadcast_fn(db, job),
-                    control_fn=control_fn,
-                    mark_missing_offline=False,
-                )
+        try:
+            profile = _resolve_scan_profile(job.scan_type, ScanProfile)
+            summary = ScanSummary(job_id=job_id, targets=job.targets, profile=profile)
 
-                await _complete_scan_job(db, job, job_id, summary)
+            summary = await run_scan(
+                job_id=job_id,
+                targets=job.targets,
+                profile=profile,
+                enable_ai=_scan_config_value(
+                    config,
+                    "ai_after_scan_enabled",
+                    settings.AI_ENABLE_PER_SCAN,
+                ),
+                concurrent_hosts=config.concurrent_hosts,
+                host_chunk_size=_scan_config_value(config, "host_chunk_size", 64),
+                top_ports_count=_scan_config_value(config, "top_ports_count", 1000),
+                deep_probe_timeout_seconds=_scan_config_value(
+                    config,
+                    "deep_probe_timeout_seconds",
+                    6,
+                ),
+                db_session=db,
+                broadcast_fn=_get_job_broadcast_fn(db, job),
+                control_fn=control_fn,
+                mark_missing_offline=False,
+            )
 
-            except ScanControlInterrupt as exc:
-                await _handle_scan_interrupt(db, job, job_id, exc, summary, _persist_results)
-            except Exception as exc:
-                await _publish_scan_failure(db, job, job_id, exc)
-                raise
+            await _complete_scan_job(db, job, job_id, summary)
 
-            await _dispatch_next_scan_if_idle(db)
-    finally:
-        await engine.dispose()
+        except ScanControlInterrupt as exc:
+            await _handle_scan_interrupt(db, job, job_id, exc, summary, _persist_results)
+        except Exception as exc:
+            await _publish_scan_failure(db, job, job_id, exc)
+            raise
+
+        await _dispatch_next_scan_if_idle(db)
 
 
 async def _run_refresh_job_async(db, job: ScanJob, job_id: str) -> bool:
@@ -748,74 +763,69 @@ async def _publish_scan_failure(db, job: ScanJob, job_id: str, exc: Exception) -
 
 async def _enqueue_scheduled_scan() -> None:
     """Create and enqueue a ScanJob for the default targets."""
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.db.models import ScanJob
     from app.scanner.config import get_or_create_scanner_config, resolve_scan_targets, should_enqueue_scheduled_scan, split_scan_targets
 
-    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = _get_worker_session_factory()
     job_id: str | None = None
     should_start = False
     targets: str | None = None
 
-    try:
-        async with session_factory() as db:
-            await acquire_scan_queue_lock(db)
-            config = await get_or_create_scanner_config(db)
-            if not should_enqueue_scheduled_scan(config):
-                if not getattr(config, "scheduled_scans_enabled", False):
-                    log.debug("Scheduled scan skipped: scheduler disabled")
-                return
-            existing_scheduled = await db.scalar(
-                select(ScanJob.id).where(
-                    ScanJob.parent_id.is_(None),
-                    ScanJob.triggered_by == "schedule",
-                    ScanJob.status.in_(("pending", "running", "paused")),
-                ).limit(1)
-            )
-            if existing_scheduled is not None:
-                log.info("Scheduled scan skipped: existing scheduled job is still active (job_id=%s)", existing_scheduled)
-                return
-            targets = resolve_scan_targets(config, None)
-            job = ScanJob(
-                targets=targets,
-                scan_type=config.default_profile,
-                triggered_by="schedule",
-                queue_position=await _next_queue_position(db),
-            )
-            db.add(job)
-            await db.flush()
-            child_targets = split_scan_targets(targets)
-            if len(child_targets) > 1:
-                job.result_summary = {
-                    "stage": "queued",
-                    "message": f"Queued parent scan with {len(child_targets)} child chunks",
-                    "chunk_count": len(child_targets),
-                }
-                for index, child_target in enumerate(child_targets, start=1):
-                    db.add(ScanJob(
-                        parent_id=job.id,
-                        targets=child_target,
-                        scan_type=config.default_profile,
-                        triggered_by="schedule",
-                        status="pending",
-                        queue_position=None,
-                        chunk_index=index,
-                        chunk_count=len(child_targets),
-                        result_summary={
-                            "stage": "queued",
-                            "message": f"Queued chunk {index}/{len(child_targets)}",
-                        },
-                    ))
-            else:
-                job.targets = child_targets[0]
-            config.last_scheduled_scan_at = datetime.now(timezone.utc)
-            await db.commit()
-            await db.refresh(job)
-            job_id = str(job.id)
-            should_start = not await _has_active_scan(db) and job.queue_position == 1
-    finally:
-        await engine.dispose()
+    async with session_factory() as db:
+        await acquire_scan_queue_lock(db)
+        config = await get_or_create_scanner_config(db)
+        if not should_enqueue_scheduled_scan(config):
+            if not getattr(config, "scheduled_scans_enabled", False):
+                log.debug("Scheduled scan skipped: scheduler disabled")
+            return
+        existing_scheduled = await db.scalar(
+            select(ScanJob.id).where(
+                ScanJob.parent_id.is_(None),
+                ScanJob.triggered_by == "schedule",
+                ScanJob.status.in_(("pending", "running", "paused")),
+            ).limit(1)
+        )
+        if existing_scheduled is not None:
+            log.info("Scheduled scan skipped: existing scheduled job is still active (job_id=%s)", existing_scheduled)
+            return
+        targets = resolve_scan_targets(config, None)
+        job = ScanJob(
+            targets=targets,
+            scan_type=config.default_profile,
+            triggered_by="schedule",
+            queue_position=await _next_queue_position(db),
+        )
+        db.add(job)
+        await db.flush()
+        child_targets = split_scan_targets(targets)
+        if len(child_targets) > 1:
+            job.result_summary = {
+                "stage": "queued",
+                "message": f"Queued parent scan with {len(child_targets)} child chunks",
+                "chunk_count": len(child_targets),
+            }
+            for index, child_target in enumerate(child_targets, start=1):
+                db.add(ScanJob(
+                    parent_id=job.id,
+                    targets=child_target,
+                    scan_type=config.default_profile,
+                    triggered_by="schedule",
+                    status="pending",
+                    queue_position=None,
+                    chunk_index=index,
+                    chunk_count=len(child_targets),
+                    result_summary={
+                        "stage": "queued",
+                        "message": f"Queued chunk {index}/{len(child_targets)}",
+                    },
+                ))
+        else:
+            job.targets = child_targets[0]
+        config.last_scheduled_scan_at = datetime.now(timezone.utc)
+        await db.commit()
+        await db.refresh(job)
+        job_id = str(job.id)
+        should_start = not await _has_active_scan(db) and job.queue_position == 1
 
     if job_id and should_start:
         run_scan_job.delay(job_id)
@@ -825,112 +835,95 @@ async def _enqueue_scheduled_scan() -> None:
 
 
 async def _run_scheduled_backups_async() -> None:
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.backups import run_scheduled_backups as execute_scheduled_backups
 
-    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    try:
-        async with session_factory() as db:
-            result = await execute_scheduled_backups(db)
-            log.info("Scheduled backups checked: %s", result)
-    finally:
-        await engine.dispose()
+    session_factory = _get_worker_session_factory()
+    async with session_factory() as db:
+        result = await execute_scheduled_backups(db)
+        log.info("Scheduled backups checked: %s", result)
 
 
 async def _run_asset_heartbeat_checks_async() -> None:
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.alerting import notify_devices_offline_if_enabled
     from app.scanner.stages.discovery import ping_hosts_sync
 
-    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = _get_worker_session_factory()
+    async with session_factory() as db:
+        result = await db.execute(select(Asset).order_by(Asset.ip_address.asc()))
+        assets = [asset for asset in result.scalars().all() if asset.ip_address]
+        if not assets:
+            return
 
-    try:
-        async with session_factory() as db:
-            result = await db.execute(select(Asset).order_by(Asset.ip_address.asc()))
-            assets = [asset for asset in result.scalars().all() if asset.ip_address]
-            if not assets:
-                return
+        checked_at = datetime.now(timezone.utc)
+        slot_count = _heartbeat_slot_count(
+            interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
+            target_interval_seconds=settings.ASSET_HEARTBEAT_TARGET_INTERVAL_SECONDS,
+        )
+        assets = _select_assets_for_heartbeat_slot(
+            assets,
+            checked_at=checked_at,
+            interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
+            slot_count=slot_count,
+        )
+        if not assets:
+            return
 
-            checked_at = datetime.now(timezone.utc)
-            slot_count = _heartbeat_slot_count(
-                interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
-                target_interval_seconds=settings.ASSET_HEARTBEAT_TARGET_INTERVAL_SECONDS,
-            )
-            assets = _select_assets_for_heartbeat_slot(
-                assets,
-                checked_at=checked_at,
-                interval_seconds=settings.ASSET_HEARTBEAT_INTERVAL_SECONDS,
-                slot_count=slot_count,
-            )
-            if not assets:
-                return
+        responsive_hosts = await asyncio.to_thread(
+            ping_hosts_sync,
+            [asset.ip_address for asset in assets],
+            host_timeout_seconds=settings.ASSET_HEARTBEAT_TIMEOUT_SECONDS,
+            batch_size=settings.ASSET_HEARTBEAT_BATCH_SIZE,
+        )
+        responsive_ips = {host.ip_address for host in responsive_hosts}
+        status_changes, offline_notifications = _reconcile_asset_heartbeats(
+            assets,
+            responsive_ips,
+            checked_at,
+            miss_threshold=settings.ASSET_HEARTBEAT_MISS_THRESHOLD,
+        )
 
-            responsive_hosts = await asyncio.to_thread(
-                ping_hosts_sync,
-                [asset.ip_address for asset in assets],
-                host_timeout_seconds=settings.ASSET_HEARTBEAT_TIMEOUT_SECONDS,
-                batch_size=settings.ASSET_HEARTBEAT_BATCH_SIZE,
-            )
-            responsive_ips = {host.ip_address for host in responsive_hosts}
-            status_changes, offline_notifications = _reconcile_asset_heartbeats(
-                assets,
-                responsive_ips,
-                checked_at,
-                miss_threshold=settings.ASSET_HEARTBEAT_MISS_THRESHOLD,
-            )
+        for asset, diff in status_changes:
+            db.add(AssetHistory(
+                asset_id=asset.id,
+                change_type="status_change",
+                diff={"status": diff},
+            ))
 
-            for asset, diff in status_changes:
-                db.add(AssetHistory(
-                    asset_id=asset.id,
-                    change_type="status_change",
-                    diff={"status": diff},
-                ))
+        await db.commit()
 
-            await db.commit()
+        if offline_notifications:
+            await notify_devices_offline_if_enabled(db, offline_notifications)
 
-            if offline_notifications:
-                await notify_devices_offline_if_enabled(db, offline_notifications)
-
-        for asset, _diff in status_changes:
-            await _publish_event(_asset_status_change_payload(asset))
-    finally:
-        await engine.dispose()
+    for asset, _diff in status_changes:
+        await _publish_event(_asset_status_change_payload(asset))
 
 
 async def _resume_paused_scans_async() -> None:
     from sqlalchemy import select
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
     from app.db.models import ScanJob
 
-    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = _get_worker_session_factory()
     now = datetime.now(timezone.utc)
     first_job_id: str | None = None
 
-    try:
-        async with session_factory() as db:
-            await acquire_scan_queue_lock(db)
-            result = await db.execute(
-                select(ScanJob).where(
-                    ScanJob.status == "paused",
-                    ScanJob.resume_after.is_not(None),
-                    ScanJob.resume_after <= now,
-                )
+    async with session_factory() as db:
+        await acquire_scan_queue_lock(db)
+        result = await db.execute(
+            select(ScanJob).where(
+                ScanJob.status == "paused",
+                ScanJob.resume_after.is_not(None),
+                ScanJob.resume_after <= now,
             )
-            jobs = list(result.scalars().all())
-            for job in jobs:
-                _resume_paused_job(job, now)
-            await db.commit()
+        )
+        jobs = list(result.scalars().all())
+        for job in jobs:
+            _resume_paused_job(job, now)
+        await db.commit()
 
-            await _normalize_pending_queue(db)
-            should_start = jobs and not await _has_active_scan(db)
-            next_job = await _get_next_queued_job(db) if should_start else None
-            first_job_id = str(next_job.id) if next_job is not None else None
-    finally:
-        await engine.dispose()
+        await _normalize_pending_queue(db)
+        should_start = jobs and not await _has_active_scan(db)
+        next_job = await _get_next_queued_job(db) if should_start else None
+        first_job_id = str(next_job.id) if next_job is not None else None
 
     if first_job_id:
         run_scan_job.delay(first_job_id)
@@ -1011,24 +1004,18 @@ async def _dispatch_next_scan_if_idle(db) -> None:
 
 
 async def _resume_pending_queue_on_startup() -> None:
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    session_factory = _get_worker_session_factory()
 
-    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
-
-    try:
-        async with session_factory() as db:
-            await acquire_scan_queue_lock(db)
-            if await _has_active_scan(db):
-                return
-            next_job = await _get_next_queued_job(db)
-            if next_job is None:
-                return
-            await db.commit()
-            run_scan_job.delay(str(next_job.id))
-            log.info("Scanner startup resumed queued scan: job_id=%s queue_position=%s", next_job.id, next_job.queue_position)
-    finally:
-        await engine.dispose()
+    async with session_factory() as db:
+        await acquire_scan_queue_lock(db)
+        if await _has_active_scan(db):
+            return
+        next_job = await _get_next_queued_job(db)
+        if next_job is None:
+            return
+        await db.commit()
+        run_scan_job.delay(str(next_job.id))
+        log.info("Scanner startup resumed queued scan: job_id=%s queue_position=%s", next_job.id, next_job.queue_position)
 
 
 def _get_broadcast_fn():
@@ -1217,6 +1204,13 @@ def _resume_scan_queue_on_worker_ready(**_: object) -> None:
     _queue_resume_thread.start()
 
 
+@worker_shutdown.connect
+def _shutdown_worker_database(**_: object) -> None:
+    if _worker_engine is None:
+        return
+    asyncio.run(_dispose_worker_database())
+
+
 def _run_passive_arp_listener() -> None:
     asyncio.run(_passive_arp_loop())
 
@@ -1227,7 +1221,6 @@ def _run_resume_pending_queue_on_startup() -> None:
 
 async def _passive_arp_loop() -> None:
     from app.alerting import notify_new_device_if_enabled
-    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
     from app.db.upsert import upsert_scan_result
     from app.fingerprinting.passive import record_passive_observation
@@ -1235,8 +1228,7 @@ async def _passive_arp_loop() -> None:
     from app.scanner.models import HostScanResult, ScanProfile
     from app.scanner.stages.discovery import PassiveArpListener
 
-    engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
-    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    session_factory = _get_worker_session_factory()
     listener: PassiveArpListener | None = None
 
     try:
@@ -1294,4 +1286,3 @@ async def _passive_arp_loop() -> None:
     finally:
         if listener is not None:
             listener.stop()
-        await engine.dispose()

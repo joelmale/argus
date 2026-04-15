@@ -24,4 +24,4 @@ RUN useradd -r -u 1001 -s /bin/false argus \
     && setcap cap_net_raw,cap_net_admin+eip /usr/bin/nmap
 
 USER argus
-CMD ["celery", "-A", "app.workers.tasks.celery_app", "worker", "--loglevel=info", "-B"]
+CMD ["celery", "-A", "app.workers.tasks.celery_app", "worker", "--loglevel=info"]
