@@ -25,6 +25,7 @@ from sqlalchemy import select
 
 from app.core.config import settings
 from app.db.models import Asset, AssetHistory, ScanJob
+from app.services.asset_exports import EXPORT_JOB_FILENAMES, run_asset_export_job
 from app.services.asset_refresh import AI_REFRESH_JOB_TYPE, SNMP_REFRESH_JOB_TYPE, run_asset_ai_refresh, run_asset_snmp_refresh
 from app.services.scan_queue import acquire_scan_queue_lock
 
@@ -184,6 +185,9 @@ async def _run_job_async(job_id: str) -> None:
         if job is None:
             return
 
+        if await _run_export_job_async(db, job, job_id):
+            return
+
         if await _run_refresh_job_async(db, job, job_id):
             return
 
@@ -288,6 +292,34 @@ async def _run_refresh_job_async(db, job: ScanJob, job_id: str) -> bool:
                 "message": f"{job_label} completed",
             },
         )
+    except Exception as exc:
+        await _publish_scan_failure(db, job, job_id, exc)
+        raise
+    finally:
+        await _dispatch_next_scan_if_idle(db)
+    return True
+
+
+async def _run_export_job_async(db, job: ScanJob, job_id: str) -> bool:
+    if job.scan_type not in EXPORT_JOB_FILENAMES:
+        return False
+
+    await _mark_job_running(db, job, message=f"Queued export for {job.scan_type}")
+    await _publish_event({
+        "event": "scan_progress",
+        "data": {
+            "job_id": job_id,
+            "stage": "running",
+            "progress": 0.0,
+            "message": f"Building export {job.scan_type}",
+            "job_type": job.scan_type,
+        },
+    })
+
+    try:
+        await run_asset_export_job(db, job, job_id)
+        summary = dict(job.result_summary or {})
+        await _complete_background_job(db, job, job_id, summary)
     except Exception as exc:
         await _publish_scan_failure(db, job, job_id, exc)
         raise

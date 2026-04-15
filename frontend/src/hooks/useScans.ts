@@ -1,15 +1,17 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { scansApi } from '@/lib/api'
+import { useAppStore } from '@/store'
 import type { ScanJob } from '@/types'
 
 export function useScans() {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<ScanJob[]>({
     queryKey: ['scans'],
     queryFn: async () => {
       const { data } = await scansApi.list()
       return data
     },
-    refetchInterval: 10_000,   // Poll more frequently — scan status changes fast
+    refetchInterval: wsConnected ? false : 10_000,   // Poll more frequently — scan status changes fast
   })
 }
 

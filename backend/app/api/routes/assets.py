@@ -1,13 +1,9 @@
 """Assets CRUD — the core inventory endpoints."""
-import csv
-import html
 from datetime import datetime, timezone
-from io import StringIO
 from typing import Annotated
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request, Response
-from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -45,9 +41,18 @@ from app.db.models import (
     WirelessAssociation,
 )
 from app.db.session import get_db
-from app.exporters import build_inventory_snapshot, render_ansible_inventory, render_terraform_inventory
 from app.scanner.config import materialize_scan_targets, read_effective_scanner_config, validate_scan_targets_routable
 from app.scanner.models import DeviceClass, ScanProfile
+from app.services.asset_exports import (
+    EXPORT_ANSIBLE_JOB_TYPE,
+    EXPORT_CSV_JOB_TYPE,
+    EXPORT_INVENTORY_JSON_JOB_TYPE,
+    EXPORT_REPORT_HTML_JOB_TYPE,
+    EXPORT_REPORT_JSON_JOB_TYPE,
+    EXPORT_TERRAFORM_JOB_TYPE,
+    enqueue_asset_export_job,
+    export_download_info,
+)
 from app.services.asset_refresh import AI_REFRESH_JOB_TYPE, SNMP_REFRESH_JOB_TYPE
 from app.services.scan_queue import enqueue_scan_job
 
@@ -230,170 +235,71 @@ async def get_asset_stats(
     }
 
 
+async def _queue_export_job(export_type: str, db: DBSession) -> dict[str, int | str | None]:
+    job, should_start = await enqueue_asset_export_job(db, export_type=export_type)
+    if should_start:
+        from app.workers.tasks import run_scan_job
+
+        run_scan_job.delay(str(job.id))
+        return {"job_id": str(job.id), "status": "started", "queue_position": job.queue_position}
+    return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
+
+
 @router.get("/export.csv")
 async def export_assets_csv(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-
-    buffer = StringIO()
-    writer = csv.writer(buffer)
-    writer.writerow([
-        "id",
-        "ip_address",
-        "hostname",
-        "mac_address",
-        "vendor",
-        "os_name",
-        "device_type",
-        "status",
-        "first_seen",
-        "last_seen",
-        "tags",
-        "custom_fields",
-    ])
-    for asset in assets:
-        writer.writerow(
-            [
-                str(asset.id),
-                asset.ip_address,
-                asset.hostname or "",
-                asset.mac_address or "",
-                asset.vendor or "",
-                asset.os_name or "",
-                asset.effective_device_type,
-                asset.status,
-                asset.first_seen.isoformat(),
-                asset.last_seen.isoformat(),
-                ",".join(sorted(tag.tag for tag in asset.tags)),
-                asset.custom_fields or {},
-            ]
-        )
-
-    return Response(
-        content=buffer.getvalue(),
-        media_type="text/csv",
-        headers={"Content-Disposition": 'attachment; filename="argus-assets.csv"'},
-    )
+    return await _queue_export_job(EXPORT_CSV_JOB_TYPE, db)
 
 
 @router.get("/export.ansible.ini")
 async def export_assets_ansible(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-    return Response(
-        content=render_ansible_inventory(assets),
-        media_type=PLAIN_TEXT_MEDIA_TYPE,
-        headers={"Content-Disposition": 'attachment; filename="argus-inventory.ini"'},
-    )
+    return await _queue_export_job(EXPORT_ANSIBLE_JOB_TYPE, db)
 
 
 @router.get("/export.terraform.tf.json")
 async def export_assets_terraform(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-    return Response(
-        content=render_terraform_inventory(assets),
-        media_type="application/json",
-        headers={"Content-Disposition": 'attachment; filename="argus-assets.tf.json"'},
-    )
+    return await _queue_export_job(EXPORT_TERRAFORM_JOB_TYPE, db)
 
 
 @router.get("/export.inventory.json")
 async def export_assets_inventory_json(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-    return build_inventory_snapshot(assets)
+    return await _queue_export_job(EXPORT_INVENTORY_JSON_JOB_TYPE, db)
 
 
 @router.get("/report.json")
 async def export_assets_report_json(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports), selectinload(Asset.ai_analysis)))
-    assets = result.scalars().all()
-    open_findings = await db.scalar(select(func.count()).select_from(Finding).where(Finding.status == "open")) or 0
-    total_findings = await db.scalar(select(func.count()).select_from(Finding)) or 0
-    successful_backups = await db.scalar(
-        select(func.count()).select_from(ConfigBackupSnapshot).where(ConfigBackupSnapshot.status == "done")
-    ) or 0
-    recent_changes_result = await db.execute(
-        select(AssetHistory)
-        .order_by(AssetHistory.changed_at.desc())
-        .limit(10)
-    )
-    recent_changes = recent_changes_result.scalars().all()
-
-    return {
-        "summary": {
-            "total_assets": len(assets),
-            "online_assets": sum(1 for asset in assets if asset.status == "online"),
-            "offline_assets": sum(1 for asset in assets if asset.status == "offline"),
-            "total_findings": total_findings,
-            "open_findings": open_findings,
-            "successful_backups": successful_backups,
-        },
-        "recent_changes": [
-            {
-                "asset_id": str(change.asset_id),
-                "change_type": change.change_type,
-                "changed_at": change.changed_at.isoformat(),
-                "diff": change.diff or {},
-            }
-            for change in recent_changes
-        ],
-        "inventory": build_inventory_snapshot(assets),
-    }
+    return await _queue_export_job(EXPORT_REPORT_JSON_JOB_TYPE, db)
 
 
-@router.get("/report.html", response_class=HTMLResponse)
+@router.get("/report.html")
 async def export_assets_report_html(db: DBSession, _: CurrentUser):
-    result = await db.execute(select(Asset).options(selectinload(Asset.tags), selectinload(Asset.ports)))
-    assets = result.scalars().all()
+    return await _queue_export_job(EXPORT_REPORT_HTML_JOB_TYPE, db)
 
-    total = len(assets)
-    online = sum(1 for asset in assets if asset.status == "online")
-    offline = sum(1 for asset in assets if asset.status == "offline")
-    open_findings = await db.scalar(select(func.count()).select_from(Finding).where(Finding.status == "open")) or 0
-    successful_backups = await db.scalar(
-        select(func.count()).select_from(ConfigBackupSnapshot).where(ConfigBackupSnapshot.status == "done")
-    ) or 0
 
-    rows = "".join(
-        f"<tr><td>{html.escape(asset.ip_address)}</td><td>{html.escape(asset.hostname or '')}</td><td>{html.escape(asset.vendor or '')}</td><td>{html.escape(asset.effective_device_type)}</td><td>{html.escape(asset.status)}</td><td>{html.escape(', '.join(tag.tag for tag in asset.tags))}</td></tr>"
-        for asset in assets
-    )
-    return HTMLResponse(
-        f"""
-        <html>
-          <head>
-            <title>Argus Inventory Report</title>
-            <style>
-              body {{ font-family: sans-serif; margin: 32px; color: #18181b; }}
-              h1 {{ margin-bottom: 8px; }}
-              .summary {{ display: flex; gap: 16px; margin: 16px 0 24px; }}
-              .card {{ border: 1px solid #d4d4d8; border-radius: 12px; padding: 12px 16px; }}
-              table {{ width: 100%; border-collapse: collapse; }}
-              th, td {{ text-align: left; padding: 10px 12px; border-bottom: 1px solid #e4e4e7; font-size: 14px; }}
-              th {{ background: #f4f4f5; }}
-            </style>
-          </head>
-          <body>
-            <h1>Argus Inventory Report</h1>
-            <p>Generated from the current inventory snapshot.</p>
-            <div class="summary">
-              <div class="card"><strong>Total assets:</strong> {total}</div>
-              <div class="card"><strong>Online:</strong> {online}</div>
-              <div class="card"><strong>Offline:</strong> {offline}</div>
-              <div class="card"><strong>Open findings:</strong> {open_findings}</div>
-              <div class="card"><strong>Successful backups:</strong> {successful_backups}</div>
-            </div>
-            <table>
-              <thead>
-                <tr><th>IP</th><th>Hostname</th><th>Vendor</th><th>Type</th><th>Status</th><th>Tags</th></tr>
-              </thead>
-              <tbody>{rows}</tbody>
-            </table>
-          </body>
-        </html>
-        """
+@router.get("/export-jobs/{job_id}/download")
+async def download_export_artifact(job_id: UUID, db: DBSession, _: CurrentUser):
+    job = await db.get(ScanJob, job_id)
+    if job is None or job.scan_type not in {
+        EXPORT_CSV_JOB_TYPE,
+        EXPORT_ANSIBLE_JOB_TYPE,
+        EXPORT_TERRAFORM_JOB_TYPE,
+        EXPORT_INVENTORY_JSON_JOB_TYPE,
+        EXPORT_REPORT_JSON_JOB_TYPE,
+        EXPORT_REPORT_HTML_JOB_TYPE,
+    }:
+        raise HTTPException(status_code=404, detail="Export job not found")
+
+    try:
+        artifact_path, filename, content_type = export_download_info(job)
+    except ValueError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    if not artifact_path.exists():
+        raise HTTPException(status_code=404, detail="Export artifact is not ready")
+
+    return Response(
+        content=artifact_path.read_bytes(),
+        media_type=content_type,
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 

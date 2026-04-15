@@ -1,5 +1,6 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { assetsApi, topologyApi } from '@/lib/api'
+import { useAppStore } from '@/store'
 import type { Asset, AssetStats, AssetSummary, ConfigBackupSnapshot, ConfigBackupTarget, Finding, TopologyGraph, WirelessAssociation } from '@/types'
 
 export type AssetListInclude = 'ports' | 'tags' | 'ai' | 'probe_runs'
@@ -21,13 +22,14 @@ function startOfToday(): number {
 }
 
 export function useAssets(params?: AssetListParams) {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<AssetSummary[]>({
     queryKey: ['assets', params],
     queryFn: async () => {
       const { data } = await assetsApi.list(params)
       return data
     },
-    refetchInterval: 60_000,  // Background refresh every minute
+    refetchInterval: wsConnected ? false : 60_000,  // Background refresh every minute
   })
 }
 
@@ -143,13 +145,14 @@ export function useRemoveAssetTag() {
 }
 
 export function useTopologyGraph() {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<TopologyGraph>({
     queryKey: ['topology'],
     queryFn: async () => {
       const { data } = await topologyApi.getGraph()
       return data
     },
-    refetchInterval: 120_000,
+    refetchInterval: wsConnected ? false : 120_000,
   })
 }
 
@@ -165,6 +168,7 @@ export function useConfigBackupTarget(id: string, enabled = true) {
 }
 
 export function useConfigBackups(id: string, enabled = true) {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<ConfigBackupSnapshot[]>({
     queryKey: ['assets', id, 'config-backups'],
     queryFn: async () => {
@@ -172,7 +176,7 @@ export function useConfigBackups(id: string, enabled = true) {
       return data
     },
     enabled: enabled && !!id,
-    refetchInterval: 60_000,
+    refetchInterval: wsConnected ? false : 60_000,
   })
 }
 
@@ -232,6 +236,7 @@ export function useRestoreAssist() {
 }
 
 export function useWirelessClients(id: string, enabled = true) {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<WirelessAssociation[]>({
     queryKey: ['assets', id, 'wireless-clients'],
     queryFn: async () => {
@@ -239,11 +244,12 @@ export function useWirelessClients(id: string, enabled = true) {
       return data
     },
     enabled: enabled && !!id,
-    refetchInterval: 60_000,
+    refetchInterval: wsConnected ? false : 60_000,
   })
 }
 
 export function useAssetFindings(id: string, enabled = true) {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<Finding[]>({
     queryKey: ['assets', id, 'findings'],
     queryFn: async () => {
@@ -251,18 +257,19 @@ export function useAssetFindings(id: string, enabled = true) {
       return data
     },
     enabled: enabled && !!id,
-    refetchInterval: 60_000,
+    refetchInterval: wsConnected ? false : 60_000,
   })
 }
 
 export function useAssetStats() {
+  const wsConnected = useAppStore((state) => state.wsConnected)
   const query = useQuery<AssetStats>({
     queryKey: ['asset-stats'],
     queryFn: async () => {
       const { data } = await assetsApi.stats({ new_since: new Date(startOfToday()).toISOString() })
       return data
     },
-    refetchInterval: 60_000,
+    refetchInterval: wsConnected ? false : 60_000,
   })
   return {
     total: query.data?.total ?? 0,
