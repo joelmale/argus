@@ -30,7 +30,7 @@ class TopologyLinkCreateRequest(BaseModel):
 @router.get("/graph")
 async def get_topology_graph(db: DBSession, _: CurrentUser):
     _, effective = await read_effective_scanner_config(db)
-    assets_result = await db.execute(select(Asset).options(selectinload(Asset.ports)))
+    assets_result = await db.execute(select(Asset).options(selectinload(Asset.ports), selectinload(Asset.tags)))
     assets = assets_result.scalars().all()
     segments_result = await db.execute(select(NetworkSegment))
     segments = segments_result.scalars().all()

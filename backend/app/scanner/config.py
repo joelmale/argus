@@ -589,7 +589,7 @@ def _normalize_optional_text(value: str | None) -> str | None:
 
 def _update_secret_field(current: str | None, incoming: str | None) -> str | None:
     """Return current value unchanged if incoming is the masked sentinel."""
-    if incoming == _MASKED_SENTINEL:
+    if incoming == MASKED_SENTINEL:
         return current
     return _normalize_optional_text(incoming)
 

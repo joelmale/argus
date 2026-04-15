@@ -207,6 +207,7 @@ class SnmpProbeData(BaseModel):
     sys_contact: str | None = None
     sys_object_id: str | None = None
     arp_table: list[dict[str, Any]] = Field(default_factory=list)
+    bridge_table: list[dict[str, Any]] = Field(default_factory=list)
     interfaces: list[dict[str, Any]] = Field(default_factory=list)
     neighbors: list[dict[str, Any]] = Field(default_factory=list)
     wireless_clients: list[dict[str, Any]] = Field(default_factory=list)

@@ -39,6 +39,8 @@ const STATUS_BORDER: Record<string, string> = {
 const RELATIONSHIP_COLORS: Record<string, string> = {
   gateway_for: '#f59e0b',
   wireless_ap_for: '#06b6d4',
+  inferred_wireless: '#06b6d4',
+  switch_port_for: '#2563eb',
   neighbor_l2: '#8b5cf6',
   arp_seen_by: '#71717a',
   uplink: '#2563eb',
@@ -542,6 +544,9 @@ function NodeDetailPanel({
         <DetailRow label="Segment" value={String(data.segment_cidr ?? 'unassigned')} />
         <DetailRow label="Status" value={String(data.status ?? 'unknown')} />
         <DetailRow label="Confidence" value={typeof data.topology_confidence === 'number' ? `${Math.round(Number(data.topology_confidence) * 100)}%` : '—'} />
+        <DetailRow label="Tier hint" value={String(data.tier_hint ?? '—')} />
+        <DetailRow label="Latency" value={typeof data.avg_latency_ms === 'number' ? `${data.avg_latency_ms} ms` : '—'} />
+        <DetailRow label="TTL distance" value={typeof data.ttl_distance === 'number' ? String(data.ttl_distance) : '—'} />
         <DetailRow label="Vendor" value={String(data.vendor ?? '—')} />
         <DetailRow label="OS" value={String(data.os ?? '—')} />
       </dl>

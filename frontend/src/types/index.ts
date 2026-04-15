@@ -600,6 +600,9 @@ export interface TopologyNode {
     topology_confidence?: number | null;
     is_gateway?: boolean;
     layout_tier?: string | null;
+    tier_hint?: string | null;
+    avg_latency_ms?: number | null;
+    ttl_distance?: number | null;
     is_infrastructure?: boolean;
   };
 }

@@ -63,6 +63,8 @@ class Asset(Base):
     status: Mapped[str] = mapped_column(String(16), default="online")  # online | offline | unknown
     heartbeat_missed_count: Mapped[int] = mapped_column(Integer, default=0)
     heartbeat_last_checked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    avg_latency_ms: Mapped[float | None] = mapped_column(Float)
+    ttl_distance: Mapped[int | None] = mapped_column(Integer)
     notes: Mapped[str | None] = mapped_column(Text)
     custom_fields: Mapped[dict | None] = mapped_column(JSONB)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)

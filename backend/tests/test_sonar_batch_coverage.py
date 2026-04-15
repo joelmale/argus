@@ -2167,7 +2167,7 @@ async def test_topology_snmp_inference_covers_arp_neighbors_and_wireless(monkeyp
     wifi_target = Asset(id=uuid4(), ip_address="192.168.1.4", hostname="phone", mac_address="DD:DD:DD:DD:DD:DD", status="online")
 
     async def fake_resolve_ip_or_mac(db, ip_address, mac_address):
-        if ip_address == "192.168.1.2":
+        if ip_address == "192.168.1.2" or mac_address == "BB:BB:BB:BB:BB:BB":
             return arp_target
         if mac_address == "DD:DD:DD:DD:DD:DD":
             return wifi_target
@@ -2205,6 +2205,9 @@ async def test_topology_snmp_inference_covers_arp_neighbors_and_wireless(monkeyp
             {"ip": "192.168.1.2", "mac": "BB:BB:BB:BB:BB:BB", "if_index": 7},
             {"ip": "192.168.1.1", "mac": "AA:AA:AA:AA:AA:AA", "if_index": 7},
         ],
+        "bridge_table": [
+            {"mac": "BB:BB:BB:BB:BB:BB", "bridge_port": 3, "if_index": 7},
+        ],
         "interfaces": [{"if_index": 7, "name": "uplink0", "vlan_id": 20}],
         "neighbors": [
             {"remote_name": "core-sw", "remote_mac": "CC:CC:CC:CC:CC:CC", "protocol": "lldp", "local_port": "Gi0/1", "remote_port": "Gi0/24", "remote_platform": "Cisco"}
@@ -2215,8 +2218,9 @@ async def test_topology_snmp_inference_covers_arp_neighbors_and_wireless(monkeyp
     }
 
     created = await topology_mod.infer_topology_links_from_snmp(_FakeDb(), source, snmp_data)
-    assert created == 4
+    assert created == 5
     assert any(call[2] == "snmp_arp" and call[3]["interface"] == "uplink0" and call[4] == 20 for call in link_calls)
+    assert any(call[2] == "ethernet" and call[3]["relationship_type"] == "switch_port_for" and call[3]["bridge_port"] == 3 for call in link_calls)
     assert any(call[2] == "lldp" and call[3]["remote_platform"] == "Cisco" for call in link_calls)
     assert any(call[2] == "wifi" and call[3]["ssid"] == "Argus" for call in link_calls)
     assert assoc_calls

@@ -13,16 +13,18 @@ async def infer_topology_links_from_snmp(
     snmp_data: dict,
 ) -> int:
     arp_entries = snmp_data.get("arp_table") or []
+    bridge_entries = snmp_data.get("bridge_table") or []
     interfaces = snmp_data.get("interfaces") or []
     neighbors = snmp_data.get("neighbors") or []
     wireless_clients = snmp_data.get("wireless_clients") or []
-    if not arp_entries and not neighbors and not wireless_clients:
+    if not arp_entries and not bridge_entries and not neighbors and not wireless_clients:
         return 0
 
     interface_map = {item.get("if_index"): item for item in interfaces if item.get("if_index") is not None}
     source_segment = await ensure_segment_for_asset(db, source_asset)
     created = 0
     created += await _process_arp_entries(db, source_asset, arp_entries, interface_map, source_segment.id if source_segment else None)
+    created += await _process_bridge_entries(db, source_asset, bridge_entries, interface_map, source_segment.id if source_segment else None)
     created += await _process_neighbor_entries(db, source_asset, neighbors, source_segment.id if source_segment else None)
     created += await _process_wireless_clients(db, source_asset, wireless_clients, source_segment.id if source_segment else None)
     return created
@@ -56,6 +58,44 @@ async def _process_arp_entries(
             source_asset.id,
             target_asset.id,
             "snmp_arp",
+            metadata,
+            vlan_id=interface.get("vlan_id"),
+        )
+    return created
+
+
+async def _process_bridge_entries(
+    db: AsyncSession,
+    source_asset: Asset,
+    bridge_entries: list[dict],
+    interface_map: dict,
+    segment_id: int | None,
+) -> int:
+    created = 0
+    for entry in bridge_entries:
+        target_mac = entry.get("mac")
+        if not target_mac:
+            continue
+        target_asset = await _resolve_asset_by_ip_or_mac(db, None, target_mac)
+        if target_asset is None or target_asset.id == source_asset.id:
+            continue
+        interface = interface_map.get(entry.get("if_index"), {})
+        metadata = {
+            "source": "snmp_bridge",
+            "interface": interface.get("name"),
+            "if_index": entry.get("if_index"),
+            "bridge_port": entry.get("bridge_port"),
+            "target_mac": target_mac,
+            "relationship_type": "switch_port_for",
+            "observed": True,
+            "confidence": 0.92,
+            "segment_id": segment_id,
+        }
+        created += await _upsert_topology_link(
+            db,
+            source_asset.id,
+            target_asset.id,
+            "ethernet",
             metadata,
             vlan_id=interface.get("vlan_id"),
         )

@@ -7,6 +7,10 @@ import pytest
 
 from app.api.routes import topology as topology_routes
 from app.db.models import Asset, NetworkSegment, Port, TopologyLink
+from app.modules import tplink_deco
+from app.modules import unifi as unifi_module
+from app.modules.tplink_deco import DecoClientRecord
+from app.modules.unifi import UnifiClientRecord
 from app.topology.segments import ensure_segment_for_asset, infer_ipv4_segment_cidr, pick_gateway_candidates, score_gateway_candidate
 
 
@@ -112,3 +116,113 @@ async def test_topology_graph_exposes_segments_gateway_roles_and_edge_metadata()
     assert payload["edges"][0]["data"]["relationship_type"] == "wireless_ap_for"
     assert payload["edges"][0]["data"]["observed"] is True
     assert payload["edges"][0]["data"]["confidence"] == pytest.approx(0.98)
+
+
+@pytest.mark.asyncio
+async def test_unifi_client_ap_mac_creates_observed_topology_link(monkeypatch):
+    access_point = _asset("192.168.100.2", device_type="access_point", hostname="ap-living-room")
+    access_point.mac_address = "AA:AA:AA:AA:AA:AA"
+    client_asset = _asset("192.168.100.40", device_type="iot_device", hostname="phone")
+    client_asset.mac_address = "BB:BB:BB:BB:BB:BB"
+    segment = SimpleNamespace(id=7)
+    captured = {}
+
+    async def fake_resolve_asset(db, *, mac, ip, hostname):
+        assert mac == access_point.mac_address
+        assert ip is None
+        assert hostname is None
+        return access_point
+
+    async def fake_ensure_segment_for_asset(db, asset, source=None):
+        assert asset is access_point
+        assert source == "unifi"
+        return segment
+
+    async def fake_upsert_topology_link(db, source_id, target_id, link_type, metadata):
+        captured.update(
+            {
+                "source_id": source_id,
+                "target_id": target_id,
+                "link_type": link_type,
+                "metadata": metadata,
+            }
+        )
+        return 1
+
+    monkeypatch.setattr(unifi_module, "_resolve_asset", fake_resolve_asset)
+    monkeypatch.setattr(unifi_module, "ensure_segment_for_asset", fake_ensure_segment_for_asset)
+    monkeypatch.setattr(unifi_module, "_upsert_topology_link", fake_upsert_topology_link)
+
+    count = await unifi_module._upsert_unifi_client_topology_link(
+        SimpleNamespace(),
+        client_asset,
+        UnifiClientRecord(
+            mac=client_asset.mac_address,
+            ip=client_asset.ip_address,
+            hostname=client_asset.hostname,
+            ap_mac=access_point.mac_address,
+            ssid="Argus",
+            is_wired=False,
+            raw={},
+        ),
+    )
+
+    assert count == 1
+    assert captured["source_id"] == access_point.id
+    assert captured["target_id"] == client_asset.id
+    assert captured["link_type"] == "wifi"
+    assert captured["metadata"]["relationship_type"] == "wireless_ap_for"
+    assert captured["metadata"]["observed"] is True
+    assert captured["metadata"]["segment_id"] == segment.id
+
+
+@pytest.mark.asyncio
+async def test_tplink_client_ap_name_creates_observed_topology_link(monkeypatch):
+    access_point = _asset("192.168.100.3", device_type="access_point", hostname="Deco Office")
+    client_asset = _asset("192.168.100.41", device_type="iot_device", hostname="tablet")
+    client_asset.mac_address = "CC:CC:CC:CC:CC:CC"
+    segment = SimpleNamespace(id=8)
+    captured = {}
+
+    async def fake_ensure_segment_for_asset(db, asset, source=None):
+        assert asset is access_point
+        assert source == "tplink_deco"
+        return segment
+
+    async def fake_upsert_topology_link(db, source_id, target_id, link_type, metadata):
+        captured.update(
+            {
+                "source_id": source_id,
+                "target_id": target_id,
+                "link_type": link_type,
+                "metadata": metadata,
+            }
+        )
+        return 1
+
+    monkeypatch.setattr(tplink_deco, "ensure_segment_for_asset", fake_ensure_segment_for_asset)
+    monkeypatch.setattr(tplink_deco, "_upsert_topology_link", fake_upsert_topology_link)
+
+    count = await tplink_deco._upsert_deco_client_topology_link(
+        SimpleNamespace(),
+        client_asset,
+        DecoClientRecord(
+            mac=client_asset.mac_address,
+            ip=client_asset.ip_address,
+            hostname=client_asset.hostname,
+            nickname=None,
+            device_model=None,
+            connection_type="wireless",
+            access_point_name="Deco Office",
+            raw={},
+        ),
+        {"deco office": access_point},
+    )
+
+    assert count == 1
+    assert captured["source_id"] == access_point.id
+    assert captured["target_id"] == client_asset.id
+    assert captured["link_type"] == "wifi"
+    assert captured["metadata"]["relationship_type"] == "wireless_ap_for"
+    assert captured["metadata"]["observed"] is True
+    assert captured["metadata"]["segment_id"] == segment.id

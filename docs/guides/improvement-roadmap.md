@@ -495,9 +495,24 @@ Validation:
 
 Rollback risk: Medium. Caching must be invalidated correctly to avoid stale UI.
 
-## Phase 7: Evidence-Based Topology Hierarchy
+## Phase 7: Evidence-Based Topology Hierarchy ✓ Complete
 
 Effort: Medium to Large
+
+Shipped (2026-04-15):
+
+- UniFi sync creates observed `wireless_ap_for` links from AP assets to client
+  assets when controller client records include `ap_mac`.
+- TP-Link Deco sync creates observed `wireless_ap_for` links from Deco node assets
+  to wireless client assets when client records expose the serving AP name.
+- Active scan persistence stores `avg_latency_ms` and `ttl_distance` on assets,
+  and topology nodes serialize those values plus a latency-based `tier_hint`.
+- SNMP probing collects Bridge MIB forwarding entries and topology ingestion
+  creates observed `switch_port_for` links when learned MACs resolve to assets.
+- Role inference now treats `access-point` and `switch` tags as high-confidence
+  infrastructure evidence, with restrained Ubiquiti and TP-Link vendor scoring.
+- Gateway fallback edges are now the last resort; Wi-Fi assets prefer a same-segment
+  AP inference before falling back to the gateway.
 
 Purpose: move topology graph construction away from broad gateway fallback edges and
 toward observed or defensible parent-child relationships between infrastructure and

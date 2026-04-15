@@ -13,10 +13,10 @@ if _database_url_test:
     os.environ["DATABASE_URL"] = _database_url_test
     os.environ["DATABASE_URL_DOCKER"] = _database_url_test
 
-from app.core.security import create_access_token, hash_password
-from app.db.models import Base, User
-from app.db.session import engine
-from app.main import app
+from app.core.security import create_access_token, hash_password  # noqa: E402
+from app.db.models import Base, User  # noqa: E402
+from app.db.session import engine  # noqa: E402
+from app.main import app  # noqa: E402
 
 
 @pytest.fixture(scope="session")

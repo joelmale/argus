@@ -71,11 +71,12 @@ async def probe(
             v3_auth_protocol=v3_auth_protocol,
             v3_priv_protocol=v3_priv_protocol,
         )
-        system_info, interfaces, arp_table, neighbors, wireless_clients, resource_summary = await _await_with_deadline(
+        system_info, interfaces, arp_table, bridge_table, neighbors, wireless_clients, resource_summary = await _await_with_deadline(
             asyncio.gather(
                 poller.get_system_info(ip),
                 poller.get_interfaces(ip),
                 poller.get_arp_table(ip),
+                poller.get_bridge_table(ip),
                 poller.get_neighbors(ip),
                 poller.get_wireless_clients(ip),
                 poller.get_resource_summary(ip),
@@ -95,6 +96,7 @@ async def probe(
         sys_object_id=system_info.get("sys_object_id"),
         interfaces=interfaces,
         arp_table=arp_table,
+        bridge_table=bridge_table,
         neighbors=neighbors,
         wireless_clients=wireless_clients,
         resource_summary=resource_summary,
@@ -115,6 +117,7 @@ async def probe(
         f"sysObjectID: {data.sys_object_id or 'n/a'}\n"
         f"Interfaces: {len(data.interfaces)}\n"
         f"ARP entries: {len(data.arp_table)}\n"
+        f"Bridge entries: {len(data.bridge_table)}\n"
         f"Neighbors: {len(data.neighbors)}\n"
         f"Wireless clients: {len(data.wireless_clients)}"
     )
