@@ -436,11 +436,11 @@ Implemented:
 - WebSocket reconnect now uses exponential backoff and the sidebar shows a reconnecting state.
 - Query polling backs off while the websocket is healthy and resumes when the connection drops.
 
-## Phase 6: Topology, Metrics, and Export Scaling
+## Phase 6: Topology and Metrics Scaling
 
 Effort: Medium
 
-Purpose: reduce repeated full-graph and full-inventory work.
+Purpose: reduce repeated full-graph and repeated metrics work.
 
 Scope:
 
@@ -449,9 +449,6 @@ Scope:
   - Add ETag or last-updated metadata for client-side caching.
 - Cache metrics or compute them from lightweight aggregate queries.
   - Avoid a growing number of live count queries on every scrape.
-- Stream or batch large exports.
-  - Keep CSV and inventory exports memory-safe for larger inventories.
-  - Ensure report JSON does not eagerly load unnecessary relationships.
 - Consider separate topology endpoints:
   - full graph
   - graph summary
@@ -467,7 +464,6 @@ Suggested commits:
 ```text
 perf(topology): cache graph responses with invalidation metadata
 perf(metrics): serve lightweight inventory counters
-perf(exports): stream large inventory exports
 perf(topology-ui): avoid unnecessary graph recreation
 ```
 
@@ -475,7 +471,8 @@ Validation:
 
 - Compare topology and metrics timings before and after the change.
 - Verify graph updates after scans and manual link changes.
-- Verify exports remain byte-compatible where expected.
+- Verify topology still renders after cache invalidation.
+- Verify dashboard and metrics views still load.
 
 Rollback risk: Medium. Caching must be invalidated correctly to avoid stale UI.
 
@@ -899,7 +896,7 @@ Implement in this order unless production pressure changes the priority:
 4. Phase 9 image build portion: scan the pushed artifact.
 5. Phase 4: service boundaries and typed contracts.
 6. Phase 5: async workflows and queue hardening.
-7. Phase 6: topology, metrics, and export scaling.
+7. Phase 6: topology and metrics scaling.
 8. Phase 7: evidence-based topology hierarchy.
 9. Phase 10: hardening and UX polish.
 10. Phase 9 E2E coverage expansion.
