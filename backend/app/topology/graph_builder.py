@@ -31,6 +31,7 @@ def build_topology_graph(
     persisted_edges = [
         {"data": _serialize_link(link)}
         for link in links
+        if not link.suppressed
     ]
     inferred_edges = _build_inferred_gateway_edges(segment_assets, segment_by_cidr, persisted_edges, gateway_candidates)
 
@@ -241,6 +242,102 @@ def _asset_tag_names(asset: Asset) -> set[str]:
 def _is_wifi_asset(asset: Asset) -> bool:
     tags = _asset_tag_names(asset)
     return "wifi" in tags or "wireless" in tags
+
+
+def build_topology_summary(
+    assets: list[Asset],
+    segments: list[NetworkSegment],
+    links: list[TopologyLink],
+    *,
+    prefix_v4: int = 24,
+) -> dict:
+    """Lightweight graph summary — counts only, no node/edge serialization."""
+    active_links = [link for link in links if not link.suppressed]
+    observed = sum(1 for link in active_links if link.observed)
+    return {
+        "node_count": len(assets),
+        "edge_count": len(active_links),
+        "observed_edge_count": observed,
+        "inferred_edge_count": len(active_links) - observed,
+        "segment_count": len(segments),
+    }
+
+
+def build_neighborhood_graph(
+    focal_asset_id: str,
+    assets: list[Asset],
+    segments: list[NetworkSegment],
+    links: list[TopologyLink],
+    *,
+    prefix_v4: int = 24,
+) -> dict:
+    """Return the focal node plus its immediate parents and children."""
+    active_links = [link for link in links if not link.suppressed]
+    neighbor_ids: set[str] = {focal_asset_id}
+    neighborhood_edges: list[TopologyLink] = []
+    for link in active_links:
+        src, tgt = str(link.source_id), str(link.target_id)
+        if src == focal_asset_id or tgt == focal_asset_id:
+            neighborhood_edges.append(link)
+            neighbor_ids.add(src)
+            neighbor_ids.add(tgt)
+
+    neighbor_assets = [asset for asset in assets if str(asset.id) in neighbor_ids]
+    gateway_candidates = pick_gateway_candidates(neighbor_assets, prefix_v4)
+    gateway_ids = {str(asset.id) for asset in gateway_candidates.values()}
+    segment_by_cidr = {segment.cidr: segment for segment in segments}
+
+    nodes = [
+        {"data": _serialize_node(asset, segment_by_cidr, gateway_ids, prefix_v4)}
+        for asset in neighbor_assets
+    ]
+    edges = [{"data": _serialize_link(link)} for link in neighborhood_edges]
+    visible_segment_ids = {
+        node["data"].get("segment_id") for node in nodes if node["data"].get("segment_id") is not None
+    }
+    visible_segments = [
+        _serialize_segment(segment, gateway_candidates.get(segment.cidr))
+        for segment in segments
+        if segment.id in visible_segment_ids
+    ]
+    return {"nodes": nodes, "edges": edges, "segments": visible_segments}
+
+
+def build_segment_graph(
+    segment_id: int,
+    assets: list[Asset],
+    segments: list[NetworkSegment],
+    links: list[TopologyLink],
+    *,
+    prefix_v4: int = 24,
+) -> dict:
+    """Return nodes, edges, and segment info for a single network segment."""
+    active_links = [link for link in links if not link.suppressed]
+    segment = next((s for s in segments if s.id == segment_id), None)
+    if segment is None:
+        return {"nodes": [], "edges": [], "segments": []}
+
+    segment_assets = [
+        asset for asset in assets
+        if infer_ipv4_segment_cidr(asset.ip_address, prefix_v4) == segment.cidr
+    ]
+    segment_asset_ids = {str(asset.id) for asset in segment_assets}
+    segment_links = [
+        link for link in active_links
+        if str(link.source_id) in segment_asset_ids and str(link.target_id) in segment_asset_ids
+    ]
+
+    gateway_candidates = pick_gateway_candidates(segment_assets, prefix_v4)
+    gateway_ids = {str(asset.id) for asset in gateway_candidates.values()}
+    segment_by_cidr = {segment.cidr: segment}
+
+    nodes = [
+        {"data": _serialize_node(asset, segment_by_cidr, gateway_ids, prefix_v4)}
+        for asset in segment_assets
+    ]
+    edges = [{"data": _serialize_link(link)} for link in segment_links]
+    serialized_segments = [_serialize_segment(segment, gateway_candidates.get(segment.cidr))]
+    return {"nodes": nodes, "edges": edges, "segments": serialized_segments}
 
 
 def _choose_access_point_parent(asset: Asset, access_points: list[Asset]) -> Asset | None:

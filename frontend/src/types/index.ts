@@ -624,7 +624,41 @@ export interface TopologyEdge {
     layout_tier?: string | null;
     evidence?: Record<string, unknown> | null;
     vlan_id: number | null;
+    /** Numeric link id — present on persisted (non-inferred) edges only. */
+    link_id?: number | null;
+    suppressed?: boolean;
   };
+}
+
+export interface TopologyGraphSummary {
+  node_count: number;
+  edge_count: number;
+  observed_edge_count: number;
+  inferred_edge_count: number;
+  segment_count: number;
+}
+
+export interface TopologyLinkCreateRequest {
+  source_id: string;
+  target_id: string;
+  link_type?: string;
+  relationship_type?: string;
+  vlan_id?: number | null;
+  observed?: boolean;
+  confidence?: number;
+  local_interface?: string | null;
+  remote_interface?: string | null;
+  ssid?: string | null;
+}
+
+export interface TopologyLinkUpdateRequest {
+  observed?: boolean;
+  suppressed?: boolean;
+  confidence?: number;
+  relationship_type?: string;
+  local_interface?: string | null;
+  remote_interface?: string | null;
+  ssid?: string | null;
 }
 
 export interface TopologySegment {
@@ -650,4 +684,5 @@ export type WsEvent =
   | { event: "scan_complete"; data: Record<string, unknown> }
   | { event: "device_investigated"; data: { job_id: string; ip: string; device_class: string; vendor: string | null; confidence: number } }
   | { event: "device_status_change"; data: { id: string; status: AssetStatus } }
+  | { event: "topology:updated"; data: Record<string, unknown> }
   | { event: "heartbeat" };

@@ -356,6 +356,7 @@ class TopologyLink(Base):
     ssid: Mapped[str | None] = mapped_column(String(128))
     vlan_id: Mapped[int | None] = mapped_column(Integer)
     link_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
+    suppressed: Mapped[bool] = mapped_column(Boolean, default=False)
 
     __table_args__ = (UniqueConstraint("source_id", "target_id", "relationship_type", name="uq_topology_link"),)
 
