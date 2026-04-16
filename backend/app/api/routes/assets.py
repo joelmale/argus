@@ -235,6 +235,127 @@ async def get_asset_stats(
     }
 
 
+@router.get("/inventory")
+async def get_asset_inventory(
+    db: DBSession = None,
+    _: CurrentUser = None,
+):
+    """Return aggregate inventory statistics — OS, device type, vendor, top ports, top services."""
+
+    # ── OS distribution ──────────────────────────────────────────────────────
+    os_rows = await db.execute(
+        select(Asset.os_name, func.count(Asset.id).label("n"))
+        .where(Asset.os_name.isnot(None), Asset.os_name != "")
+        .group_by(Asset.os_name)
+        .order_by(func.count(Asset.id).desc())
+        .limit(30)
+    )
+    os_counts = [{"label": row.os_name, "count": row.n} for row in os_rows.all()]
+
+    # ── Device type distribution ─────────────────────────────────────────────
+    dtype_rows = await db.execute(
+        select(
+            func.coalesce(Asset.device_type_override, Asset.device_type).label("dtype"),
+            func.count(Asset.id).label("n"),
+        )
+        .where(
+            func.coalesce(Asset.device_type_override, Asset.device_type).isnot(None),
+            func.coalesce(Asset.device_type_override, Asset.device_type) != "unknown",
+        )
+        .group_by("dtype")
+        .order_by(func.count(Asset.id).desc())
+    )
+    device_type_counts = [{"label": row.dtype, "count": row.n} for row in dtype_rows.all()]
+
+    # ── Vendor distribution ───────────────────────────────────────────────────
+    vendor_rows = await db.execute(
+        select(Asset.vendor, func.count(Asset.id).label("n"))
+        .where(Asset.vendor.isnot(None), Asset.vendor != "")
+        .group_by(Asset.vendor)
+        .order_by(func.count(Asset.id).desc())
+        .limit(20)
+    )
+    vendor_counts = [{"label": row.vendor, "count": row.n} for row in vendor_rows.all()]
+
+    # ── Top open ports ────────────────────────────────────────────────────────
+    port_rows = await db.execute(
+        select(
+            Port.port_number,
+            Port.protocol,
+            Port.service,
+            func.count(Port.asset_id.distinct()).label("asset_count"),
+        )
+        .where(Port.state == "open")
+        .group_by(Port.port_number, Port.protocol, Port.service)
+        .order_by(func.count(Port.asset_id.distinct()).desc())
+        .limit(20)
+    )
+    top_ports = [
+        {
+            "port": row.port_number,
+            "protocol": row.protocol,
+            "service": row.service,
+            "asset_count": row.asset_count,
+        }
+        for row in port_rows.all()
+    ]
+
+    # ── Top services (by name) ────────────────────────────────────────────────
+    svc_rows = await db.execute(
+        select(Port.service, func.count(Port.asset_id.distinct()).label("asset_count"))
+        .where(Port.state == "open", Port.service.isnot(None), Port.service != "")
+        .group_by(Port.service)
+        .order_by(func.count(Port.asset_id.distinct()).desc())
+        .limit(15)
+    )
+    top_services = [
+        {"service": row.service, "asset_count": row.asset_count}
+        for row in svc_rows.all()
+    ]
+
+    # ── Top software versions ─────────────────────────────────────────────────
+    ver_rows = await db.execute(
+        select(
+            Port.service,
+            Port.version,
+            func.count(Port.asset_id.distinct()).label("asset_count"),
+        )
+        .where(
+            Port.state == "open",
+            Port.service.isnot(None),
+            Port.service != "",
+            Port.version.isnot(None),
+            Port.version != "",
+        )
+        .group_by(Port.service, Port.version)
+        .order_by(func.count(Port.asset_id.distinct()).desc())
+        .limit(25)
+    )
+    top_versions = [
+        {"service": row.service, "version": row.version, "asset_count": row.asset_count}
+        for row in ver_rows.all()
+    ]
+
+    # ── Total open-port count across all assets ───────────────────────────────
+    total_open_ports = await db.scalar(
+        select(func.count(Port.id)).where(Port.state == "open")
+    ) or 0
+
+    # ── Asset count ───────────────────────────────────────────────────────────
+    total_assets = await db.scalar(select(func.count(Asset.id))) or 0
+
+    return {
+        "total_assets": int(total_assets),
+        "total_open_ports": int(total_open_ports),
+        "os_counts": os_counts,
+        "device_type_counts": device_type_counts,
+        "vendor_counts": vendor_counts,
+        "top_ports": top_ports,
+        "top_services": top_services,
+        "top_versions": top_versions,
+    }
+
+
 async def _queue_export_job(export_type: str, db: DBSession) -> dict[str, int | str | None]:
     job, should_start = await enqueue_asset_export_job(db, export_type=export_type)
     if should_start:

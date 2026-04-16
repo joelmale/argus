@@ -145,6 +145,7 @@ export const assetsApi = {
   getRestoreAssist: (id: string, snapshotId: number) => api.get(`/api/v1/assets/${id}/config-backups/${snapshotId}/restore-assist`),
   listWirelessClients: (id: string) => api.get(`/api/v1/assets/${id}/wireless-clients`),
   listFindings: (id: string) => api.get(`/api/v1/assets/${id}/findings`),
+  inventory: () => api.get("/api/v1/assets/inventory"),
 };
 
 // ─── Scan endpoints ─────────────────────────────────────────────

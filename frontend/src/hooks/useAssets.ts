@@ -144,6 +144,52 @@ export function useRemoveAssetTag() {
   })
 }
 
+export interface InventoryPortRow {
+  port: number
+  protocol: string
+  service: string | null
+  asset_count: number
+}
+
+export interface InventoryServiceRow {
+  service: string
+  asset_count: number
+}
+
+export interface InventoryVersionRow {
+  service: string
+  version: string
+  asset_count: number
+}
+
+export interface InventoryCountRow {
+  label: string
+  count: number
+}
+
+export interface AssetInventory {
+  total_assets: number
+  total_open_ports: number
+  os_counts: InventoryCountRow[]
+  device_type_counts: InventoryCountRow[]
+  vendor_counts: InventoryCountRow[]
+  top_ports: InventoryPortRow[]
+  top_services: InventoryServiceRow[]
+  top_versions: InventoryVersionRow[]
+}
+
+export function useAssetInventory() {
+  const wsConnected = useAppStore((state) => state.wsConnected)
+  return useQuery<AssetInventory>({
+    queryKey: ['asset-inventory'],
+    queryFn: async () => {
+      const { data } = await assetsApi.inventory()
+      return data
+    },
+    refetchInterval: wsConnected ? false : 60_000,
+  })
+}
+
 export function useTopologyGraph() {
   const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<TopologyGraph>({
