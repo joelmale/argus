@@ -128,7 +128,41 @@ def classify(
     if not candidates:
         return DeviceHint(DeviceClass.UNKNOWN, 0.0, "No matching signatures")
 
-    return max(candidates, key=lambda h: h.confidence)
+    return _aggregate_device_hints(candidates)
+
+
+def _aggregate_device_hints(candidates: list[DeviceHint]) -> DeviceHint:
+    grouped: dict[DeviceClass, list[DeviceHint]] = {}
+    for hint in candidates:
+        grouped.setdefault(hint.device_class, []).append(hint)
+
+    ranked = sorted(
+        (
+            (
+                device_class,
+                hints,
+                _aggregate_hint_score(hints),
+                max(hint.confidence for hint in hints),
+            )
+            for device_class, hints in grouped.items()
+        ),
+        key=lambda item: (item[2], item[3]),
+        reverse=True,
+    )
+    device_class, hints, _score, max_confidence = ranked[0]
+    supporting_score = sum(hint.confidence for hint in hints) - max_confidence
+    confidence = min(0.98, max_confidence + supporting_score * 0.15)
+    reasons = "; ".join(hint.reason for hint in sorted(hints, key=lambda item: item.confidence, reverse=True)[:3])
+    if len(hints) > 1:
+        reasons = f"{reasons} (+{len(hints) - 1} supporting signal{'s' if len(hints) != 2 else ''})"
+    return DeviceHint(device_class, round(confidence, 3), reasons)
+
+
+def _aggregate_hint_score(hints: list[DeviceHint]) -> float:
+    sorted_confidences = sorted((hint.confidence for hint in hints), reverse=True)
+    if not sorted_confidences:
+        return 0.0
+    return sorted_confidences[0] + sum(sorted_confidences[1:]) * 0.5
 
 
 def _collect_device_hints(

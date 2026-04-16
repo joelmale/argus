@@ -175,7 +175,7 @@ def _sample_result(ip: str = "192.168.1.10") -> HostScanResult:
         ],
         ai_analysis=AIAnalysis(
             device_class=DeviceClass.FIREWALL,
-            confidence=0.91,
+            confidence=0.93,
             vendor="Netgate",
             os_guess="FreeBSD",
             investigation_notes="Strong firewall evidence",
@@ -357,6 +357,50 @@ def test_fingerprint_priority_and_hints_cover_router_iot_and_firewall_paths():
     assert derived[1] == "FreeBSD"
     assert derived[2] == "Netgate"
     assert derived[4] == "firewall"
+
+
+def test_ai_os_guess_does_not_replace_stronger_heuristic_os():
+    result = HostScanResult(
+        host=DiscoveredHost(ip_address="192.168.1.80", discovery_method="syn"),
+        os_fingerprint=OSFingerprint(os_name="Ubuntu Linux", os_accuracy=94),
+        ports=[PortResult(port=22, protocol="tcp", state="open", service="ssh")],
+        ai_analysis=AIAnalysis(
+            device_class=DeviceClass.SERVER,
+            confidence=0.80,
+            os_guess="FreeBSD",
+            investigation_notes="Low confidence AI OS guess",
+        ),
+    )
+
+    _hostname, os_name, _vendor, _evidence, _device_type, _source = _derive_asset_fields(result)
+
+    assert os_name == "Ubuntu Linux"
+
+
+def test_ai_os_guess_replaces_when_more_confident_or_no_heuristic_os():
+    stronger_ai = HostScanResult(
+        host=DiscoveredHost(ip_address="192.168.1.81", discovery_method="syn"),
+        os_fingerprint=OSFingerprint(os_name="Ubuntu Linux", os_accuracy=80),
+        ports=[PortResult(port=22, protocol="tcp", state="open", service="ssh")],
+        ai_analysis=AIAnalysis(
+            device_class=DeviceClass.SERVER,
+            confidence=0.96,
+            os_guess="FreeBSD",
+            investigation_notes="High confidence AI OS guess",
+        ),
+    )
+    no_heuristic_os = HostScanResult(
+        host=DiscoveredHost(ip_address="192.168.1.82", discovery_method="syn"),
+        ai_analysis=AIAnalysis(
+            device_class=DeviceClass.SERVER,
+            confidence=0.80,
+            os_guess="Linux",
+            investigation_notes="AI identified OS without nmap OS evidence",
+        ),
+    )
+
+    assert _derive_asset_fields(stronger_ai)[1] == "FreeBSD"
+    assert _derive_asset_fields(no_heuristic_os)[1] == "Linux"
 
 
 def test_extract_evidence_covers_snmp_upnp_and_smb_branches():

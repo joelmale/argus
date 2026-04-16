@@ -78,10 +78,91 @@ DATASET_DEFINITIONS: tuple[DatasetDefinition, ...] = (
         key="rapid7_recog_http",
         name="Rapid7 Recog HTTP Server Fingerprints",
         category="banner",
-        description="Rapid7 Recog HTTP server fingerprint database for future banner matching expansion.",
+        description="Rapid7 Recog HTTP server fingerprint database for HTTP Server headers.",
         upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/http_servers.xml",
         filename="rapid7_recog_http.xml",
         notes={"format": "xml", "used_for": ["http_banner"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_ssh_banners",
+        name="Rapid7 Recog SSH Banner Fingerprints",
+        category="banner",
+        description="Rapid7 Recog SSH daemon fingerprint database for SSH identification strings.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/ssh_banners.xml",
+        filename="rapid7_recog_ssh_banners.xml",
+        notes={"format": "xml", "used_for": ["ssh_banner"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_ftp_banners",
+        name="Rapid7 Recog FTP Banner Fingerprints",
+        category="banner",
+        description="Rapid7 Recog FTP greeting fingerprint database.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/ftp_banners.xml",
+        filename="rapid7_recog_ftp_banners.xml",
+        notes={"format": "xml", "used_for": ["ftp_banner"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_telnet_banners",
+        name="Rapid7 Recog Telnet Banner Fingerprints",
+        category="banner",
+        description="Rapid7 Recog Telnet banner fingerprint database for legacy and embedded devices.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/telnet_banners.xml",
+        filename="rapid7_recog_telnet_banners.xml",
+        notes={"format": "xml", "used_for": ["telnet_banner"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_smtp_banners",
+        name="Rapid7 Recog SMTP Banner Fingerprints",
+        category="banner",
+        description="Rapid7 Recog SMTP greeting fingerprint database.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/smtp_banners.xml",
+        filename="rapid7_recog_smtp_banners.xml",
+        notes={"format": "xml", "used_for": ["smtp_banner"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_http_wwwauth",
+        name="Rapid7 Recog HTTP Authentication Fingerprints",
+        category="banner",
+        description="Rapid7 Recog WWW-Authenticate header fingerprint database.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/http_wwwauth.xml",
+        filename="rapid7_recog_http_wwwauth.xml",
+        notes={"format": "xml", "used_for": ["http_auth_header"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_html_title",
+        name="Rapid7 Recog HTML Title Fingerprints",
+        category="banner",
+        description="Rapid7 Recog HTML title fingerprint database for web management interfaces.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/html_title.xml",
+        filename="rapid7_recog_html_title.xml",
+        notes={"format": "xml", "used_for": ["http_title"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_http_cookies",
+        name="Rapid7 Recog HTTP Cookie Fingerprints",
+        category="banner",
+        description="Rapid7 Recog HTTP Set-Cookie fingerprint database.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/http_cookies.xml",
+        filename="rapid7_recog_http_cookies.xml",
+        notes={"format": "xml", "used_for": ["http_cookie"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_snmp_sysdescr",
+        name="Rapid7 Recog SNMP sysDescr Fingerprints",
+        category="snmp",
+        description="Rapid7 Recog SNMP sysDescr fingerprint database for infrastructure models and OS versions.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/snmp_sysdescr.xml",
+        filename="rapid7_recog_snmp_sysdescr.xml",
+        notes={"format": "xml", "used_for": ["snmp_sys_descr"]},
+    ),
+    DatasetDefinition(
+        key="rapid7_recog_mdns_device_info",
+        name="Rapid7 Recog mDNS Device Info Fingerprints",
+        category="mdns",
+        description="Rapid7 Recog mDNS device-info TXT fingerprint database for Apple and workstation OS hints.",
+        upstream_url="https://raw.githubusercontent.com/rapid7/recog/main/xml/mdns_device-info_txt.xml",
+        filename="rapid7_recog_mdns_device-info_txt.xml",
+        notes={"format": "xml", "used_for": ["mdns_device_info_txt"]},
     ),
     DatasetDefinition(
         key="nmap_os_db",
@@ -162,7 +243,7 @@ def _count_records(dataset_key: str, text: str) -> int | None:
         return sum(1 for line in text.splitlines() if "(hex)" in line)
     if dataset_key == "iana_pen":
         return sum(1 for line in text.splitlines() if re.match(r"^\d+", line))
-    if dataset_key == "rapid7_recog_http":
+    if dataset_key.startswith("rapid7_recog_") or dataset_key == "rapid7_recog_http":
         return text.count("<fingerprint ")
     if dataset_key == "nmap_os_db":
         return text.count("\nFingerprint ")
@@ -212,7 +293,7 @@ async def list_datasets(db: AsyncSession) -> list[FingerprintDataset]:
 def _clear_caches() -> None:
     load_mac_vendor_dataset.cache_clear()
     load_iana_pen_dataset.cache_clear()
-    load_rapid7_recog_http_dataset.cache_clear()
+    load_recog_dataset.cache_clear()
 
 
 def _read_dataset_file(filename: str) -> str:
@@ -266,9 +347,12 @@ def load_iana_pen_dataset() -> dict[str, str]:
     return data
 
 
-@lru_cache(maxsize=1)
-def load_rapid7_recog_http_dataset() -> tuple[RecogFingerprint, ...]:
-    text = _read_dataset_file("rapid7_recog_http.xml")
+@lru_cache(maxsize=32)
+def load_recog_dataset(dataset_key: str) -> tuple[RecogFingerprint, ...]:
+    definition = _definition_map().get(dataset_key)
+    if definition is None:
+        return ()
+    text = _read_dataset_file(definition.filename)
     if not text:
         return ()
     try:
@@ -309,15 +393,15 @@ def load_rapid7_recog_http_dataset() -> tuple[RecogFingerprint, ...]:
     return tuple(fingerprints)
 
 
-def match_rapid7_recog_http_server(server_header: str | None) -> dict[str, str] | None:
-    if not server_header:
+def match_recog_dataset(dataset_key: str, value: str | None) -> dict[str, str] | None:
+    if not value:
         return None
-    header = server_header.strip()
-    if not header:
+    text = value.strip()
+    if not text:
         return None
 
-    for fingerprint in load_rapid7_recog_http_dataset():
-        match = fingerprint.pattern.search(header)
+    for fingerprint in load_recog_dataset(dataset_key):
+        match = fingerprint.pattern.search(text)
         if not match:
             continue
         values = _extract_recog_values(fingerprint, match)
@@ -327,6 +411,10 @@ def match_rapid7_recog_http_server(server_header: str | None) -> dict[str, str] 
         values["recog.description"] = fingerprint.description or ""
         return values
     return None
+
+
+def match_rapid7_recog_http_server(server_header: str | None) -> dict[str, str] | None:
+    return match_recog_dataset("rapid7_recog_http", server_header)
 
 
 def _extract_recog_values(fingerprint: RecogFingerprint, match: re.Match[str]) -> dict[str, str]:

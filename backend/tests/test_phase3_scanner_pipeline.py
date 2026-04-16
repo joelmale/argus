@@ -9,7 +9,7 @@ from app.db.session import AsyncSessionLocal
 from app.scanner.models import AIAnalysis, DeviceClass, DiscoveredHost, OSFingerprint, PortResult, ProbeResult, ScanProfile
 from app.scanner.pipeline import ScanControlInterrupt, _persist_results, run_scan
 from app.scanner.stages.discovery import sweep
-from app.scanner.stages.fingerprint import classify, probe_priority
+from app.scanner.stages.fingerprint import DeviceHint, _aggregate_device_hints, classify, probe_priority
 from app.scanner.stages.portscan import build_escalated_args
 from app.workers.tasks import _run_job_async
 
@@ -53,6 +53,21 @@ def test_fingerprint_rules_capture_homelab_firewall_signals():
     assert "tls" in priorities
     assert "ssh" in priorities
     assert "dns" in priorities
+
+
+def test_fingerprint_aggregates_supporting_hints_instead_of_max_winner():
+    hint = _aggregate_device_hints(
+        [
+            DeviceHint(DeviceClass.ROUTER, 0.70, "single router signal"),
+            DeviceHint(DeviceClass.NAS, 0.65, "nas signal one"),
+            DeviceHint(DeviceClass.NAS, 0.65, "nas signal two"),
+            DeviceHint(DeviceClass.NAS, 0.65, "nas signal three"),
+        ]
+    )
+
+    assert hint.device_class == DeviceClass.NAS
+    assert hint.confidence > 0.70
+    assert "supporting signal" in hint.reason
 
 
 def test_build_escalated_args_targets_only_detected_services():

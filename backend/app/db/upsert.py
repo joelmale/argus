@@ -48,6 +48,15 @@ def _should_persist_os_name(result: HostScanResult) -> bool:
     return False
 
 
+def _os_fingerprint_confidence(result: HostScanResult) -> float:
+    if not _should_persist_os_name(result):
+        return 0.0
+    accuracy = result.os_fingerprint.os_accuracy
+    if accuracy is not None:
+        return min(max(float(accuracy) / 100.0, 0.0), 0.95)
+    return 0.70
+
+
 def _should_persist_ai_fields(result: HostScanResult) -> bool:
     ai = result.ai_analysis
     if ai is None or ai.device_class.value == "unknown":
@@ -161,17 +170,24 @@ def _derive_asset_fields(
 ) -> tuple[str | None, str | None, str | None, list, str | None, str]:
     new_hostname = result.reverse_hostname
     new_os = result.os_fingerprint.os_name if _should_persist_os_name(result) else None
+    os_confidence = _os_fingerprint_confidence(result)
     new_vendor = result.mac_vendor
     evidence = extract_evidence(result)
     new_device_type, new_device_type_source = derive_detected_device_type(evidence)
 
     if result.ai_analysis and _should_persist_ai_fields(result):
         ai = result.ai_analysis
-        if ai.os_guess:
+        if ai.os_guess and _should_apply_ai_os_guess(ai.confidence, new_os, os_confidence):
             new_os = ai.os_guess
         if ai.vendor:
             new_vendor = ai.vendor
     return new_hostname, new_os, new_vendor, evidence, new_device_type, new_device_type_source
+
+
+def _should_apply_ai_os_guess(ai_confidence: float, heuristic_os: str | None, heuristic_confidence: float) -> bool:
+    if heuristic_os is None:
+        return True
+    return ai_confidence > heuristic_confidence
 
 
 async def _create_asset(

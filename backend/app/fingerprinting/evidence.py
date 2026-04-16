@@ -4,7 +4,7 @@ import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.fingerprinting.datasets import lookup_pen_vendor, match_rapid7_recog_http_server
+from app.fingerprinting.datasets import lookup_pen_vendor, match_recog_dataset
 from app.scanner.models import HostScanResult
 from app.scanner.stages.fingerprint import classify
 
@@ -240,6 +240,13 @@ def _append_hostname_evidence(evidence: list[EvidenceItem], reverse_hostname: st
 
 def _append_port_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
     for port in result.open_ports:
+        details = {
+            "port": port.port,
+            "protocol": port.protocol,
+            "product": port.product,
+            "version": port.version,
+            "cpe": port.cpe,
+        }
         evidence.append(
             EvidenceItem(
                 "nmap_service",
@@ -247,15 +254,10 @@ def _append_port_evidence(evidence: list[EvidenceItem], result: HostScanResult) 
                 f"{port.port}/{port.protocol}",
                 port.service or "unknown",
                 0.75,
-                {
-                    "port": port.port,
-                    "protocol": port.protocol,
-                    "product": port.product,
-                    "version": port.version,
-                    "cpe": port.cpe,
-                },
+                details,
             )
         )
+        _append_port_banner_recog_evidence(evidence, port.service, port.banner, details)
 
 
 def _append_rule_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
@@ -305,6 +307,7 @@ def _append_probe_evidence(evidence: list[EvidenceItem], result: HostScanResult)
             _append_tls_probe_evidence(evidence, data)
         elif probe.probe_type == "ssh":
             _append_optional_probe_signature(evidence, "probe_ssh", "service", "ssh_banner", data.get("banner"), 0.80, data)
+            _append_recog_evidence(evidence, "rapid7_recog_ssh_banners", "recog_ssh", "ssh_banner", data.get("banner"), data)
         elif probe.probe_type == "snmp":
             _append_snmp_probe_evidence(evidence, data)
         elif probe.probe_type == "mdns":
@@ -317,49 +320,84 @@ def _append_probe_evidence(evidence: list[EvidenceItem], result: HostScanResult)
 
 def _append_http_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
     _append_optional_probe_signature(evidence, "probe_http", "service", "server_header", data.get("server"), 0.80, data)
-    _append_http_recog_evidence(evidence, data.get("server"), data)
+    _append_recog_evidence(evidence, "rapid7_recog_http", "recog_http", "http_server", data.get("server"), data)
     _append_optional_probe_signature(evidence, "probe_http", "identity", "http_title", data.get("title"), 0.72, data)
+    _append_recog_evidence(evidence, "rapid7_recog_html_title", "recog_http_title", "html_title", data.get("title"), data)
     _append_optional_probe_signature(evidence, "probe_http", "service", "powered_by", data.get("powered_by"), 0.72, data)
     _append_optional_evidence(evidence, "probe_http", "service", "auth_header", data.get("auth_header"), 0.72, data)
+    _append_recog_evidence(evidence, "rapid7_recog_http_wwwauth", "recog_http_auth", "http_auth", data.get("auth_header"), data)
+    for cookie in _http_cookie_values(data):
+        _append_recog_evidence(evidence, "rapid7_recog_http_cookies", "recog_http_cookie", "http_cookie", cookie, data)
     _append_optional_evidence(evidence, "probe_http", "identity", "favicon_hash", data.get("favicon_hash"), 0.76, data)
     _append_optional_probe_signature(evidence, "probe_http", "identity", "detected_app", data.get("detected_app"), 0.86, data)
     _append_optional_evidence(evidence, "probe_http", "identity", "redirect_host", data.get("redirect_host"), 0.74, data)
 
 
-def _append_http_recog_evidence(evidence: list[EvidenceItem], server_header: Any, data: dict[str, Any]) -> None:
-    if server_header is None:
+def _append_port_banner_recog_evidence(
+    evidence: list[EvidenceItem],
+    service: str | None,
+    banner: str | None,
+    details: dict[str, Any],
+) -> None:
+    if not service or not banner:
         return
-    match = match_rapid7_recog_http_server(str(server_header))
+    service_name = service.lower()
+    recog_targets = {
+        "ftp": ("rapid7_recog_ftp_banners", "recog_ftp", "ftp_banner"),
+        "telnet": ("rapid7_recog_telnet_banners", "recog_telnet", "telnet_banner"),
+        "smtp": ("rapid7_recog_smtp_banners", "recog_smtp", "smtp_banner"),
+    }
+    for token, (dataset_key, source, key_prefix) in recog_targets.items():
+        if token in service_name:
+            _append_recog_evidence(evidence, dataset_key, source, key_prefix, banner, details)
+            return
+
+
+def _append_recog_evidence(
+    evidence: list[EvidenceItem],
+    dataset_key: str,
+    source: str,
+    key_prefix: str,
+    value: Any,
+    data: dict[str, Any],
+) -> None:
+    if value is None:
+        return
+    match = match_recog_dataset(dataset_key, str(value))
     if match is None:
         return
 
-    product = _recog_value(match, "service.product")
-    version = _recog_value(match, "service.version")
-    vendor = _recog_value(match, "service.vendor")
-    cpe = _recog_value(match, "service.cpe23", "service.cpe")
+    product = _recog_value(match, "service.product", "hw.product", "os.product")
+    version = _recog_value(match, "service.version", "hw.version", "os.version")
+    vendor = _recog_value(match, "service.vendor", "hw.vendor", "os.vendor")
+    cpe = _recog_value(match, "service.cpe23", "service.cpe", "hw.cpe23", "hw.cpe", "os.cpe23", "os.cpe")
+    device_type = _recog_device_type(match)
     description = _recog_value(match, "recog.description")
     details = {
         **data,
+        "matched_value": str(value),
+        "dataset": dataset_key,
         "product": product,
         "version": version,
         "vendor": vendor,
         "cpe": cpe,
+        "device_type": device_type,
         "recog_pattern": _recog_value(match, "recog.pattern"),
         "recog_description": description,
     }
 
     if product:
-        evidence.append(EvidenceItem("recog_http", "service", "http_server", product, 0.90, details))
-        evidence.extend(_signature_evidence(product, "recog_http", details))
+        evidence.append(EvidenceItem(source, "service", key_prefix, product, 0.90, details))
+        evidence.extend(_signature_evidence(product, source, details))
     if version:
-        evidence.append(EvidenceItem("recog_http", "service", "http_server_version", version, 0.88, details))
+        evidence.append(EvidenceItem(source, "service", f"{key_prefix}_version", version, 0.88, details))
     if vendor:
-        evidence.append(EvidenceItem("recog_http", "vendor", "http_server_vendor", vendor, 0.88, details))
-        evidence.extend(_signature_evidence(vendor, "recog_http", details))
+        evidence.append(EvidenceItem(source, "vendor", f"{key_prefix}_vendor", vendor, 0.88, details))
+        evidence.extend(_signature_evidence(vendor, source, details))
     if cpe:
-        evidence.append(EvidenceItem("recog_http", "service", "http_server_cpe", cpe, 0.88, details))
-    if not product and description:
-        evidence.append(EvidenceItem("recog_http", "service", "http_server", description, 0.82, details))
+        evidence.append(EvidenceItem(source, "service", f"{key_prefix}_cpe", cpe, 0.88, details))
+    if device_type:
+        evidence.append(EvidenceItem(source, "device_type", f"{key_prefix}_device", device_type, 0.84, details))
 
 
 def _recog_value(match: dict[str, str], *keys: str) -> str | None:
@@ -370,6 +408,50 @@ def _recog_value(match: dict[str, str], *keys: str) -> str | None:
     return None
 
 
+def _recog_device_type(match: dict[str, str]) -> str | None:
+    value = _recog_value(match, "hw.device", "os.device", "service.device")
+    if not value:
+        return None
+    normalized = value.strip().lower().replace("-", " ").replace("_", " ")
+    if "firewall" in normalized:
+        return "firewall"
+    if "switch" in normalized:
+        return "switch"
+    if "router" in normalized or "gateway" in normalized:
+        return "router"
+    if "access point" in normalized or normalized in {"ap", "wireless"}:
+        return "access_point"
+    if "printer" in normalized:
+        return "printer"
+    if "camera" in normalized or "video" in normalized or "nvr" in normalized:
+        return "ip_camera"
+    if "phone" in normalized or "voip" in normalized:
+        return "voip"
+    if "server" in normalized:
+        return "server"
+    if "workstation" in normalized or "desktop" in normalized or "laptop" in normalized:
+        return "workstation"
+    if "nas" in normalized or "storage" in normalized:
+        return "nas"
+    if "tv" in normalized or "media" in normalized:
+        return "smart_tv"
+    if "console" in normalized:
+        return "game_console"
+    if normalized in {"network appliance", "vpn", "embedded"}:
+        return "iot_device"
+    return None
+
+
+def _http_cookie_values(data: dict[str, Any]) -> list[str]:
+    headers = data.get("headers")
+    if not isinstance(headers, dict):
+        return []
+    raw_cookie = headers.get("set-cookie") or headers.get("Set-Cookie") or headers.get("cookie") or headers.get("Cookie")
+    if not raw_cookie:
+        return []
+    return [part.strip() for part in str(raw_cookie).split(",") if part.strip()]
+
+
 def _append_tls_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
     _append_optional_probe_signature(evidence, "probe_tls", "identity", "cert_cn", data.get("subject_cn"), 0.82, data)
     _append_optional_probe_signature(evidence, "probe_tls", "vendor", "cert_org", data.get("cert_org"), 0.84, data)
@@ -378,6 +460,7 @@ def _append_tls_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any
 
 def _append_snmp_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
     _append_optional_probe_signature(evidence, "probe_snmp", "os", "sys_descr", data.get("sys_descr"), 0.92, data)
+    _append_recog_evidence(evidence, "rapid7_recog_snmp_sysdescr", "recog_snmp", "snmp_sysdescr", data.get("sys_descr"), data)
     _append_optional_evidence(evidence, "probe_snmp", "identity", "sys_name", data.get("sys_name"), 0.86, data)
     sys_object_id = data.get("sys_object_id")
     _append_optional_evidence(evidence, "probe_snmp", "identity", "sys_object_id", sys_object_id, 0.90, data)
@@ -393,12 +476,52 @@ def _append_snmp_probe_evidence(evidence: list[EvidenceItem], data: dict[str, An
 
 def _append_mdns_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
     for service in data.get("services", [])[:8]:
-        _append_optional_probe_signature(evidence, "probe_mdns", "identity", "service_type", service.get("type"), 0.78, service)
+        service_type = service.get("type")
+        _append_optional_probe_signature(evidence, "probe_mdns", "identity", "service_type", service_type, 0.78, service)
+        _append_mdns_service_type_evidence(evidence, service_type, service)
         _append_optional_evidence(evidence, "probe_mdns", "identity", "service_host", service.get("host"), 0.78, service)
         _append_optional_probe_signature(evidence, "probe_mdns", "identity", "service_name", service.get("name"), 0.8, service)
         for prop_key, prop_value in (service.get("properties") or {}).items():
             if prop_value:
+                _append_recog_evidence(
+                    evidence,
+                    "rapid7_recog_mdns_device_info",
+                    "recog_mdns",
+                    "mdns_device_info",
+                    f"{prop_key}={prop_value}",
+                    service,
+                )
                 evidence.extend(_signature_evidence(f"{prop_key}={prop_value}", "probe_mdns", service))
+
+
+def _append_mdns_service_type_evidence(evidence: list[EvidenceItem], service_type: Any, details: dict[str, Any]) -> None:
+    if not service_type:
+        return
+    service_text = str(service_type).lower()
+    service_type_hints = [
+        ("_hap._tcp", "iot_device", 0.82, "HomeKit accessory"),
+        ("_hap._udp", "iot_device", 0.82, "HomeKit accessory"),
+        ("_airplay._tcp", "smart_tv", 0.82, "AirPlay receiver"),
+        ("_googlecast._tcp", "smart_tv", 0.84, "Google Cast device"),
+        ("_ipp._tcp", "printer", 0.84, "IPP printer"),
+        ("_printer._tcp", "printer", 0.82, "Printer service"),
+        ("_axis-video._tcp", "ip_camera", 0.86, "Axis camera"),
+        ("_sftp-ssh._tcp", "server", 0.70, "SSH file service"),
+        ("_smb._tcp", "nas", 0.70, "SMB file service"),
+    ]
+    for token, device_type, confidence, label in service_type_hints:
+        if token in service_text:
+            evidence.append(
+                EvidenceItem(
+                    "mdns_service_type",
+                    "device_type",
+                    "service_type_hint",
+                    device_type,
+                    confidence,
+                    {**details, "reason": label},
+                )
+            )
+            return
 
 
 def _append_upnp_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
