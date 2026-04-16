@@ -122,9 +122,12 @@ def revoke_active_scan_job(job_id: str) -> bool:
 def _get_worker_session_factory():
     global _worker_engine, _worker_session_factory, _worker_sessionmaker_impl
     from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    from sqlalchemy.pool import NullPool
 
     if _worker_session_factory is None or _worker_sessionmaker_impl is not async_sessionmaker:
-        _worker_engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
+        _worker_engine = create_async_engine(
+            settings.DATABASE_URL.get_secret_value(), echo=False, poolclass=NullPool
+        )
         _worker_session_factory = async_sessionmaker(_worker_engine, expire_on_commit=False)
         _worker_sessionmaker_impl = async_sessionmaker
     return _worker_session_factory
