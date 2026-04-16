@@ -88,7 +88,10 @@ function AssetMetadataEditor({ asset }: Readonly<{ asset: Asset }>) {
             {asset.tags.map((tag) => (
               <span key={tag.tag} className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-700 dark:text-zinc-300">
                 {tag.tag}
-                <button onClick={() => removeTag({ id: asset.id, tag: tag.tag })}>
+                <button
+                  onClick={() => removeTag({ id: asset.id, tag: tag.tag })}
+                  aria-label={`Remove tag ${tag.tag}`}
+                >
                   <X className="w-3 h-3" />
                 </button>
               </span>

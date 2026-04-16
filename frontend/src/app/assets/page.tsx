@@ -1,15 +1,18 @@
 'use client'
 
-import { Suspense, useEffect, useMemo, useRef, useState } from 'react'
+import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { usePathname, useRouter, useSearchParams } from 'next/navigation'
 import { AppShell } from '@/components/layout/AppShell'
 import { AssetTable } from '@/components/assets/AssetTable'
 import { useAssets, useBulkDeleteAssets } from '@/hooks/useAssets'
+import { useAppStore } from '@/store'
+import { useQueryClient } from '@tanstack/react-query'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useTriggerScan } from '@/hooks/useScans'
 import { assetsApi, scansApi } from '@/lib/api'
-import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope, Trash2, ChevronDown } from 'lucide-react'
+import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope, Trash2, ChevronDown, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import { AlertDialog } from '@/components/ui/AlertDialog'
 
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
 const TYPE_OPTIONS = ['', 'router', 'switch', 'server', 'workstation', 'nas', 'printer', 'ip_camera', 'iot_device', 'unknown']
@@ -83,6 +86,7 @@ function AssetsPageContent() {
   const [recentCutoff] = useState(() => Date.now() - 24 * 60 * 60 * 1000)
   const [exportOpen, setExportOpen] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
+  const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
   const exportRef = useRef<HTMLDivElement>(null)
   // Keep a ref so the search-sync effect can read the current status without
   // adding it to the dependency array (which would fire on every status change,
@@ -149,11 +153,27 @@ function AssetsPageContent() {
     router.replace(qs ? `${pathname}?${qs}` : pathname, { scroll: false })
   }
 
-  const { data: assets = [], isLoading, isError } = useAssets({
+  const wsConnected = useAppStore((s) => s.wsConnected)
+  const queryClient = useQueryClient()
+  const assetQuery = useAssets({
     search: debouncedSearch || undefined,
     status: status || undefined,
     include: ['ports', 'ai'],
   })
+  const { data: assets = [], isLoading, isError, dataUpdatedAt } = assetQuery
+
+  const [now, setNow] = useState(() => Date.now())
+  useEffect(() => {
+    if (wsConnected) return
+    const id = setInterval(() => setNow(Date.now()), 10_000)
+    return () => clearInterval(id)
+  }, [wsConnected])
+
+  const handleRefresh = useCallback(() => {
+    void queryClient.invalidateQueries({ queryKey: ['assets'] })
+  }, [queryClient])
+
+  const staleSeconds = dataUpdatedAt ? Math.floor((now - dataUpdatedAt) / 1000) : null
   const { data: currentUser } = useCurrentUser()
   const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
   const { mutate: bulkDeleteAssets, isPending: isBulkDeleting } = useBulkDeleteAssets()
@@ -208,15 +228,12 @@ function AssetsPageContent() {
   }
 
   function handleBulkDelete() {
-    if (selectedAssetIds.length === 0) {
-      return
-    }
-    const confirmed = globalThis.window.confirm(
-      `Delete ${selectedAssetIds.length} selected asset${selectedAssetIds.length === 1 ? '' : 's'}? This cannot be undone.`,
-    )
-    if (!confirmed) {
-      return
-    }
+    if (selectedAssetIds.length === 0) return
+    setDeleteDialogOpen(true)
+  }
+
+  function confirmBulkDelete() {
+    setDeleteDialogOpen(false)
     bulkDeleteAssets(selectedAssetIds, {
       onSuccess: () => setSelectedAssetIds([]),
     })
@@ -354,8 +371,23 @@ function AssetsPageContent() {
             </p>
           )}
 
-          <span className="text-sm text-zinc-500 ml-auto">
+          <span className="flex items-center gap-2 text-sm text-zinc-500 ml-auto">
             {isLoading ? '…' : `${assets.length} assets`}
+            {!wsConnected && staleSeconds !== null && staleSeconds > 30 && (
+              <>
+                <span className="text-xs text-zinc-400">
+                  Updated {staleSeconds < 60 ? `${staleSeconds}s` : `${Math.floor(staleSeconds / 60)}m`} ago
+                </span>
+                <button
+                  type="button"
+                  onClick={handleRefresh}
+                  aria-label="Refresh asset list"
+                  className="p-1 rounded hover:bg-gray-100 dark:hover:bg-zinc-800 text-zinc-400 hover:text-zinc-600 dark:hover:text-zinc-200"
+                >
+                  <RefreshCw className="w-3.5 h-3.5" />
+                </button>
+              </>
+            )}
           </span>
         </div>
 
@@ -400,6 +432,16 @@ function AssetsPageContent() {
           onToggleAllVisible={toggleAllVisible}
         />
       </div>
+
+      <AlertDialog
+        open={deleteDialogOpen}
+        title="Delete selected assets"
+        description={`Delete ${selectedAssetIds.length} selected asset${selectedAssetIds.length === 1 ? '' : 's'}? This cannot be undone.`}
+        confirmLabel="Delete"
+        destructive
+        onConfirm={confirmBulkDelete}
+        onCancel={() => setDeleteDialogOpen(false)}
+      />
     </AppShell>
   )
 }

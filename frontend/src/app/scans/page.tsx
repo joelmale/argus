@@ -13,6 +13,7 @@ import {
   ScanLine, CheckCircle, XCircle,
   Cpu, Loader2, Radio, Target, Layers, Trash2,
 } from 'lucide-react'
+import { AlertDialog } from '@/components/ui/AlertDialog'
 
 const PROFILES = [
   {
@@ -40,6 +41,7 @@ export default function ScansPage() {
   const [profile, setProfile]   = useState('balanced')
   const [error, setError]        = useState<string | null>(null)
   const [lastResult, setLastResult] = useState<'success' | 'error' | null>(null)
+  const [clearQueueDialogOpen, setClearQueueDialogOpen] = useState(false)
 
   const { data: scans = [], isLoading } = useScans()
   const { mutate: trigger, isPending } = useTriggerScan()
@@ -358,15 +360,7 @@ export default function ScansPage() {
               <button
                 type="button"
                 disabled={isClearingQueue}
-                onClick={() => {
-                  const confirmed = globalThis.window.confirm(
-                    `Clear ${queuedScans.length} queued scan${queuedScans.length === 1 ? '' : 's'}? Running scans are not affected.`,
-                  )
-                  if (!confirmed) {
-                    return
-                  }
-                  clearQueue()
-                }}
+                onClick={() => setClearQueueDialogOpen(true)}
                 className="inline-flex items-center gap-1.5 rounded-lg border border-red-200 px-3 py-2 text-sm text-red-600 disabled:cursor-not-allowed disabled:opacity-50 dark:border-red-900 dark:text-red-300"
               >
                 {isClearingQueue ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Trash2 className="w-3.5 h-3.5" />}
@@ -378,6 +372,15 @@ export default function ScansPage() {
         </div>
 
       </div>
+      <AlertDialog
+        open={clearQueueDialogOpen}
+        title="Clear scan queue"
+        description={`Clear ${queuedScans.length} queued scan${queuedScans.length === 1 ? '' : 's'}? Running scans are not affected.`}
+        confirmLabel="Clear queue"
+        destructive
+        onConfirm={() => { setClearQueueDialogOpen(false); clearQueue() }}
+        onCancel={() => setClearQueueDialogOpen(false)}
+      />
     </AppShell>
   )
 }
