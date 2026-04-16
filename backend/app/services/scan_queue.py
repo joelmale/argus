@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from contextlib import asynccontextmanager
+
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -8,8 +10,20 @@ from app.db.models import ScanJob
 SCAN_QUEUE_LOCK_KEY = 6_178_231_911_204_913
 
 
-async def acquire_scan_queue_lock(db: AsyncSession) -> None:
-    await db.execute(select(func.pg_advisory_xact_lock(SCAN_QUEUE_LOCK_KEY)))
+@asynccontextmanager
+async def acquire_scan_queue_lock(db: AsyncSession):
+    bind = getattr(db, "bind", None)
+    if bind is None:
+        await db.execute(select(func.pg_advisory_xact_lock(SCAN_QUEUE_LOCK_KEY)))
+        yield
+        return
+
+    async with bind.connect() as conn:
+        await conn.execute(select(func.pg_advisory_lock(SCAN_QUEUE_LOCK_KEY)))
+        try:
+            yield
+        finally:
+            await conn.execute(select(func.pg_advisory_unlock(SCAN_QUEUE_LOCK_KEY)))
 
 
 async def has_active_scan(db: AsyncSession) -> bool:
@@ -64,18 +78,17 @@ async def enqueue_scan_job(
     triggered_by: str,
     result_summary: dict | None = None,
 ) -> tuple[ScanJob, bool]:
-    await acquire_scan_queue_lock(db)
+    async with acquire_scan_queue_lock(db):
+        job = ScanJob(
+            targets=targets,
+            scan_type=scan_type,
+            triggered_by=triggered_by,
+            queue_position=await next_queue_position(db),
+            result_summary=result_summary,
+        )
+        db.add(job)
+        await db.commit()
+        await db.refresh(job)
 
-    job = ScanJob(
-        targets=targets,
-        scan_type=scan_type,
-        triggered_by=triggered_by,
-        queue_position=await next_queue_position(db),
-        result_summary=result_summary,
-    )
-    db.add(job)
-    await db.commit()
-    await db.refresh(job)
-
-    should_start = not await has_active_scan(db) and job.queue_position == 1
-    return job, should_start
+        should_start = not await has_active_scan(db) and job.queue_position == 1
+        return job, should_start

@@ -34,6 +34,7 @@ _passive_arp_thread: threading.Thread | None = None
 _queue_resume_thread: threading.Thread | None = None
 _worker_engine = None
 _worker_session_factory = None
+_worker_sessionmaker_impl = None
 
 celery_app = Celery("argus", broker=settings.REDIS_URL, backend=settings.REDIS_URL)
 
@@ -119,21 +120,23 @@ def revoke_active_scan_job(job_id: str) -> bool:
 
 
 def _get_worker_session_factory():
-    global _worker_engine, _worker_session_factory
-    if _worker_session_factory is None:
-        from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
+    global _worker_engine, _worker_session_factory, _worker_sessionmaker_impl
+    from sqlalchemy.ext.asyncio import async_sessionmaker, create_async_engine
 
+    if _worker_session_factory is None or _worker_sessionmaker_impl is not async_sessionmaker:
         _worker_engine = create_async_engine(settings.DATABASE_URL.get_secret_value(), echo=False)
         _worker_session_factory = async_sessionmaker(_worker_engine, expire_on_commit=False)
+        _worker_sessionmaker_impl = async_sessionmaker
     return _worker_session_factory
 
 
 async def _dispose_worker_database() -> None:
-    global _worker_engine, _worker_session_factory
+    global _worker_engine, _worker_session_factory, _worker_sessionmaker_impl
     if _worker_engine is not None:
         await _worker_engine.dispose()
     _worker_engine = None
     _worker_session_factory = None
+    _worker_sessionmaker_impl = None
 
 
 @celery_app.task(name="app.workers.tasks.run_scan_job", bind=True, max_retries=2)
@@ -805,60 +808,60 @@ async def _enqueue_scheduled_scan() -> None:
     targets: str | None = None
 
     async with session_factory() as db:
-        await acquire_scan_queue_lock(db)
-        config = await get_or_create_scanner_config(db)
-        if not should_enqueue_scheduled_scan(config):
-            if not getattr(config, "scheduled_scans_enabled", False):
-                log.debug("Scheduled scan skipped: scheduler disabled")
-            return
-        existing_scheduled = await db.scalar(
-            select(ScanJob.id).where(
-                ScanJob.parent_id.is_(None),
-                ScanJob.triggered_by == "schedule",
-                ScanJob.status.in_(("pending", "running", "paused")),
-            ).limit(1)
-        )
-        if existing_scheduled is not None:
-            log.info("Scheduled scan skipped: existing scheduled job is still active (job_id=%s)", existing_scheduled)
-            return
-        targets = resolve_scan_targets(config, None)
-        job = ScanJob(
-            targets=targets,
-            scan_type=config.default_profile,
-            triggered_by="schedule",
-            queue_position=await _next_queue_position(db),
-        )
-        db.add(job)
-        await db.flush()
-        child_targets = split_scan_targets(targets)
-        if len(child_targets) > 1:
-            job.result_summary = {
-                "stage": "queued",
-                "message": f"Queued parent scan with {len(child_targets)} child chunks",
-                "chunk_count": len(child_targets),
-            }
-            for index, child_target in enumerate(child_targets, start=1):
-                db.add(ScanJob(
-                    parent_id=job.id,
-                    targets=child_target,
-                    scan_type=config.default_profile,
-                    triggered_by="schedule",
-                    status="pending",
-                    queue_position=None,
-                    chunk_index=index,
-                    chunk_count=len(child_targets),
-                    result_summary={
-                        "stage": "queued",
-                        "message": f"Queued chunk {index}/{len(child_targets)}",
-                    },
-                ))
-        else:
-            job.targets = child_targets[0]
-        config.last_scheduled_scan_at = datetime.now(timezone.utc)
-        await db.commit()
-        await db.refresh(job)
-        job_id = str(job.id)
-        should_start = not await _has_active_scan(db) and job.queue_position == 1
+        async with acquire_scan_queue_lock(db):
+            config = await get_or_create_scanner_config(db)
+            if not should_enqueue_scheduled_scan(config):
+                if not getattr(config, "scheduled_scans_enabled", False):
+                    log.debug("Scheduled scan skipped: scheduler disabled")
+                return
+            existing_scheduled = await db.scalar(
+                select(ScanJob.id).where(
+                    ScanJob.parent_id.is_(None),
+                    ScanJob.triggered_by == "schedule",
+                    ScanJob.status.in_(("pending", "running", "paused")),
+                ).limit(1)
+            )
+            if existing_scheduled is not None:
+                log.info("Scheduled scan skipped: existing scheduled job is still active (job_id=%s)", existing_scheduled)
+                return
+            targets = resolve_scan_targets(config, None)
+            job = ScanJob(
+                targets=targets,
+                scan_type=config.default_profile,
+                triggered_by="schedule",
+                queue_position=await _next_queue_position(db),
+            )
+            db.add(job)
+            await db.flush()
+            child_targets = split_scan_targets(targets)
+            if len(child_targets) > 1:
+                job.result_summary = {
+                    "stage": "queued",
+                    "message": f"Queued parent scan with {len(child_targets)} child chunks",
+                    "chunk_count": len(child_targets),
+                }
+                for index, child_target in enumerate(child_targets, start=1):
+                    db.add(ScanJob(
+                        parent_id=job.id,
+                        targets=child_target,
+                        scan_type=config.default_profile,
+                        triggered_by="schedule",
+                        status="pending",
+                        queue_position=None,
+                        chunk_index=index,
+                        chunk_count=len(child_targets),
+                        result_summary={
+                            "stage": "queued",
+                            "message": f"Queued chunk {index}/{len(child_targets)}",
+                        },
+                    ))
+            else:
+                job.targets = child_targets[0]
+            config.last_scheduled_scan_at = datetime.now(timezone.utc)
+            await db.commit()
+            await db.refresh(job)
+            job_id = str(job.id)
+            should_start = not await _has_active_scan(db) and job.queue_position == 1
 
     if job_id and should_start:
         run_scan_job.delay(job_id)
@@ -948,23 +951,23 @@ async def _resume_paused_scans_async() -> None:
     first_job_id: str | None = None
 
     async with session_factory() as db:
-        await acquire_scan_queue_lock(db)
-        result = await db.execute(
-            select(ScanJob).where(
-                ScanJob.status == "paused",
-                ScanJob.resume_after.is_not(None),
-                ScanJob.resume_after <= now,
+        async with acquire_scan_queue_lock(db):
+            result = await db.execute(
+                select(ScanJob).where(
+                    ScanJob.status == "paused",
+                    ScanJob.resume_after.is_not(None),
+                    ScanJob.resume_after <= now,
+                )
             )
-        )
-        jobs = list(result.scalars().all())
-        for job in jobs:
-            _resume_paused_job(job, now)
-        await db.commit()
+            jobs = list(result.scalars().all())
+            for job in jobs:
+                _resume_paused_job(job, now)
+            await db.commit()
 
-        await _normalize_pending_queue(db)
-        should_start = jobs and not await _has_active_scan(db)
-        next_job = await _get_next_queued_job(db) if should_start else None
-        first_job_id = str(next_job.id) if next_job is not None else None
+            await _normalize_pending_queue(db)
+            should_start = jobs and not await _has_active_scan(db)
+            next_job = await _get_next_queued_job(db) if should_start else None
+            first_job_id = str(next_job.id) if next_job is not None else None
 
     if first_job_id:
         run_scan_job.delay(first_job_id)
@@ -1033,22 +1036,7 @@ async def _get_next_queued_job(db):
 
 
 async def _dispatch_next_scan_if_idle(db) -> None:
-    await acquire_scan_queue_lock(db)
-    if await _has_active_scan(db):
-        return
-    next_job = await _get_next_queued_job(db)
-    if next_job is None:
-        return
-    await db.commit()
-    run_scan_job.delay(str(next_job.id))
-    log.info("Queued scan started: job_id=%s queue_position=%s", next_job.id, next_job.queue_position)
-
-
-async def _resume_pending_queue_on_startup() -> None:
-    session_factory = _get_worker_session_factory()
-
-    async with session_factory() as db:
-        await acquire_scan_queue_lock(db)
+    async with acquire_scan_queue_lock(db):
         if await _has_active_scan(db):
             return
         next_job = await _get_next_queued_job(db)
@@ -1056,7 +1044,22 @@ async def _resume_pending_queue_on_startup() -> None:
             return
         await db.commit()
         run_scan_job.delay(str(next_job.id))
-        log.info("Scanner startup resumed queued scan: job_id=%s queue_position=%s", next_job.id, next_job.queue_position)
+        log.info("Queued scan started: job_id=%s queue_position=%s", next_job.id, next_job.queue_position)
+
+
+async def _resume_pending_queue_on_startup() -> None:
+    session_factory = _get_worker_session_factory()
+
+    async with session_factory() as db:
+        async with acquire_scan_queue_lock(db):
+            if await _has_active_scan(db):
+                return
+            next_job = await _get_next_queued_job(db)
+            if next_job is None:
+                return
+            await db.commit()
+            run_scan_job.delay(str(next_job.id))
+            log.info("Scanner startup resumed queued scan: job_id=%s queue_position=%s", next_job.id, next_job.queue_position)
 
 
 def _get_broadcast_fn():
