@@ -5,9 +5,32 @@ from contextlib import asynccontextmanager
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from app.core.config import settings
 from app.db.models import ScanJob
 
 SCAN_QUEUE_LOCK_KEY = 6_178_231_911_204_913
+_scan_queue_lock_engine = None
+
+
+def _get_scan_queue_lock_engine():
+    global _scan_queue_lock_engine
+    if _scan_queue_lock_engine is None:
+        from sqlalchemy.ext.asyncio import create_async_engine
+        from sqlalchemy.pool import NullPool
+
+        _scan_queue_lock_engine = create_async_engine(
+            settings.DATABASE_URL.get_secret_value(),
+            echo=False,
+            poolclass=NullPool,
+        )
+    return _scan_queue_lock_engine
+
+
+async def dispose_scan_queue_lock_engine() -> None:
+    global _scan_queue_lock_engine
+    if _scan_queue_lock_engine is not None:
+        await _scan_queue_lock_engine.dispose()
+    _scan_queue_lock_engine = None
 
 
 @asynccontextmanager
@@ -18,7 +41,7 @@ async def acquire_scan_queue_lock(db: AsyncSession):
         yield
         return
 
-    async with bind.connect() as conn:
+    async with _get_scan_queue_lock_engine().connect() as conn:
         await conn.execute(select(func.pg_advisory_lock(SCAN_QUEUE_LOCK_KEY)))
         try:
             yield

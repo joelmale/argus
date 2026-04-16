@@ -27,7 +27,7 @@ from app.core.config import settings
 from app.db.models import Asset, AssetHistory, ScanJob
 from app.services.asset_exports import EXPORT_JOB_FILENAMES, run_asset_export_job
 from app.services.asset_refresh import AI_REFRESH_JOB_TYPE, SNMP_REFRESH_JOB_TYPE, run_asset_ai_refresh, run_asset_snmp_refresh
-from app.services.scan_queue import acquire_scan_queue_lock
+from app.services.scan_queue import acquire_scan_queue_lock, dispose_scan_queue_lock_engine
 
 log = logging.getLogger(__name__)
 _passive_arp_thread: threading.Thread | None = None
@@ -137,6 +137,7 @@ async def _dispose_worker_database() -> None:
     _worker_engine = None
     _worker_session_factory = None
     _worker_sessionmaker_impl = None
+    await dispose_scan_queue_lock_engine()
 
 
 @celery_app.task(name="app.workers.tasks.run_scan_job", bind=True, max_retries=2)
