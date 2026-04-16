@@ -766,25 +766,25 @@ export function TopologyMap() {
           <LegendSwatch color="#71717a" label="Inferred/ARP" dashed />
         </div>
 
-        {/* Layout controls */}
-        <div className="absolute bottom-16 right-3 flex flex-col gap-1.5">
-          <MapControlButton
-            title={layoutSaved ? 'Saved!' : 'Save node positions'}
-            onClick={handleSaveLayout}
-          >
-            <span className="text-[10px] font-medium leading-none">{layoutSaved ? '✓' : '💾'}</span>
-          </MapControlButton>
-          <MapControlButton title="Reset saved layout" onClick={handleResetLayout}>
-            <Unlink className="w-4 h-4" />
-          </MapControlButton>
-        </div>
+        <div className="absolute bottom-3 right-3 z-20 flex items-end gap-2">
+          <div className="flex flex-col gap-1.5">
+            <MapControlButton
+              title={layoutSaved ? 'Saved!' : 'Save node positions'}
+              onClick={handleSaveLayout}
+            >
+              <span className="text-[10px] font-medium leading-none">{layoutSaved ? '✓' : '💾'}</span>
+            </MapControlButton>
+            <MapControlButton title="Reset saved layout" onClick={handleResetLayout}>
+              <Unlink className="w-4 h-4" />
+            </MapControlButton>
+          </div>
 
-        {/* Zoom controls */}
-        <div className="absolute bottom-3 right-3 grid grid-cols-2 gap-2">
-          <MapControlButton title="Zoom in" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></MapControlButton>
-          <MapControlButton title="Zoom out" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></MapControlButton>
-          <MapControlButton title="Fit" onClick={handleFit}><Maximize2 className="w-4 h-4" /></MapControlButton>
-          <MapControlButton title="Refresh" onClick={handleRefresh}><RefreshCw className="w-4 h-4" /></MapControlButton>
+          <div className="grid grid-cols-2 gap-2">
+            <MapControlButton title="Zoom in" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></MapControlButton>
+            <MapControlButton title="Zoom out" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></MapControlButton>
+            <MapControlButton title="Fit" onClick={handleFit}><Maximize2 className="w-4 h-4" /></MapControlButton>
+            <MapControlButton title="Refresh" onClick={handleRefresh}><RefreshCw className="w-4 h-4" /></MapControlButton>
+          </div>
         </div>
       </div>
 
