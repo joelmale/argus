@@ -80,6 +80,7 @@ jobs:
           build-args: ${{ matrix.image_name == 'argus-frontend' && format('NEXT_PUBLIC_APP_VERSION={0}', steps.app_version.outputs.value) || '' }}
           load: true
           tags: ${{ steps.scan_tag.outputs.value }}
+          cache-to: type=gha,mode=max
       - name: Run Trivy image scan
         uses: aquasecurity/trivy-action@v0.35.0
         with:
@@ -116,6 +117,7 @@ jobs:
           build-args: ${{ matrix.image_name == 'argus-frontend' && format('NEXT_PUBLIC_APP_VERSION={0}', steps.app_version.outputs.value) || '' }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
+          cache-from: type=gha
       - name: Resolve primary tag
         id: image_ref
         run: |
