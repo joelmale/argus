@@ -23,6 +23,7 @@ from typing import Optional
 from xml.etree import ElementTree as ET
 
 from app.scanner.models import DiscoveredHost, OSFingerprint, PortResult, ScanProfile, get_scan_mode_behavior
+from app.scanner.validation import validate_nmap_args
 
 log = logging.getLogger(__name__)
 
@@ -132,6 +133,8 @@ def _scan_sync(
     target_str = " ".join(h.ip_address for h in hosts)
     mode_behavior = get_scan_mode_behavior(profile, top_ports_count=top_ports_count)
     base_args = custom_args or mode_behavior.nmap_args
+    if custom_args:
+        validate_nmap_args(custom_args)
     args = base_args if "-Pn" in base_args.split() else f"-Pn {base_args}"
 
     log.info("Port scan [%s] %d hosts | args: %s", profile.value, len(hosts), args)

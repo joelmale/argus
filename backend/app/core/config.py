@@ -80,6 +80,11 @@ class Settings(BaseSettings):
     ANTHROPIC_API_KEY: str = ""
     ANTHROPIC_MODEL: str = "claude-haiku-4-5-20251001"
 
+    # ── Database connection pool ──────────────────────────────────────────────
+    DB_POOL_SIZE: int = 5        # Persistent connections kept open
+    DB_MAX_OVERFLOW: int = 10    # Extra connections allowed above pool_size
+    DB_POOL_RECYCLE: int = 1800  # Seconds before a connection is recycled (30 min)
+
     # ── Scanner profiles ──────────────────────────────────────────────────────
     SCANNER_DEFAULT_PROFILE: str = "balanced"
     SCANNER_CONCURRENT_HOSTS: int = 10

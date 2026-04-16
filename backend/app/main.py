@@ -11,6 +11,9 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from slowapi.middleware import SlowAPIMiddleware
 from sqlalchemy import func, select
+from starlette.middleware.base import BaseHTTPMiddleware
+from starlette.requests import Request as StarletteRequest
+from starlette.responses import Response as StarletteResponse
 
 from app.api.routes import assets, auth, findings, scans, system, topology, websocket
 from app.bootstrap import ensure_system_defaults
@@ -19,6 +22,20 @@ from app.core.logging import configure_logging
 from app.core.limiter import limiter
 from app.db.models import Asset, ScanJob
 from app.db.session import AsyncSessionLocal
+
+
+class _SecurityHeadersMiddleware(BaseHTTPMiddleware):
+    """Add baseline security headers to every API response."""
+
+    async def dispatch(self, request: StarletteRequest, call_next: object) -> StarletteResponse:
+        response: StarletteResponse = await call_next(request)  # type: ignore[arg-type]
+        response.headers.setdefault("X-Content-Type-Options", "nosniff")
+        response.headers.setdefault("X-Frame-Options", "DENY")
+        response.headers.setdefault(
+            "Content-Security-Policy",
+            "default-src 'none'; frame-ancestors 'none'",
+        )
+        return response
 
 
 @asynccontextmanager
@@ -38,6 +55,7 @@ app = FastAPI(
 configure_logging()
 app.state.limiter = limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(_SecurityHeadersMiddleware)
 app.add_middleware(SlowAPIMiddleware)
 app.add_middleware(
     CORSMiddleware,
