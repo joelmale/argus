@@ -6,6 +6,8 @@ import type { ScanJob } from '@/types'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useControlScan, useQueueScan } from '@/hooks/useScans'
 import { Clock, Server, Cpu, ChevronRight, ChevronDown } from 'lucide-react'
+import { ScanActivityBar, ScanPulseDots, formatScanStage } from '@/components/scans/ScanActivity'
+import { useAppStore, type ActiveScan } from '@/store'
 
 interface ScanHistoryProps {
   readonly scans: ScanJob[]
@@ -28,6 +30,8 @@ type ScanRowProps = Readonly<{
   scan: ScanJob
   isViewer: boolean
   isControlling: boolean
+  activeScan: ActiveScan | null
+  isLiveConnection: boolean
   onControl: (payload: ControlPayload) => void
   onQueueAction: (payload: QueuePayload) => void
   isExpanded: boolean
@@ -43,6 +47,7 @@ type ScanRowState = {
   hostsInvestigated?: number
   newAssets: number
   changedAssets: number
+  stage: string | null
   stageText: string | null
   messageText: string | null
   triggeredByClass: string
@@ -67,7 +72,11 @@ export function ScanHistory({ scans, isLoading }: ScanHistoryProps) {
   const { data: currentUser } = useCurrentUser()
   const { mutate: controlScan, isPending: isControlling } = useControlScan()
   const { mutate: queueScan, isPending: isQueueing } = useQueueScan()
+  const activeScan = useAppStore((state) => state.activeScan)
+  const wsConnected = useAppStore((state) => state.wsConnected)
+  const wsReconnecting = useAppStore((state) => state.wsReconnecting)
   const isViewer = currentUser?.role === 'viewer'
+  const isLiveConnection = Boolean(activeScan) && (wsConnected || wsReconnecting)
 
   if (isLoading) {
     return (
@@ -129,6 +138,8 @@ export function ScanHistory({ scans, isLoading }: ScanHistoryProps) {
                 scan={scan}
                 isViewer={!!isViewer}
                 isControlling={isControlling || isQueueing}
+                activeScan={activeScan}
+                isLiveConnection={isLiveConnection}
                 onControl={(payload) => controlScan(payload)}
                 onQueueAction={(payload) => queueScan(payload)}
                 isExpanded={!!expanded[scan.id]}
@@ -146,12 +157,16 @@ function ScanRow({
   scan,
   isViewer,
   isControlling,
+  activeScan,
+  isLiveConnection,
   onControl,
   onQueueAction,
   isExpanded,
   onToggle,
 }: ScanRowProps) {
-  const rowState = buildScanRowState(scan)
+  const liveSummary = getLiveScanSummary(scan, activeScan, isLiveConnection)
+  const isLiveScan = Boolean(isLiveConnection && activeScan?.job_id === scan.id && scan.status === 'running')
+  const rowState = buildScanRowState(scan, liveSummary)
   const pauseOptions = [15, 30, 60, 240, 720]
   const canManageScan = isViewer !== true
   const statusActions = canManageScan ? renderScanActions(scan, pauseOptions, isControlling, onControl, onQueueAction) : null
@@ -211,7 +226,10 @@ function ScanRow({
           <div className="space-y-1">
             <ScanStatusBadge status={scan.status} />
             {rowState.stageText && (
-              <p className="text-[11px] text-zinc-500 capitalize">{rowState.stageText}</p>
+              <p className={`text-[11px] capitalize inline-flex items-center gap-1 ${isLiveScan ? 'text-sky-500' : 'text-zinc-500'}`}>
+                <span>{rowState.stageText}</span>
+                {isLiveScan && <ScanPulseDots className="text-sky-500" />}
+              </p>
             )}
             {rowState.messageText && (
               <p className="text-[11px] text-zinc-400 max-w-[220px] truncate" title={rowState.messageText}>
@@ -268,6 +286,21 @@ function ScanRow({
                 <div className="flex flex-wrap gap-2">{statusActions}</div>
               )}
               <p className="text-[11px] uppercase tracking-wider text-zinc-500 mb-2">Live Scan Detail</p>
+              {isLiveScan && (
+                <div className="space-y-2">
+                  <div className="flex items-center justify-between text-[11px] uppercase tracking-wider text-sky-500">
+                    <span className="inline-flex items-center gap-1.5 font-medium">
+                      <span className="w-1.5 h-1.5 rounded-full bg-sky-500 animate-pulse" />
+                      Live updates
+                    </span>
+                    <span className="inline-flex items-center gap-1">
+                      Stage: {rowState.stageText ?? 'Scanning'}
+                      <ScanPulseDots className="text-sky-500" />
+                    </span>
+                  </div>
+                  <ScanActivityBar className="h-1.5" />
+                </div>
+              )}
               <div className="rounded-md bg-zinc-950 text-zinc-100 p-3 font-mono text-xs leading-5 overflow-x-auto">
                 {rowState.details.map((line) => (
                   <div key={`${scan.id}:${line}`}>{line}</div>
@@ -281,25 +314,24 @@ function ScanRow({
   )
 }
 
-function buildScanRowState(scan: ScanJob): ScanRowState {
-  const summary = (scan.result_summary as Record<string, unknown> | undefined) ?? {}
+function buildScanRowState(scan: ScanJob, summary: Record<string, unknown>): ScanRowState {
   return {
     duration: getScanDurationSeconds(scan),
     targets: formatScanTargets(scan.targets),
     canExpand: canExpandScan(scan.status),
-    details: buildScanDetails(scan),
+    details: buildScanDetails(scan, summary),
     hostsFound: readSummaryValue(summary, 'hosts_found', '—'),
     hostsInvestigated: typeof summary.hosts_investigated === 'number' ? summary.hosts_investigated : undefined,
     newAssets: typeof summary.new_assets === 'number' ? summary.new_assets : 0,
     changedAssets: typeof summary.changed_assets === 'number' ? summary.changed_assets : 0,
+    stage: typeof summary.stage === 'string' ? summary.stage : null,
     stageText: formatSummaryStage(summary),
     messageText: typeof summary.message === 'string' ? summary.message : null,
     triggeredByClass: triggeredByBadgeClass(scan.triggered_by),
   }
 }
 
-function buildScanDetails(scan: ScanJob): string[] {
-  const summary = scan.result_summary as Record<string, unknown> | undefined ?? {}
+function buildScanDetails(scan: ScanJob, summary: Record<string, unknown>): string[] {
   const stage = typeof summary.stage === 'string' ? summary.stage : 'queued'
   const progress = typeof summary.progress === 'number' ? `${Math.round(summary.progress * 100)}%` : '—'
   const message = typeof summary.message === 'string' ? summary.message : 'Waiting for scanner update'
@@ -474,19 +506,26 @@ function formatSummaryStage(summary: Record<string, unknown>): string | null {
   return formatScanStage(summary.stage)
 }
 
-function formatScanStage(stage: string): string {
-  const labels: Record<string, string> = {
-    discovery: 'Discovery',
-    port_scan: 'Port Scan',
-    investigation: 'Fingerprint + Probes',
-    persist: 'Finalize Inventory',
-    queued: 'Queued',
-    paused: 'Paused',
-    failed: 'Failed',
-    cancelled: 'Cancelled',
-    done: 'Done',
+function getLiveScanSummary(scan: ScanJob, activeScan: ActiveScan | null, isLiveConnection: boolean): Record<string, unknown> {
+  const summary = (scan.result_summary as Record<string, unknown> | undefined) ?? {}
+  if (!isLiveConnection || !activeScan || activeScan.job_id !== scan.id || scan.status !== 'running') {
+    return summary
   }
-  return labels[stage] ?? stage.replaceAll('_', ' ')
+
+  return {
+    ...summary,
+    stage: activeScan.stage ?? summary.stage,
+    progress: activeScan.progress ?? summary.progress,
+    current_host: activeScan.current_host ?? summary.current_host,
+    hosts_found: activeScan.hosts_found ?? summary.hosts_found,
+    hosts_port_scanned: activeScan.hosts_port_scanned ?? summary.hosts_port_scanned,
+    hosts_fingerprinted: activeScan.hosts_fingerprinted ?? summary.hosts_fingerprinted,
+    hosts_deep_probed: activeScan.hosts_deep_probed ?? summary.hosts_deep_probed,
+    hosts_investigated: activeScan.hosts_investigated ?? summary.hosts_investigated,
+    assets_created: activeScan.assets_created ?? summary.assets_created,
+    assets_updated: activeScan.assets_updated ?? summary.assets_updated,
+    message: activeScan.message ?? summary.message,
+  }
 }
 
 function ProfileBadge({ profile }: Readonly<{ profile: string }>) {

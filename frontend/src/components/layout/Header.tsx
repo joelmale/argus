@@ -8,6 +8,7 @@ import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCurrentUser, useLogout } from '@/hooks/useAuth'
+import { ScanPulseDots, formatScanStage } from '@/components/scans/ScanActivity'
 
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
@@ -21,7 +22,7 @@ const PAGE_TITLES: Record<string, string> = {
 export function Header() {
   const pathname = usePathname()
   const { resolvedTheme, setTheme, theme } = useTheme()
-  const { activeScan } = useAppStore()
+  const { activeScan, wsConnected, wsReconnecting } = useAppStore()
   const queryClient = useQueryClient()
   const { data: currentUser } = useCurrentUser()
   const logout = useLogout()
@@ -43,6 +44,8 @@ export function Header() {
 
   const activeTheme = mounted ? theme : null
   const systemTheme = mounted ? resolvedTheme : null
+  const isLiveConnection = Boolean(activeScan) && (wsConnected || wsReconnecting)
+  const scanLabel = activeScan?.current_host || (activeScan?.stage ? formatScanStage(activeScan.stage) : 'in progress')
 
   return (
     <header className="h-16 flex items-center justify-between px-6 border-b border-gray-200 dark:border-zinc-800 bg-white dark:bg-zinc-950 sticky top-0 z-30">
@@ -52,7 +55,10 @@ export function Header() {
         {activeScan && (
           <div className="flex items-center gap-2 text-xs text-sky-500 bg-sky-500/10 px-3 py-1 rounded-full">
             <span className="w-2 h-2 rounded-full bg-sky-500 animate-pulse" />
-            <span>Scanning — {activeScan.current_host || activeScan.stage || 'in progress'}</span>
+            <span className="inline-flex items-center gap-1">
+              Scanning — {scanLabel}
+              {isLiveConnection && <ScanPulseDots className="text-sky-500" />}
+            </span>
           </div>
         )}
       </div>

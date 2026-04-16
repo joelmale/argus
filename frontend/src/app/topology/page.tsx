@@ -19,7 +19,7 @@ const TopologyMap = dynamic(
 export default function TopologyPage() {
   return (
     <AppShell>
-      <div className="flex flex-col h-[calc(100vh-4rem)]">
+      <div className="flex min-h-0 flex-col h-full">
         <div className="flex-shrink-0 mb-3">
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Network Topology</h2>
           <p className="text-sm text-zinc-500 mt-0.5">

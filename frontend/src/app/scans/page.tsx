@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanHistory } from '@/components/scans/ScanHistory'
+import { ScanActivityBar, ScanPulseDots, formatScanStage } from '@/components/scans/ScanActivity'
 import { useClearScanQueue, useScans, useTriggerScan } from '@/hooks/useScans'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
@@ -46,7 +47,7 @@ export default function ScansPage() {
   const { data: scans = [], isLoading } = useScans()
   const { mutate: trigger, isPending } = useTriggerScan()
   const { mutate: clearQueue, isPending: isClearingQueue } = useClearScanQueue()
-  const { activeScan } = useAppStore()
+  const { activeScan, wsConnected, wsReconnecting } = useAppStore()
   const { data: currentUser } = useCurrentUser()
   const isViewer = currentUser?.role === 'viewer'
 
@@ -74,6 +75,7 @@ export default function ScansPage() {
     && (scan.scan_type === 'quick' || scan.scan_type === 'balanced')
   )
   const stageLabel = activeScan?.stage ? formatScanStage(activeScan.stage) : null
+  const isLiveConnection = Boolean(activeScan) && (wsConnected || wsReconnecting)
   const inputBorderClass = error ? 'border-red-400' : 'border-gray-200 dark:border-zinc-700'
   const queuedScanLabel = runningScans.length === 1 ? 'scan' : 'scans'
   const queuedScans = scans.filter((scan) => scan.status === 'pending')
@@ -112,10 +114,12 @@ export default function ScansPage() {
     if (activeScan) {
       return (
         <div className="space-y-3">
+          {isLiveConnection && <ScanActivityBar className="h-1.5" />}
           <div className="flex items-center gap-2">
             <span className="w-2.5 h-2.5 rounded-full bg-yellow-500 animate-pulse flex-shrink-0" />
-            <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400">
-              {stageLabel ? `Stage: ${stageLabel}` : 'Scanning…'}
+            <span className="text-sm font-medium text-yellow-600 dark:text-yellow-400 inline-flex items-center gap-1">
+              {stageLabel ? `Stage: ${stageLabel}` : 'Scanning'}
+              {isLiveConnection && <ScanPulseDots className="text-yellow-500" />}
             </span>
           </div>
           {activeScan.current_host && (
@@ -383,15 +387,4 @@ export default function ScansPage() {
       />
     </AppShell>
   )
-}
-
-function formatScanStage(stage: string) {
-  const labels: Record<string, string> = {
-    discovery: 'Discovery',
-    port_scan: 'Port Scan',
-    investigation: 'Fingerprint + Probes',
-    persist: 'Finalize Inventory',
-    queued: 'Queued',
-  }
-  return labels[stage] ?? stage.replaceAll('_', ' ')
 }

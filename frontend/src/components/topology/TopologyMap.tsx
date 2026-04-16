@@ -638,9 +638,8 @@ export function TopologyMap() {
   const inferredEdgeCount = filteredGraph.edges.length - observedEdgeCount
 
   return (
-    <div className="grid h-full min-h-[720px] grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
-      {/* ── Canvas ── */}
-      <div className="relative min-h-[720px] overflow-hidden rounded-2xl border border-gray-200 dark:border-zinc-800">
+    <div className="grid h-full min-h-0 grid-cols-1 xl:grid-cols-[minmax(0,1fr)_320px] gap-4">
+      <div className="relative min-h-0 overflow-hidden rounded-2xl border border-gray-200 dark:border-zinc-800">
         <div
           ref={containerRef}
           id="topology-canvas"
@@ -687,6 +686,7 @@ export function TopologyMap() {
         {/* Filter bar */}
         <div className="absolute left-3 top-16 flex flex-wrap gap-2">
           <select
+            title="Layout mode"
             value={layoutMode}
             onChange={(e) => setLayoutMode(e.target.value as LayoutMode)}
             className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900"
@@ -697,6 +697,7 @@ export function TopologyMap() {
             <option value="raw">Raw graph</option>
           </select>
           <select
+            title="Segment filter"
             value={segmentFilter}
             onChange={(e) => setSegmentFilter(e.target.value)}
             className="rounded-lg border border-gray-200 bg-white px-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900"
@@ -709,6 +710,7 @@ export function TopologyMap() {
           <div className="relative">
             <Filter className="pointer-events-none absolute left-2.5 top-2 h-3.5 w-3.5 text-zinc-400" />
             <select
+              title="Device filter"
               value={filter}
               onChange={(e) => setFilter(e.target.value)}
               className="appearance-none rounded-lg border border-gray-200 bg-white pl-7 pr-3 py-1.5 text-xs dark:border-zinc-700 dark:bg-zinc-900"
@@ -778,7 +780,7 @@ export function TopologyMap() {
         </div>
 
         {/* Zoom controls */}
-        <div className="absolute bottom-3 right-3 flex flex-col gap-1.5">
+        <div className="absolute bottom-3 right-3 grid grid-cols-2 gap-2">
           <MapControlButton title="Zoom in" onClick={handleZoomIn}><ZoomIn className="w-4 h-4" /></MapControlButton>
           <MapControlButton title="Zoom out" onClick={handleZoomOut}><ZoomOut className="w-4 h-4" /></MapControlButton>
           <MapControlButton title="Fit" onClick={handleFit}><Maximize2 className="w-4 h-4" /></MapControlButton>

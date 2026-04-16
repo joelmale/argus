@@ -6,6 +6,7 @@ import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { useTriggerScan } from '@/hooks/useScans'
 import { useAppStore } from '@/store'
 import { cn } from '@/lib/utils'
+import { ScanActivityBar, ScanPulseDots, formatScanStage } from '@/components/scans/ScanActivity'
 
 const PROFILES = [
   { value: 'quick', label: 'Quick', desc: 'Fast first-pass inventory' },
@@ -17,8 +18,9 @@ export function QuickScan() {
   const [targets, setTargets] = useState('')
   const [profile, setProfile] = useState('quick')
   const { mutate: trigger, isPending } = useTriggerScan()
-  const { activeScan } = useAppStore()
-  const stageText = activeScan?.stage ? `Stage: ${formatScanStage(activeScan.stage)}` : 'Scanning…'
+  const { activeScan, wsConnected, wsReconnecting } = useAppStore()
+  const stageText = activeScan?.stage ? `Stage: ${formatScanStage(activeScan.stage)}` : 'Scanning'
+  const isLiveConnection = Boolean(activeScan) && (wsConnected || wsReconnecting)
   const submitButtonClass = isPending
     ? 'bg-zinc-200 dark:bg-zinc-800 text-zinc-400 cursor-not-allowed'
     : 'bg-sky-500 hover:bg-sky-600 text-white shadow-sm hover:shadow-sky-500/25'
@@ -44,7 +46,10 @@ export function QuickScan() {
         {activeScan && (
           <span className="flex items-center gap-1.5 text-xs text-yellow-500">
             <span className="w-2 h-2 rounded-full bg-yellow-500 animate-pulse" />
-            {stageText}
+            <span className="inline-flex items-center gap-1">
+              {stageText}
+              {isLiveConnection && <ScanPulseDots className="text-yellow-500" />}
+            </span>
           </span>
         )}
       </CardHeader>
@@ -108,8 +113,10 @@ export function QuickScan() {
         {/* Active scan progress */}
         {activeScan && (
           <div className="mt-4 p-3 rounded-lg bg-yellow-500/10 border border-yellow-500/20">
-            <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400 mb-1">
+            {isLiveConnection && <ScanActivityBar className="mb-2 h-1.5" />}
+            <p className="text-xs font-medium text-yellow-600 dark:text-yellow-400 mb-1 inline-flex items-center gap-1">
               {stageText}
+              {isLiveConnection && <ScanPulseDots className="text-yellow-500" />}
             </p>
             {activeScan.current_host && (
               <p className="text-xs text-zinc-500 font-mono">{activeScan.current_host}</p>
@@ -125,15 +132,4 @@ export function QuickScan() {
       </CardBody>
     </Card>
   )
-}
-
-function formatScanStage(stage: string) {
-  const labels: Record<string, string> = {
-    discovery: 'Discovery',
-    port_scan: 'Port Scan',
-    investigation: 'Fingerprint + Probes',
-    persist: 'Finalize Inventory',
-    queued: 'Queued',
-  }
-  return labels[stage] ?? stage.replaceAll('_', ' ')
 }
