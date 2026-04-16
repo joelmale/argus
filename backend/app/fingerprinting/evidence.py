@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import Any
 
-from app.fingerprinting.datasets import lookup_pen_vendor
+from app.fingerprinting.datasets import lookup_pen_vendor, match_rapid7_recog_http_server
 from app.scanner.models import HostScanResult
 from app.scanner.stages.fingerprint import classify
 
@@ -16,6 +17,9 @@ class EvidenceItem:
     value: str
     confidence: float
     details: dict[str, Any]
+
+
+_HOSTNAME_TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
 def _ttl_stack_hint(ttl: int) -> tuple[str, float, dict[str, Any]] | None:
@@ -84,6 +88,101 @@ def _signature_evidence(value: str, source: str, details: dict[str, Any]) -> lis
     return matches
 
 
+def _hostname_signature_evidence(hostname: str, source: str, details: dict[str, Any]) -> list[EvidenceItem]:
+    tokens = _hostname_tokens(hostname)
+    if not tokens:
+        return []
+
+    enriched_details = {**details, "hostname": hostname, "hostname_tokens": sorted(tokens)}
+    matches: list[EvidenceItem] = []
+    seen: set[tuple[str, str, str, str]] = set()
+
+    for variant in _hostname_text_variants(hostname):
+        for item in _signature_evidence(variant, source, enriched_details):
+            _append_unique_evidence(matches, seen, item)
+
+    for token, category, key, value, confidence in _hostname_role_matches(tokens):
+        _append_unique_evidence(
+            matches,
+            seen,
+            EvidenceItem(
+                source,
+                category,
+                key,
+                value,
+                confidence,
+                {**enriched_details, "hostname_match": token},
+            ),
+        )
+
+    return matches
+
+
+def _hostname_tokens(hostname: str) -> set[str]:
+    labels = hostname.lower().split(".")
+    primary_label = labels[0] if labels else hostname.lower()
+    return {token for token in _HOSTNAME_TOKEN_RE.findall(primary_label) if token}
+
+
+def _hostname_text_variants(hostname: str) -> list[str]:
+    primary_label = hostname.lower().split(".")[0]
+    ordered_tokens = _HOSTNAME_TOKEN_RE.findall(primary_label)
+    variants = [
+        hostname.lower(),
+        primary_label,
+        " ".join(ordered_tokens),
+        "".join(ordered_tokens),
+    ]
+    return [variant for index, variant in enumerate(variants) if variant and variant not in variants[:index]]
+
+
+def _hostname_role_matches(tokens: set[str]) -> list[tuple[str, str, str, str, float]]:
+    role_signatures: list[tuple[set[str], str, str, float]] = [
+        ({"nas", "storage", "fileserver"}, "device_type", "nas", 0.82),
+        ({"router", "gateway", "gw"}, "device_type", "router", 0.80),
+        ({"firewall", "fw"}, "device_type", "firewall", 0.80),
+        ({"switch", "sw"}, "device_type", "switch", 0.80),
+        ({"ap", "wap", "wifi", "wlan", "uap", "eap"}, "device_type", "access_point", 0.78),
+        ({"printer", "print", "laserjet", "officejet", "deskjet", "ecotank", "mfc"}, "device_type", "printer", 0.82),
+        ({"camera", "cam", "nvr", "dvr", "doorbell"}, "device_type", "ip_camera", 0.78),
+        ({"roku", "chromecast", "bravia", "appletv", "firetv", "shield", "tv"}, "device_type", "smart_tv", 0.82),
+        ({"voip", "deskphone", "yealink", "polycom", "grandstream", "fanvil"}, "device_type", "voip", 0.82),
+        ({"ps5", "ps4", "playstation", "xbox"}, "device_type", "game_console", 0.86),
+        ({"server", "srv", "pve", "esxi", "docker", "k8s", "kubernetes"}, "device_type", "server", 0.76),
+        ({"desktop", "laptop", "workstation", "macbook", "imac", "thinkpad", "latitude"}, "device_type", "workstation", 0.74),
+        ({"iphone", "ipad", "pixel", "android", "homeassistant", "hassio", "hass", "thermostat"}, "device_type", "iot_device", 0.76),
+        ({"macbook", "imac", "iphone", "ipad", "appletv"}, "vendor", "Apple", 0.78),
+    ]
+
+    matches: list[tuple[str, str, str, str, float]] = []
+    for aliases, category, value, confidence in role_signatures:
+        matched = tokens & aliases
+        if not matched:
+            continue
+        if value == "switch" and "nintendo" in tokens:
+            continue
+        for token in sorted(matched):
+            matches.append((token, category, f"hostname:{token}", value, confidence))
+    if "nintendo" in tokens and "switch" in tokens:
+        matches.append(("nintendo switch", "device_type", "hostname:nintendo_switch", "game_console", 0.88))
+        matches.append(("nintendo", "vendor", "hostname:nintendo", "Nintendo", 0.86))
+    if "home" in tokens and "assistant" in tokens:
+        matches.append(("home assistant", "device_type", "hostname:home_assistant", "iot_device", 0.84))
+    return matches
+
+
+def _append_unique_evidence(
+    matches: list[EvidenceItem],
+    seen: set[tuple[str, str, str, str]],
+    item: EvidenceItem,
+) -> None:
+    identity = (item.source, item.category, item.key, item.value)
+    if identity in seen:
+        return
+    seen.add(identity)
+    matches.append(item)
+
+
 def extract_evidence(result: HostScanResult) -> list[EvidenceItem]:
     evidence: list[EvidenceItem] = []
     _append_basic_evidence(evidence, result)
@@ -136,7 +235,7 @@ def _append_hostname_evidence(evidence: list[EvidenceItem], reverse_hostname: st
         return
     details = {"hostname": reverse_hostname}
     evidence.append(EvidenceItem("hostname", "identity", "hostname", reverse_hostname, 0.60, {}))
-    evidence.extend(_signature_evidence(reverse_hostname, "hostname", details))
+    evidence.extend(_hostname_signature_evidence(reverse_hostname, "hostname", details))
 
 
 def _append_port_evidence(evidence: list[EvidenceItem], result: HostScanResult) -> None:
@@ -218,12 +317,57 @@ def _append_probe_evidence(evidence: list[EvidenceItem], result: HostScanResult)
 
 def _append_http_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:
     _append_optional_probe_signature(evidence, "probe_http", "service", "server_header", data.get("server"), 0.80, data)
+    _append_http_recog_evidence(evidence, data.get("server"), data)
     _append_optional_probe_signature(evidence, "probe_http", "identity", "http_title", data.get("title"), 0.72, data)
     _append_optional_probe_signature(evidence, "probe_http", "service", "powered_by", data.get("powered_by"), 0.72, data)
     _append_optional_evidence(evidence, "probe_http", "service", "auth_header", data.get("auth_header"), 0.72, data)
     _append_optional_evidence(evidence, "probe_http", "identity", "favicon_hash", data.get("favicon_hash"), 0.76, data)
     _append_optional_probe_signature(evidence, "probe_http", "identity", "detected_app", data.get("detected_app"), 0.86, data)
     _append_optional_evidence(evidence, "probe_http", "identity", "redirect_host", data.get("redirect_host"), 0.74, data)
+
+
+def _append_http_recog_evidence(evidence: list[EvidenceItem], server_header: Any, data: dict[str, Any]) -> None:
+    if server_header is None:
+        return
+    match = match_rapid7_recog_http_server(str(server_header))
+    if match is None:
+        return
+
+    product = _recog_value(match, "service.product")
+    version = _recog_value(match, "service.version")
+    vendor = _recog_value(match, "service.vendor")
+    cpe = _recog_value(match, "service.cpe23", "service.cpe")
+    description = _recog_value(match, "recog.description")
+    details = {
+        **data,
+        "product": product,
+        "version": version,
+        "vendor": vendor,
+        "cpe": cpe,
+        "recog_pattern": _recog_value(match, "recog.pattern"),
+        "recog_description": description,
+    }
+
+    if product:
+        evidence.append(EvidenceItem("recog_http", "service", "http_server", product, 0.90, details))
+        evidence.extend(_signature_evidence(product, "recog_http", details))
+    if version:
+        evidence.append(EvidenceItem("recog_http", "service", "http_server_version", version, 0.88, details))
+    if vendor:
+        evidence.append(EvidenceItem("recog_http", "vendor", "http_server_vendor", vendor, 0.88, details))
+        evidence.extend(_signature_evidence(vendor, "recog_http", details))
+    if cpe:
+        evidence.append(EvidenceItem("recog_http", "service", "http_server_cpe", cpe, 0.88, details))
+    if not product and description:
+        evidence.append(EvidenceItem("recog_http", "service", "http_server", description, 0.82, details))
+
+
+def _recog_value(match: dict[str, str], *keys: str) -> str | None:
+    for key in keys:
+        value = match.get(key)
+        if value:
+            return value
+    return None
 
 
 def _append_tls_probe_evidence(evidence: list[EvidenceItem], data: dict[str, Any]) -> None:

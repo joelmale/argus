@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from datetime import datetime, timezone
+from types import SimpleNamespace
 import uuid
 
 import pytest
@@ -8,7 +10,7 @@ from sqlalchemy import delete, select
 from app.db.models import Asset, AssetEvidence, PassiveObservation
 from app.db.session import AsyncSessionLocal
 from app.db.upsert import upsert_scan_result
-from app.fingerprinting.passive import record_passive_observation
+from app.fingerprinting.passive import _build_passive_evidence, record_passive_observation
 from app.scanner.models import DiscoveredHost, HostScanResult, PortResult
 
 
@@ -36,6 +38,14 @@ async def test_passive_observation_persists_and_survives_snapshot_refresh():
                 summary=f"Observed DHCP lease for {ip}",
                 details={"ip": ip, "hostname": "lab-client", "mac": "aa:bb:cc:dd:ee:01"},
             )
+            await record_passive_observation(
+                db,
+                asset=asset,
+                source="passive_arp",
+                event_type="arp",
+                summary=f"Observed passive ARP for {ip}",
+                details={"ip": ip, "hostname": "DiskStation", "mac": "aa:bb:cc:dd:ee:01"},
+            )
             await db.commit()
 
             asset, _ = await upsert_scan_result(
@@ -50,10 +60,27 @@ async def test_passive_observation_persists_and_survives_snapshot_refresh():
             observations = (await db.execute(select(PassiveObservation).where(PassiveObservation.asset_id == asset.id))).scalars().all()
             evidence = (await db.execute(select(AssetEvidence).where(AssetEvidence.asset_id == asset.id))).scalars().all()
 
-            assert len(observations) == 1
-            assert observations[0].source == "dhcp_log"
+            assert len(observations) == 2
+            assert {row.source for row in observations} == {"dhcp_log", "passive_arp"}
             assert any(row.source == "dhcp_log" and row.key == "observed_hostname" and row.value == "lab-client" for row in evidence)
             assert any(row.source == "dhcp_log" and row.key == "passive_lease" for row in evidence)
+            assert any(row.source == "passive_arp" and row.key == "observed_hostname" and row.value == "DiskStation" for row in evidence)
+            assert any(row.source == "passive_arp" and row.category == "device_type" and row.value == "nas" for row in evidence)
+            assert any(row.source == "passive_arp" and row.key == "passive_arp" for row in evidence)
         finally:
             await db.execute(delete(Asset).where(Asset.ip_address == ip))
             await db.commit()
+
+
+def test_passive_hostname_signature_matching_adds_nas_evidence():
+    asset = SimpleNamespace(id=uuid.uuid4(), ip_address="10.0.0.5", mac_address="aa:bb:cc:dd:ee:01")
+    rows = _build_passive_evidence(
+        asset=asset,
+        source="passive_arp",
+        event_type="arp",
+        details={"ip": asset.ip_address, "hostname": "nas-backup", "mac": asset.mac_address},
+        observed_at=datetime.now(timezone.utc),
+    )
+
+    assert any(row.key == "observed_hostname" and row.value == "nas-backup" for row in rows)
+    assert any(row.category == "device_type" and row.value == "nas" and row.source == "passive_arp" for row in rows)

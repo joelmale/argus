@@ -1,15 +1,32 @@
 from __future__ import annotations
 
+import asyncio
 from contextlib import asynccontextmanager
+from collections.abc import AsyncIterator
+from uuid import uuid4
 
 from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+import redis.asyncio as redis
+from redis.exceptions import RedisError
+
 from app.core.config import settings
 from app.db.models import ScanJob
 
-SCAN_QUEUE_LOCK_KEY = 6_178_231_911_204_913
+SCAN_QUEUE_LOCK_KEY = "argus:scan_queue_lock"
+SCAN_QUEUE_LOCK_FALLBACK_KEY = 6_178_231_911_204_913
+SCAN_QUEUE_LOCK_TTL_SECONDS = 60
+SCAN_QUEUE_LOCK_WAIT_SECONDS = 30
+_scan_queue_lock_client: redis.Redis | None = None
 _scan_queue_lock_engine = None
+
+
+def _get_scan_queue_lock_client() -> redis.Redis:
+    global _scan_queue_lock_client
+    if _scan_queue_lock_client is None:
+        _scan_queue_lock_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+    return _scan_queue_lock_client
 
 
 def _get_scan_queue_lock_engine():
@@ -26,27 +43,82 @@ def _get_scan_queue_lock_engine():
     return _scan_queue_lock_engine
 
 
-async def dispose_scan_queue_lock_engine() -> None:
+async def dispose_scan_queue_lock() -> None:
+    global _scan_queue_lock_client
+    if _scan_queue_lock_client is not None:
+        await _scan_queue_lock_client.aclose()
+    _scan_queue_lock_client = None
+
     global _scan_queue_lock_engine
     if _scan_queue_lock_engine is not None:
         await _scan_queue_lock_engine.dispose()
     _scan_queue_lock_engine = None
 
 
+async def dispose_scan_queue_lock_engine() -> None:
+    await dispose_scan_queue_lock()
+
+
 @asynccontextmanager
-async def acquire_scan_queue_lock(db: AsyncSession):
+async def acquire_scan_queue_lock(db: AsyncSession) -> AsyncIterator[None]:
     bind = getattr(db, "bind", None)
     if bind is None:
-        await db.execute(select(func.pg_advisory_xact_lock(SCAN_QUEUE_LOCK_KEY)))
+        await db.execute(select(func.pg_advisory_xact_lock(SCAN_QUEUE_LOCK_FALLBACK_KEY)))
         yield
         return
 
+    try:
+        token = await _acquire_redis_scan_queue_lock()
+    except RedisError:
+        async with _acquire_postgres_scan_queue_lock():
+            yield
+        return
+
+    try:
+        yield
+    finally:
+        await _release_redis_scan_queue_lock(token)
+
+
+async def _acquire_redis_scan_queue_lock() -> str:
+    client = _get_scan_queue_lock_client()
+    token = uuid4().hex
+    deadline = asyncio.get_running_loop().time() + SCAN_QUEUE_LOCK_WAIT_SECONDS
+
+    while True:
+        if await client.set(SCAN_QUEUE_LOCK_KEY, token, nx=True, ex=SCAN_QUEUE_LOCK_TTL_SECONDS):
+            return token
+        if asyncio.get_running_loop().time() >= deadline:
+            raise TimeoutError("Timed out waiting for scan queue lock")
+        await asyncio.sleep(0.05)
+
+
+async def _release_redis_scan_queue_lock(token: str) -> None:
+    client = _get_scan_queue_lock_client()
+    try:
+        await client.eval(
+            """
+            if redis.call("GET", KEYS[1]) == ARGV[1] then
+                return redis.call("DEL", KEYS[1])
+            end
+            return 0
+            """,
+            1,
+            SCAN_QUEUE_LOCK_KEY,
+            token,
+        )
+    except RedisError:
+        pass
+
+
+@asynccontextmanager
+async def _acquire_postgres_scan_queue_lock() -> AsyncIterator[None]:
     async with _get_scan_queue_lock_engine().connect() as conn:
-        await conn.execute(select(func.pg_advisory_lock(SCAN_QUEUE_LOCK_KEY)))
+        await conn.execute(select(func.pg_advisory_lock(SCAN_QUEUE_LOCK_FALLBACK_KEY)))
         try:
             yield
         finally:
-            await conn.execute(select(func.pg_advisory_unlock(SCAN_QUEUE_LOCK_KEY)))
+            await conn.execute(select(func.pg_advisory_unlock(SCAN_QUEUE_LOCK_FALLBACK_KEY)))
 
 
 async def has_active_scan(db: AsyncSession) -> bool:

@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import Asset, AssetEvidence, PassiveObservation
+from app.fingerprinting.evidence import _hostname_signature_evidence
 
 
 def _utcnow() -> datetime:
@@ -62,17 +63,31 @@ def _build_passive_evidence(
 
     hostname = details.get("hostname")
     if hostname:
+        hostname_text = str(hostname)
         rows.append(
             AssetEvidence(
                 asset_id=asset.id,
                 source=source,
                 category="identity",
                 key="observed_hostname",
-                value=str(hostname),
+                value=hostname_text,
                 confidence=0.76,
                 details=details,
                 observed_at=observed_at,
             )
+        )
+        rows.extend(
+            AssetEvidence(
+                asset_id=asset.id,
+                source=item.source,
+                category=item.category,
+                key=item.key,
+                value=item.value,
+                confidence=item.confidence,
+                details=item.details,
+                observed_at=observed_at,
+            )
+            for item in _hostname_signature_evidence(hostname_text, source, details)
         )
 
     mac_address = details.get("mac") or asset.mac_address

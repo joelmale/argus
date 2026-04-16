@@ -6,8 +6,10 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from functools import lru_cache
 from pathlib import Path
+from re import Pattern
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+from xml.etree import ElementTree
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +29,21 @@ class DatasetDefinition:
     filename: str
     update_mode: str = "remote"
     notes: dict | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class RecogParam:
+    name: str
+    pos: int
+    value: str | None
+
+
+@dataclass(frozen=True, slots=True)
+class RecogFingerprint:
+    pattern_text: str
+    pattern: Pattern[str]
+    description: str | None
+    params: tuple[RecogParam, ...]
 
 
 DATASET_DEFINITIONS: tuple[DatasetDefinition, ...] = (
@@ -195,6 +212,7 @@ async def list_datasets(db: AsyncSession) -> list[FingerprintDataset]:
 def _clear_caches() -> None:
     load_mac_vendor_dataset.cache_clear()
     load_iana_pen_dataset.cache_clear()
+    load_rapid7_recog_http_dataset.cache_clear()
 
 
 def _read_dataset_file(filename: str) -> str:
@@ -246,6 +264,99 @@ def load_iana_pen_dataset() -> dict[str, str]:
         if pen.isdigit() and vendor.strip():
             data[pen] = vendor.strip()
     return data
+
+
+@lru_cache(maxsize=1)
+def load_rapid7_recog_http_dataset() -> tuple[RecogFingerprint, ...]:
+    text = _read_dataset_file("rapid7_recog_http.xml")
+    if not text:
+        return ()
+    try:
+        root = ElementTree.fromstring(text)
+    except ElementTree.ParseError:
+        return ()
+
+    fingerprints: list[RecogFingerprint] = []
+    for node in root.findall("fingerprint"):
+        pattern_text = node.attrib.get("pattern")
+        if not pattern_text:
+            continue
+        try:
+            pattern = re.compile(pattern_text)
+        except re.error:
+            continue
+        params: list[RecogParam] = []
+        for param_node in node.findall("param"):
+            name = param_node.attrib.get("name")
+            if not name:
+                continue
+            params.append(
+                RecogParam(
+                    name=name,
+                    pos=_safe_int(param_node.attrib.get("pos"), default=0),
+                    value=param_node.attrib.get("value"),
+                )
+            )
+        description = node.findtext("description")
+        fingerprints.append(
+            RecogFingerprint(
+                pattern_text=pattern_text,
+                pattern=pattern,
+                description=description.strip() if description else None,
+                params=tuple(params),
+            )
+        )
+    return tuple(fingerprints)
+
+
+def match_rapid7_recog_http_server(server_header: str | None) -> dict[str, str] | None:
+    if not server_header:
+        return None
+    header = server_header.strip()
+    if not header:
+        return None
+
+    for fingerprint in load_rapid7_recog_http_dataset():
+        match = fingerprint.pattern.search(header)
+        if not match:
+            continue
+        values = _extract_recog_values(fingerprint, match)
+        if not values:
+            continue
+        values["recog.pattern"] = fingerprint.pattern_text
+        values["recog.description"] = fingerprint.description or ""
+        return values
+    return None
+
+
+def _extract_recog_values(fingerprint: RecogFingerprint, match: re.Match[str]) -> dict[str, str]:
+    raw_values: dict[str, str] = {}
+    for param in fingerprint.params:
+        value = param.value
+        if value is None:
+            try:
+                value = match.group(param.pos)
+            except IndexError:
+                value = None
+        if value:
+            raw_values[param.name] = value
+    return {key: _expand_recog_value(value, raw_values) for key, value in raw_values.items()}
+
+
+def _expand_recog_value(value: str, values: dict[str, str]) -> str:
+    def replace(match: re.Match[str]) -> str:
+        return values.get(match.group(1), "")
+
+    return re.sub(r"\{([^}]+)\}", replace, value)
+
+
+def _safe_int(value: str | None, *, default: int) -> int:
+    if value is None:
+        return default
+    try:
+        return int(value)
+    except ValueError:
+        return default
 
 
 def lookup_mac_vendor_from_dataset(mac: str | None) -> str | None:
