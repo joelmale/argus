@@ -24,14 +24,18 @@ export function AppShell({ children }: Readonly<AppShellProps>) {
   useWebSocket(!!currentUser)  // Establish & maintain WS connection
 
   useEffect(() => {
+    const currentPath = typeof globalThis.window === 'object'
+      ? `${globalThis.location.pathname}${globalThis.location.search}`
+      : pathname
+
     if (!token) {
-      router.replace('/login')
+      router.replace(`/login?next=${encodeURIComponent(currentPath)}`)
       return
     }
 
     if (!isLoading && !currentUser && authExpired) {
       clearAuthToken()
-      router.replace(`/login?next=${encodeURIComponent(pathname)}`)
+      router.replace(`/login?next=${encodeURIComponent(currentPath)}`)
     }
   }, [authExpired, currentUser, isLoading, pathname, router, token])
 

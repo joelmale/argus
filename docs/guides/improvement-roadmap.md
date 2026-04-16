@@ -450,8 +450,6 @@ Purpose: reduce repeated full-graph and full-inventory work, surface topology
 confidence clearly to the user, and give users the tools to correct and extend
 topology data that automated scanning cannot fully resolve.
 
-Purpose: reduce repeated full-graph and repeated metrics work.
-
 Scope:
 
 - Cache or materialize topology graph output.
@@ -465,6 +463,12 @@ Scope:
 - Emit a `topology:updated` WebSocket event after each scan completion and after
   any manual link mutation. The frontend subscribes and refetches automatically
   rather than polling or requiring a manual refresh.
+- Cache metrics or compute them from lightweight aggregate queries.
+  - Avoid a growing number of live count queries on every scrape.
+- Optimize topology frontend lifecycle.
+  - Avoid destroying and recreating Cytoscape for every filter change if incremental
+    updates are practical.
+  - Keep the current behavior until graph size makes this necessary.
 - Cache metrics or compute them from lightweight aggregate queries.
   - Avoid a growing number of live count queries on every scrape.
 - Consider separate topology endpoints:
@@ -1013,7 +1017,7 @@ Implement in this order unless production pressure changes the priority:
 3. ~~Phase 3: asset API payload split.~~ ✓ Done (2026-04-15).
 4. ~~Phase 4: service boundaries and typed contracts.~~ ✓ Done (2026-04-15).
 5. ~~Phase 5: async workflows and queue hardening.~~ ✓ Done (2026-04-15).
-6. ~~Phase 6: topology, metrics, and export scaling.~~ ✓ Done (2026-04-15).
+6. ~~Phase 6: topology and metrics scaling.~~ ✓ Done (2026-04-15).
 7. ~~Phase 7: evidence-based topology hierarchy.~~ ✓ Done (2026-04-15).
 8. **Phase 10a**: nmap validation, security headers, Redis healthcheck, pool config.
 9. **Phase 9a**: build-once CI image fix (independent, can land in parallel with 10a).

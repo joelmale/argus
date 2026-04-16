@@ -26,6 +26,7 @@
 
   /* Custom animations */
   --animate-pulse-slow: pulse-slow 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+  --animate-scan-glide: scan-glide 1.6s ease-in-out infinite;
   --animate-fade-in:    fade-in   0.2s ease-in-out;
   --animate-slide-in:   slide-in  0.2s ease-out;
 }
@@ -43,6 +44,14 @@
 @keyframes slide-in {
   from { transform: translateX(-8px); opacity: 0; }
   to   { transform: translateX(0);    opacity: 1; }
+}
+
+@keyframes scan-glide {
+  0%   { transform: translateX(-120%); opacity: 0; }
+  15%  { opacity: 0.9; }
+  50%  { transform: translateX(180%); opacity: 0.9; }
+  85%  { opacity: 0.9; }
+  100% { transform: translateX(320%); opacity: 0; }
 }
 
 /* ── Base layer ──────────────────────────────────────────────────────────── */
