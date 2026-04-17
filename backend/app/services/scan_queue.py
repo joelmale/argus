@@ -19,13 +19,19 @@ SCAN_QUEUE_LOCK_FALLBACK_KEY = 6_178_231_911_204_913
 SCAN_QUEUE_LOCK_TTL_SECONDS = 60
 SCAN_QUEUE_LOCK_WAIT_SECONDS = 30
 _scan_queue_lock_client: redis.Redis | None = None
+_scan_queue_lock_client_loop_id: int | None = None
 _scan_queue_lock_engine = None
 
 
 def _get_scan_queue_lock_client() -> redis.Redis:
-    global _scan_queue_lock_client
-    if _scan_queue_lock_client is None:
+    global _scan_queue_lock_client, _scan_queue_lock_client_loop_id
+    try:
+        loop_id = id(asyncio.get_running_loop())
+    except RuntimeError:
+        loop_id = None
+    if _scan_queue_lock_client is None or loop_id != _scan_queue_lock_client_loop_id:
         _scan_queue_lock_client = redis.from_url(settings.REDIS_URL, decode_responses=True)
+        _scan_queue_lock_client_loop_id = loop_id
     return _scan_queue_lock_client
 
 

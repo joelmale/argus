@@ -143,7 +143,8 @@ def _scan_sync(
     try:
         xml_output = _run_nmap_xml_scan(target_str, args)
     except Exception as exc:
-        log.error("nmap scan failed: %s", exc)
+        stderr = (getattr(exc, "stderr", None) or "").strip()
+        log.error("nmap scan failed: %s%s", exc, f" | stderr: {stderr[:400]}" if stderr else "")
         return []
 
     log.info("Port scan complete in %.1fs", time.monotonic() - t0)
@@ -153,13 +154,30 @@ def _scan_sync(
 
 
 def _run_nmap_xml_scan(target_str: str, args: str) -> str:
-    completed = subprocess.run(
-        ["nmap", *args.split(), "-oX", "-", *target_str.split()],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return completed.stdout
+    try:
+        completed = subprocess.run(
+            ["nmap", *args.split(), "-oX", "-", *target_str.split()],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        return completed.stdout
+    except subprocess.CalledProcessError as exc:
+        arg_list = args.split()
+        if exc.returncode == 1 and "-O" in arg_list:
+            stripped = " ".join(a for a in arg_list if a != "-O")
+            log.warning(
+                "nmap -O failed (exit 1, likely no raw-socket privileges); retrying without -O | stderr: %s",
+                (exc.stderr or "").strip()[:400],
+            )
+            completed = subprocess.run(
+                ["nmap", *stripped.split(), "-oX", "-", *target_str.split()],
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            return completed.stdout
+        raise
 
 
 def _parse_port_scan_xml(
