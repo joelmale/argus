@@ -407,7 +407,7 @@ export default function InventoryPage() {
         <div>
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Inventory</h2>
           <p className="text-sm text-zinc-500 mt-0.5">
-            A bird's-eye view of everything discovered on your network.
+            A bird&apos;s-eye view of everything discovered on your network.
           </p>
         </div>
 
