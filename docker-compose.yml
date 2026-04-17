@@ -100,6 +100,7 @@ services:
     image: ${ARGUS_SCANNER_IMAGE:-ghcr.io/joelmale/argus-scanner:main}
     container_name: argus_scanner
     restart: unless-stopped
+    user: "0"
     network_mode: host
     env_file: .env.production
     environment:
