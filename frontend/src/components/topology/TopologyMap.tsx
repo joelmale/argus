@@ -555,7 +555,6 @@ export function TopologyMap() {
     // Reapply styles (opacity/width may have changed due to dimInferred)
     cy.style(buildCytoscapeStyle(labelColor))
   // elements dep intentionally excludes graph/layoutMode to avoid double-trigger
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [elements, labelColor])
 
   // Spotlight search result
