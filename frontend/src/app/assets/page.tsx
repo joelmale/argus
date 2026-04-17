@@ -13,18 +13,10 @@ import { assetsApi, scansApi } from '@/lib/api'
 import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope, Trash2, ChevronDown, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AlertDialog } from '@/components/ui/AlertDialog'
+import { downloadBlob } from '@/lib/exportUtils'
 
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
 const TYPE_OPTIONS = ['', 'router', 'switch', 'server', 'workstation', 'nas', 'printer', 'ip_camera', 'iot_device', 'unknown']
-
-function downloadBlob(data: Blob, filename: string) {
-  const url = URL.createObjectURL(data)
-  const link = document.createElement('a')
-  link.href = url
-  link.download = filename
-  link.click()
-  URL.revokeObjectURL(url)
-}
 
 async function waitForExportJob(jobId: string) {
   for (;;) {
