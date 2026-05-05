@@ -800,7 +800,9 @@ async def _upsert_internet_lookup(db: AsyncSession, asset: Asset, evidence_items
 
 async def _upsert_ports(db: AsyncSession, asset: Asset, result: HostScanResult) -> dict:
     """Upsert port records, return dict of changes."""
+    from datetime import datetime, timezone
     changes: dict = {}
+    now = datetime.now(timezone.utc)
 
     # Get existing ports
     stmt = select(Port).where(Port.asset_id == asset.id)
@@ -809,11 +811,14 @@ async def _upsert_ports(db: AsyncSession, asset: Asset, result: HostScanResult) 
         for p in (await db.execute(stmt)).scalars().all()
     }
 
+    # Include open|filtered ports — treat them as open for storage purposes
+    ports_to_persist = [p for p in result.ports if p.state in ("open", "open|filtered")]
+
     new_port_keys = set()
-    for port_result in result.open_ports:
+    for port_result in ports_to_persist:
         key = (port_result.port, port_result.protocol)
         new_port_keys.add(key)
-        _upsert_single_port(db, asset, existing_ports, changes, key, port_result)
+        _upsert_single_port(db, asset, existing_ports, changes, key, port_result, now)
 
     # Mark ports not seen this scan as closed
     for key, port_obj in existing_ports.items():
@@ -831,6 +836,7 @@ def _upsert_single_port(
     changes: dict,
     key: tuple[int, str],
     port_result,
+    now,
 ) -> None:
     if key not in existing_ports:
         db.add(Port(
@@ -840,11 +846,19 @@ def _upsert_single_port(
             service=port_result.service,
             version=port_result.version,
             state="open",
+            first_seen=now,
+            last_seen=now,
         ))
         changes[f"port_{port_result.port}/{port_result.protocol}"] = {"old": None, "new": "open"}
         return
 
     existing_port = existing_ports[key]
+    # Always refresh last_seen when the port is confirmed open
+    existing_port.last_seen = now
+    if existing_port.state != "open":
+        old_state = existing_port.state
+        existing_port.state = "open"
+        changes[f"port_{port_result.port}/{port_result.protocol}"] = {"old": old_state, "new": "open"}
     if port_result.version and existing_port.version != port_result.version:
         changes[f"port_{port_result.port}_version"] = {"old": existing_port.version, "new": port_result.version}
         existing_port.version = port_result.version

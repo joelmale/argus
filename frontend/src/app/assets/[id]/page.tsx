@@ -986,20 +986,22 @@ export default function AssetDetailPage() {
                 <table className="w-full text-sm">
                   <thead>
                     <tr className="border-b border-gray-100 dark:border-zinc-800">
-                      {['Port', 'Protocol', 'Service', 'Version / Product'].map(h => (
+                      {['Port', 'Protocol', 'Service', 'Version / Product', 'First Seen', 'Last Seen'].map(h => (
                         <th key={h} className="text-left px-5 py-2.5 text-xs text-zinc-500 uppercase tracking-wider font-medium">{h}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-gray-100 dark:divide-zinc-800">
                     {openPorts.length === 0 ? (
-                      <tr><td colSpan={4} className="px-5 py-6 text-center text-zinc-400 text-xs">No open ports found</td></tr>
+                      <tr><td colSpan={6} className="px-5 py-6 text-center text-zinc-400 text-xs">No open ports found</td></tr>
                     ) : openPorts.map((p) => (
                       <tr key={`${p.port_number}-${p.protocol}`} className="hover:bg-gray-50 dark:hover:bg-zinc-800/50">
                         <td className="px-5 py-2.5 font-mono font-medium text-sky-600 dark:text-sky-400 tabular">{p.port_number}</td>
                         <td className="px-5 py-2.5 text-zinc-500">{p.protocol}</td>
                         <td className="px-5 py-2.5 text-zinc-700 dark:text-zinc-300">{p.service || '—'}</td>
                         <td className="px-5 py-2.5 text-zinc-500 text-xs max-w-xs truncate">{p.version || '—'}</td>
+                        <td className="px-5 py-2.5 text-zinc-500 text-xs whitespace-nowrap">{p.first_seen ? formatDate(p.first_seen) : '—'}</td>
+                        <td className="px-5 py-2.5 text-zinc-500 text-xs whitespace-nowrap">{p.last_seen ? formatDate(p.last_seen) : '—'}</td>
                       </tr>
                     ))}
                   </tbody>

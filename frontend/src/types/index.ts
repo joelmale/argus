@@ -509,6 +509,8 @@ export interface Port {
   service: string | null;
   version: string | null;
   state: string;
+  first_seen: string | null;
+  last_seen: string | null;
 }
 
 export interface AssetNoteEntry {

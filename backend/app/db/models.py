@@ -148,6 +148,8 @@ class Port(Base):
     service: Mapped[str | None] = mapped_column(String(64))
     version: Mapped[str | None] = mapped_column(String(128))
     state: Mapped[str] = mapped_column(String(16), default="open")
+    first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+    last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
     asset: Mapped["Asset"] = relationship(back_populates="ports")
 

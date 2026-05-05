@@ -199,6 +199,8 @@ def serialize_port(port: Port) -> dict:
         "service": port.service,
         "version": port.version,
         "state": port.state,
+        "first_seen": port.first_seen.isoformat() if port.first_seen else None,
+        "last_seen": port.last_seen.isoformat() if port.last_seen else None,
     }
 
 
