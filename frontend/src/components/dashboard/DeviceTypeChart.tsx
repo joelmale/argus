@@ -1,7 +1,6 @@
 'use client'
 
 import { useMemo } from 'react'
-import { PieChart, Pie, Tooltip, ResponsiveContainer, Legend } from 'recharts'
 import { useDashboardAssets } from '@/hooks/useAssets'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 
@@ -10,10 +9,6 @@ const COLORS: Record<string, string> = {
   server: '#22c55e', workstation: '#3b82f6', nas: '#14b8a6',
   printer: '#eab308', ip_camera: '#ec4899', smart_tv: '#a855f7',
   iot_device: '#f59e0b', firewall: '#f97316', voip: '#84cc16', unknown: '#71717a',
-}
-
-function renderLegendLabel(value: string) {
-  return <span className="text-xs text-zinc-600 dark:text-zinc-400">{value}</span>
 }
 
 export function DeviceTypeChart() {
@@ -25,59 +20,48 @@ export function DeviceTypeChart() {
       const deviceClass = asset.ai_analysis?.device_class ?? asset.device_type ?? 'unknown'
       counts[deviceClass] = (counts[deviceClass] ?? 0) + 1
     }
-
     return Object.entries(counts)
-      .map(([name, value]) => ({ name: name.replace('_', ' '), value, key: name, fill: COLORS[name] ?? '#71717a' }))
+      .map(([key, value]) => ({ key, name: key.replace(/_/g, ' '), value, fill: COLORS[key] ?? '#71717a' }))
       .sort((a, b) => b.value - a.value)
       .slice(0, 8)
   }, [assets])
 
-  function renderChartBody() {
-    if (isLoading) {
-      return (
-        <div className="h-48 flex items-center justify-center">
-          <div className="w-32 h-32 rounded-full border-4 border-zinc-200 dark:border-zinc-800 border-t-sky-500 animate-spin" />
-        </div>
-      )
-    }
+  const total = chartData.reduce((s, d) => s + d.value, 0)
 
-    if (chartData.length === 0) {
-      return (
-        <div className="h-48 flex items-center justify-center text-zinc-400 text-sm">
-          No data — run a scan first
-        </div>
-      )
-    }
+  const gradient = useMemo(() => {
+    let offset = 0
+    const stops = chartData.map((slice) => {
+      const pct = total > 0 ? (slice.value / total) * 100 : 0
+      const stop = `${slice.fill} ${offset.toFixed(2)}% ${(offset + pct).toFixed(2)}%`
+      offset += pct
+      return stop
+    })
+    return `conic-gradient(${stops.join(', ')})`
+  }, [chartData, total])
 
+  if (isLoading) {
     return (
-      <ResponsiveContainer width="100%" height={200}>
-        <PieChart>
-          <Pie
-            data={chartData}
-            cx="50%"
-            cy="50%"
-            innerRadius={50}
-            outerRadius={80}
-            dataKey="value"
-            nameKey="name"
-            paddingAngle={2}
-          />
-          <Tooltip
-            contentStyle={{
-              background: 'rgb(24 24 27)',
-              border: '1px solid rgb(39 39 42)',
-              borderRadius: '8px',
-              fontSize: '12px',
-              color: '#fff',
-            }}
-          />
-          <Legend
-            iconType="circle"
-            iconSize={8}
-            formatter={renderLegendLabel}
-          />
-        </PieChart>
-      </ResponsiveContainer>
+      <Card>
+        <CardHeader><CardTitle>Device Types</CardTitle></CardHeader>
+        <CardBody>
+          <div className="h-48 flex items-center justify-center">
+            <div className="w-32 h-32 rounded-full border-4 border-zinc-200 dark:border-zinc-800 border-t-sky-500 animate-spin" />
+          </div>
+        </CardBody>
+      </Card>
+    )
+  }
+
+  if (chartData.length === 0) {
+    return (
+      <Card>
+        <CardHeader><CardTitle>Device Types</CardTitle></CardHeader>
+        <CardBody>
+          <div className="h-48 flex items-center justify-center text-zinc-400 text-sm">
+            No data — run a scan first
+          </div>
+        </CardBody>
+      </Card>
     )
   }
 
@@ -87,7 +71,27 @@ export function DeviceTypeChart() {
         <CardTitle>Device Types</CardTitle>
         <span className="text-xs text-zinc-500">{assets.length} total</span>
       </CardHeader>
-      <CardBody>{renderChartBody()}</CardBody>
+      <CardBody>
+        <div className="flex flex-col items-center gap-4">
+          <div
+            className="relative w-36 h-36 rounded-full flex-shrink-0"
+            style={{ background: gradient }}
+            role="img"
+            aria-label="Device type distribution donut chart"
+          >
+            <div className="absolute inset-0 m-auto w-[60%] h-[60%] rounded-full bg-white dark:bg-zinc-900" />
+          </div>
+          <ul className="grid grid-cols-2 gap-x-4 gap-y-1.5 w-full text-xs">
+            {chartData.map((slice) => (
+              <li key={slice.key} className="flex items-center gap-1.5 min-w-0" title={`${slice.name}: ${slice.value}`}>
+                <span className="w-2 h-2 rounded-full flex-shrink-0" style={{ background: slice.fill }} />
+                <span className="truncate text-zinc-600 dark:text-zinc-400">{slice.name}</span>
+                <span className="ml-auto font-medium text-zinc-800 dark:text-zinc-200">{slice.value}</span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </CardBody>
     </Card>
   )
 }

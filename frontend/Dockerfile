@@ -1,5 +1,6 @@
-# ── Deps stage ───────────────────────────────────────────────────────────────
-FROM node:20-alpine AS deps
+# Keep the runtime base deterministic so Trivy results don't depend on
+# whatever the floating node:20-alpine tag resolves to on a given day.
+FROM node:20.20.2-alpine3.23 AS deps
 WORKDIR /app
 
 COPY package.json package-lock.json* yarn.lock* pnpm-lock.yaml* ./
@@ -12,7 +13,7 @@ RUN if [ -f package-lock.json ]; then \
     fi
 
 # ── Builder stage ─────────────────────────────────────────────────────────────
-FROM node:20-alpine AS builder
+FROM node:20.20.2-alpine3.23 AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
@@ -22,7 +23,7 @@ RUN mkdir -p public
 RUN npm run build
 
 # ── Runner stage (production) ─────────────────────────────────────────────────
-FROM node:20-alpine AS runner
+FROM node:20.20.2-alpine3.23 AS runner
 WORKDIR /app
 ENV NODE_ENV=production
 RUN apk upgrade --no-cache --available \
