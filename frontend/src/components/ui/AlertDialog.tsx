@@ -1,7 +1,6 @@
 'use client'
 
 import { useEffect, useRef } from 'react'
-import { createPortal } from 'react-dom'
 
 interface AlertDialogProps {
   open: boolean
@@ -14,10 +13,6 @@ interface AlertDialogProps {
   onCancel: () => void
 }
 
-/**
- * Accessible modal confirmation dialog — replaces window.confirm().
- * Traps focus within the dialog and closes on Escape.
- */
 export function AlertDialog({
   open,
   title,
@@ -28,73 +23,51 @@ export function AlertDialog({
   onConfirm,
   onCancel,
 }: AlertDialogProps) {
-  const cancelRef = useRef<HTMLButtonElement>(null)
+  const dialogRef = useRef<HTMLDialogElement>(null)
 
   useEffect(() => {
-    if (!open) return
-    // Focus the cancel button by default (safer choice for destructive actions)
-    cancelRef.current?.focus()
-
-    function handleKeyDown(e: KeyboardEvent) {
-      if (e.key === 'Escape') onCancel()
+    const el = dialogRef.current
+    if (!el) return
+    if (open) {
+      el.showModal()
+    } else {
+      el.close()
     }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [open, onCancel])
+  }, [open])
 
-  if (!open || typeof document === 'undefined') return null
-
-  return createPortal(
-    <div
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="alert-dialog-title"
-      aria-describedby="alert-dialog-description"
-      className="fixed inset-0 z-50 flex items-center justify-center"
+  return (
+    <dialog
+      ref={dialogRef}
+      onClose={onCancel}
+      className="w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900 backdrop:bg-black/40 dark:backdrop:bg-black/60"
     >
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/40 dark:bg-black/60"
-        onClick={onCancel}
-        aria-hidden="true"
-      />
-      {/* Panel */}
-      <div className="relative z-10 w-full max-w-md rounded-xl border border-gray-200 bg-white p-6 shadow-xl dark:border-zinc-700 dark:bg-zinc-900">
-        <h2
-          id="alert-dialog-title"
-          className="text-base font-semibold text-zinc-900 dark:text-zinc-100"
+      <h2 className="text-base font-semibold text-zinc-900 dark:text-zinc-100">
+        {title}
+      </h2>
+      <p className="mt-2 text-sm text-zinc-600 dark:text-zinc-400">
+        {description}
+      </p>
+      <div className="mt-6 flex justify-end gap-3">
+        <button
+          type="button"
+          onClick={onCancel}
+          autoFocus
+          className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-zinc-600 hover:bg-gray-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
         >
-          {title}
-        </h2>
-        <p
-          id="alert-dialog-description"
-          className="mt-2 text-sm text-zinc-600 dark:text-zinc-400"
+          {cancelLabel}
+        </button>
+        <button
+          type="button"
+          onClick={onConfirm}
+          className={
+            destructive
+              ? 'rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700'
+              : 'rounded-lg bg-sky-600 px-4 py-2 text-sm text-white hover:bg-sky-700'
+          }
         >
-          {description}
-        </p>
-        <div className="mt-6 flex justify-end gap-3">
-          <button
-            ref={cancelRef}
-            type="button"
-            onClick={onCancel}
-            className="rounded-lg border border-gray-200 px-4 py-2 text-sm text-zinc-600 hover:bg-gray-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
-          >
-            {cancelLabel}
-          </button>
-          <button
-            type="button"
-            onClick={onConfirm}
-            className={
-              destructive
-                ? 'rounded-lg bg-red-600 px-4 py-2 text-sm text-white hover:bg-red-700'
-                : 'rounded-lg bg-sky-600 px-4 py-2 text-sm text-white hover:bg-sky-700'
-            }
-          >
-            {confirmLabel}
-          </button>
-        </div>
+          {confirmLabel}
+        </button>
       </div>
-    </div>,
-    document.body,
+    </dialog>
   )
 }
