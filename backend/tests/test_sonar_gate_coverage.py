@@ -382,9 +382,13 @@ async def test_get_offline_ips_respects_mark_missing_offline_flag():
 async def test_get_offline_ips_limits_results_to_scan_target_scope():
     db = _FakeOfflineDb([("10.0.0.10",), ("10.0.1.20",), ("10.0.0.30",)])
 
+    class _SelectStub:
+        def where(self, *_args, **_kwargs):
+            return self
+
     offline = await _get_offline_ips(
         db,
-        lambda *_args, **_kwargs: object(),
+        lambda value: _SelectStub(),
         SimpleNamespace(ip_address="ip_address", status="status"),
         {"10.0.0.10"},
         True,

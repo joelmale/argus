@@ -85,44 +85,44 @@ class EffectiveScannerConfig:
 
 @dataclass(slots=True)
 class ScannerConfigUpdateInput:
-    enabled: bool
-    scheduled_scans_enabled: bool
-    default_targets: str | None
-    auto_detect_targets: bool
-    default_profile: str
-    interval_minutes: int
-    concurrent_hosts: int
-    host_chunk_size: int
-    top_ports_count: int
-    deep_probe_timeout_seconds: int
-    ai_after_scan_enabled: bool
-    ai_backend: str
-    ai_model: str | None
-    fingerprint_ai_backend: str
-    ollama_base_url: str | None
-    openai_base_url: str | None
-    openai_api_key: str | None
-    anthropic_api_key: str | None
-    passive_arp_enabled: bool
-    passive_arp_interface: str
-    topology_default_segment_prefix_v4: int
-    snmp_enabled: bool
-    snmp_version: str
-    snmp_community: str | None
-    snmp_timeout: int
-    snmp_v3_username: str | None
-    snmp_v3_auth_key: str | None
-    snmp_v3_priv_key: str | None
-    snmp_v3_auth_protocol: str
-    snmp_v3_priv_protocol: str
-    fingerprint_ai_enabled: bool
-    fingerprint_ai_model: str | None
-    fingerprint_ai_min_confidence: float
-    fingerprint_ai_prompt_suffix: str | None
-    internet_lookup_enabled: bool
-    internet_lookup_allowed_domains: str | None
-    internet_lookup_budget: int
-    internet_lookup_timeout_seconds: int
+    enabled: bool = True
+    scheduled_scans_enabled: bool = False
+    default_targets: str | None = None
+    auto_detect_targets: bool = True
+    default_profile: str = "balanced"
+    interval_minutes: int = 60
+    concurrent_hosts: int = 4
+    host_chunk_size: int = 64
+    top_ports_count: int = 1000
+    deep_probe_timeout_seconds: int = 6
+    ai_after_scan_enabled: bool = False
+    ai_backend: str = "ollama"
+    ai_model: str | None = None
+    fingerprint_ai_backend: str = "ollama"
+    ollama_base_url: str | None = None
+    openai_base_url: str | None = None
+    openai_api_key: str | None = None
+    anthropic_api_key: str | None = None
+    passive_arp_enabled: bool = False
+    passive_arp_interface: str = "auto"
+    topology_default_segment_prefix_v4: int = 24
+    snmp_enabled: bool = False
+    snmp_version: str = "2c"
+    snmp_community: str | None = None
+    snmp_timeout: int = 5
+    snmp_v3_username: str | None = None
+    snmp_v3_auth_key: str | None = None
+    snmp_v3_priv_key: str | None = None
+    snmp_v3_auth_protocol: str = "sha"
+    snmp_v3_priv_protocol: str = "aes"
+    fingerprint_ai_enabled: bool = False
+    fingerprint_ai_model: str | None = None
+    fingerprint_ai_min_confidence: float = 0.75
+    fingerprint_ai_prompt_suffix: str | None = None
+    internet_lookup_enabled: bool = False
+    internet_lookup_allowed_domains: str | None = None
+    internet_lookup_budget: int = 3
+    internet_lookup_timeout_seconds: int = 5
 
 
 def _ioctl_ipv4(ifname: str, request: int) -> str | None:
@@ -494,7 +494,15 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         passive_arp_interface=config.passive_arp_interface,
         passive_arp_effective_interface=passive_arp_effective_interface,
         passive_arp_interface_auto=passive_arp_interface_auto,
-        topology_default_segment_prefix_v4=max(8, min(30, config.topology_default_segment_prefix_v4)),
+        topology_default_segment_prefix_v4=max(
+            8,
+            min(
+                30,
+                config.topology_default_segment_prefix_v4
+                if config.topology_default_segment_prefix_v4 is not None
+                else (settings.TOPOLOGY_DEFAULT_SEGMENT_PREFIX_V4 or 24)
+            )
+        ),
         snmp_enabled=config.snmp_enabled,
         snmp_version=config.snmp_version,
         snmp_community=config.snmp_community,

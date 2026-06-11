@@ -85,7 +85,7 @@ async def upsert_scan_result(
         mac=result.host.mac_address,
         ip=ip,
         hostname=result.reverse_hostname,
-        create_if_missing=True,
+        create_if_missing=False,
         lookup_order=("ip", "mac", "hostname"),
     )
 

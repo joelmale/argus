@@ -175,6 +175,7 @@ export const topologyApi = {
   getGraph: (ifNoneMatch?: string) =>
     api.get("/api/v1/topology/graph", {
       headers: ifNoneMatch ? { "If-None-Match": ifNoneMatch } : undefined,
+      validateStatus: (status) => (status >= 200 && status < 300) || status === 304,
     }),
   getGraphSummary: () => api.get("/api/v1/topology/graph/summary"),
   getSegmentGraph: (segmentId: number) =>

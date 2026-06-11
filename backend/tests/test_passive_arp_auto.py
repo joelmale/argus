@@ -62,13 +62,14 @@ def test_resolve_passive_arp_interface_uses_auto_for_missing_legacy_default(monk
 @pytest.mark.asyncio
 async def test_passive_arp_loop_exits_when_no_viable_interface(monkeypatch, caplog):
     import app.scanner.config as scanner_config_module
-    import sqlalchemy.ext.asyncio as sqlalchemy_asyncio
 
-    engine = _Engine()
     fake_db = SimpleNamespace()
 
-    monkeypatch.setattr(sqlalchemy_asyncio, "create_async_engine", lambda *args, **kwargs: engine)
-    monkeypatch.setattr(sqlalchemy_asyncio, "async_sessionmaker", lambda *args, **kwargs: (lambda: _AsyncContext(fake_db)))
+    monkeypatch.setattr(
+        worker_tasks,
+        "_get_worker_session_factory",
+        lambda: (lambda: _AsyncContext(fake_db))
+    )
     monkeypatch.setattr(
         scanner_config_module,
         "get_or_create_scanner_config",
@@ -89,7 +90,6 @@ async def test_passive_arp_loop_exits_when_no_viable_interface(monkeypatch, capl
     await worker_tasks._passive_arp_loop()
 
     assert "no viable interface detected" in caplog.text
-    assert engine.disposed is True
 
 
 async def _completed(value):

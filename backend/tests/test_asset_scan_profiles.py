@@ -4,10 +4,12 @@ from types import SimpleNamespace
 from uuid import uuid4
 
 import pytest
+from fastapi import Request
 
 from app.api.routes import assets as assets_routes
-from app.db.models import Asset
+from app.db.models import Asset, ScanJob
 from app.scanner.models import ScanProfile
+import app.workers.tasks as worker_tasks
 
 
 class _FakeDb:
@@ -36,11 +38,23 @@ async def test_asset_port_scan_queues_deep_enrichment(monkeypatch):
     db = _FakeDb()
 
     monkeypatch.setattr(assets_routes, "_load_asset", lambda db, asset_id: _completed(asset))
-    monkeypatch.setattr(assets_routes, "_next_queue_position", lambda db: _completed(1))
-    monkeypatch.setattr(assets_routes, "_has_active_scan", lambda db: _completed(False))
-
+    
     queued = []
-    monkeypatch.setattr(assets_routes.run_scan_job, "delay", lambda job_id: queued.append(job_id))
+    monkeypatch.setattr(worker_tasks.run_scan_job, "delay", lambda job_id: queued.append(job_id))
+
+    async def fake_enqueue_scan_job(db, targets, scan_type, triggered_by, result_summary):
+        job = ScanJob(
+            id=uuid4(),
+            targets=targets,
+            scan_type=scan_type,
+            triggered_by=triggered_by,
+            result_summary=result_summary,
+            queue_position=1,
+        )
+        db.add(job)
+        return job, True
+
+    monkeypatch.setattr(assets_routes, "enqueue_scan_job", fake_enqueue_scan_job)
 
     response = await assets_routes.run_asset_port_scan(asset.id, db, object())
 
@@ -52,13 +66,55 @@ async def test_asset_port_scan_queues_deep_enrichment(monkeypatch):
 
 
 @pytest.mark.asyncio
-async def test_asset_ai_refresh_uses_deep_enrichment(monkeypatch):
+async def test_asset_ai_refresh_queues_job(monkeypatch):
+    asset = Asset(id=uuid4(), ip_address="192.168.100.5", status="online", vendor="Synology")
+    db = _FakeDb()
+
+    monkeypatch.setattr(assets_routes, "_load_asset", lambda db, asset_id: _completed(asset))
+    
+    queued = []
+    monkeypatch.setattr(worker_tasks.run_scan_job, "delay", lambda job_id: queued.append(job_id))
+
+    async def fake_enqueue_scan_job(db, targets, scan_type, triggered_by, result_summary):
+        job = ScanJob(
+            id=uuid4(),
+            targets=targets,
+            scan_type=scan_type,
+            triggered_by=triggered_by,
+            result_summary=result_summary,
+            queue_position=2,
+        )
+        db.add(job)
+        return job, True
+
+    monkeypatch.setattr(assets_routes, "enqueue_scan_job", fake_enqueue_scan_job)
+
+    # Construct a valid Starlette/FastAPI Request object
+    scope = {
+        "type": "http",
+        "method": "POST",
+        "path": f"/api/v1/assets/{asset.id}/ai-analysis/refresh",
+        "headers": [],
+    }
+    mock_request = Request(scope=scope)
+
+    response = await assets_routes.run_asset_ai_refresh(mock_request, asset.id, db, object())
+
+    assert response["status"] == "started"
+    assert len(db.added) == 1
+    assert db.added[0].scan_type == "asset_ai_refresh"
+    assert queued
+
+
+@pytest.mark.asyncio
+async def test_asset_ai_refresh_service_uses_deep_enrichment(monkeypatch):
+    from app.services import asset_refresh
     asset = Asset(id=uuid4(), ip_address="192.168.100.5", status="online", vendor="Synology")
     db = _FakeDb()
     profiles: list[ScanProfile] = []
 
-    monkeypatch.setattr(assets_routes, "_load_asset", lambda db, asset_id: _completed(asset))
-    monkeypatch.setattr(assets_routes, "read_effective_scanner_config", lambda db: _completed((None, SimpleNamespace())))
+    monkeypatch.setattr(asset_refresh, "_load_asset", lambda db, asset_id: _completed(asset))
+    monkeypatch.setattr(asset_refresh, "read_effective_scanner_config", lambda db: _completed((None, SimpleNamespace())))
 
     async def fake_scan_host(host, profile):
         profiles.append(profile)
@@ -77,21 +133,15 @@ async def test_asset_ai_refresh_uses_deep_enrichment(monkeypatch):
             open_ports=[],
         )
 
-    monkeypatch.setattr(assets_routes.portscan, "scan_host", fake_scan_host)
-    monkeypatch.setattr(assets_routes, "_investigate_host", fake_investigate_host)
-    monkeypatch.setattr(assets_routes, "_serialize_asset", lambda loaded_asset: {"id": str(loaded_asset.id)})
-    monkeypatch.setattr(assets_routes, "get_analyst", lambda runtime_config: None)
+    monkeypatch.setattr(asset_refresh.portscan, "scan_host", fake_scan_host)
+    monkeypatch.setattr(asset_refresh, "_investigate_host", fake_investigate_host)
+    monkeypatch.setattr(asset_refresh, "get_analyst", lambda runtime_config: None)
 
     async def fake_upsert_scan_result(db, result):
         return asset, "updated"
 
-    import sys
-    monkeypatch.setitem(
-        sys.modules,
-        "app.db.upsert",
-        SimpleNamespace(upsert_scan_result=fake_upsert_scan_result),
-    )
+    monkeypatch.setattr(asset_refresh, "upsert_scan_result", fake_upsert_scan_result)
 
-    await assets_routes.run_asset_ai_refresh(asset.id, db, object())
+    await asset_refresh.run_asset_ai_refresh(db, asset.id, job_id="job-123")
 
     assert profiles == [ScanProfile.DEEP_ENRICHMENT, ScanProfile.DEEP_ENRICHMENT]

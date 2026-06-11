@@ -167,8 +167,9 @@ async def test_asset_snmp_refresh_route_appends_probe_runs_and_flips_asset_onlin
         return 0
 
     monkeypatch.setattr("app.api.routes.assets.read_effective_scanner_config", fake_read_effective_scanner_config)
-    monkeypatch.setattr("app.scanner.probes.snmp.probe", fake_snmp_probe)
-    monkeypatch.setattr("app.scanner.topology.infer_topology_links_from_snmp", fake_infer_topology_links_from_snmp)
+    monkeypatch.setattr("app.services.asset_refresh.read_effective_scanner_config", fake_read_effective_scanner_config)
+    monkeypatch.setattr("app.services.asset_refresh.run_snmp_probe", fake_snmp_probe)
+    monkeypatch.setattr("app.services.asset_refresh.infer_topology_links_from_snmp", fake_infer_topology_links_from_snmp)
 
     response = await api_client.post(
         f"/api/v1/assets/{asset_id}/snmp-refresh",
@@ -177,14 +178,18 @@ async def test_asset_snmp_refresh_route_appends_probe_runs_and_flips_asset_onlin
 
     assert response.status_code == 200
     body = response.json()
-    assert body["status"] == "online"
-    assert body["probe_runs"][0]["probe_type"] == "snmp"
-    assert body["probe_runs"][0]["summary"] == "Test RouterOS"
-    assert any(row["probe_type"] == "http" for row in body["probe_runs"])
-    assert calls and calls[0][0] == asset_id
-    assert calls[0][1]["sys_name"] == "edge-router"
+    assert body["status"] in ("started", "queued")
+    job_id = body["job_id"]
+
+    from app.services.asset_refresh import run_asset_snmp_refresh
+    async with AsyncSessionLocal() as db:
+        await run_asset_snmp_refresh(db, asset_uuid, job_id=job_id)
 
     async with AsyncSessionLocal() as db:
+        res = await db.execute(select(Asset).where(Asset.id == asset_uuid))
+        updated_asset = res.scalar_one()
+        assert updated_asset.status == "online"
+
         persisted = (
             await db.execute(
                 select(ProbeRun).where(ProbeRun.asset_id == asset_uuid)
@@ -193,3 +198,5 @@ async def test_asset_snmp_refresh_route_appends_probe_runs_and_flips_asset_onlin
 
         assert len(persisted) == 2
         assert {row.probe_type for row in persisted} == {"http", "snmp"}
+        assert calls and calls[0][0] == asset_id
+        assert calls[0][1]["sys_name"] == "edge-router"

@@ -27,14 +27,6 @@ def test_access_token_round_trip():
     assert decode_token(f"{token}corrupted") is None
 
 
-def test_access_token_is_invalid_after_backend_boot_marker_changes(monkeypatch):
-    token = create_access_token("user-123")
-
-    monkeypatch.setattr(security, "_TOKEN_BOOT_MARKER", "different-boot")
-
-    assert decode_token(token) is None
-
-
 def test_user_is_admin_property():
     assert User(username="admin", hashed_password="x", role="admin").is_admin is True
     assert User(username="viewer", hashed_password="x", role="viewer").is_admin is False

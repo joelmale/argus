@@ -86,7 +86,7 @@ async def test_ensure_segment_for_asset_creates_segment_once():
 
 
 @pytest.mark.asyncio
-async def test_topology_graph_exposes_segments_gateway_roles_and_edge_metadata():
+async def test_topology_graph_exposes_segments_gateway_roles_and_edge_metadata(monkeypatch):
     gateway = _asset("192.168.100.1", device_type="router", hostname="gateway", ports=[53, 67, 80, 443])
     endpoint = _asset("192.168.100.50", device_type="workstation", hostname="desktop", ports=[22])
     segment = NetworkSegment(id=1, cidr="192.168.100.0/24", label="192.168.100.0/24", source="heuristic_ipv4_24", confidence=0.55)
@@ -108,14 +108,20 @@ async def test_topology_graph_exposes_segments_gateway_roles_and_edge_metadata()
     async def fake_read_effective_scanner_config(_db):
         return SimpleNamespace(), SimpleNamespace(topology_default_segment_prefix_v4=24)
 
-    topology_routes.read_effective_scanner_config = fake_read_effective_scanner_config
-    payload = await topology_routes.get_topology_graph(db, SimpleNamespace())
+    from app.services import topology as topology_services
+    monkeypatch.setattr(topology_routes, "read_effective_scanner_config", fake_read_effective_scanner_config)
+    monkeypatch.setattr(topology_services, "read_effective_scanner_config", fake_read_effective_scanner_config)
+    
+    mock_request = SimpleNamespace(headers={})
+    mock_response = SimpleNamespace(headers={})
+    payload = await topology_routes.get_topology_graph(mock_request, mock_response, db, SimpleNamespace())
 
     assert payload["segments"][0]["cidr"] == "192.168.100.0/24"
     assert any(node["data"]["is_gateway"] for node in payload["nodes"])
     assert payload["edges"][0]["data"]["relationship_type"] == "wireless_ap_for"
     assert payload["edges"][0]["data"]["observed"] is True
     assert payload["edges"][0]["data"]["confidence"] == pytest.approx(0.98)
+
 
 
 @pytest.mark.asyncio

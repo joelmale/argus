@@ -14,6 +14,14 @@ from app.scanner.stages.portscan import build_escalated_args
 from app.workers.tasks import _run_job_async
 
 
+async def _fake_read_effective_scanner_config(_db):
+    return None, SimpleNamespace(topology_default_segment_prefix_v4=24)
+
+
+async def _fake_ensure_segment(*_args, **_kwargs):
+    return None
+
+
 @pytest.mark.asyncio
 async def test_discovery_sweep_merges_results_and_prefers_arp_mac(monkeypatch):
     async def fake_arp(_targets: str):
@@ -142,9 +150,10 @@ async def test_run_scan_emits_progress_and_tallies_summary(monkeypatch):
 
     monkeypatch.setattr("app.scanner.stages.discovery.sweep", fake_sweep)
     monkeypatch.setattr("app.scanner.stages.portscan.scan_hosts", fake_scan_hosts)
-    monkeypatch.setattr("app.scanner.agent.get_analyst", lambda: FakeAnalyst())
+    monkeypatch.setattr("app.scanner.agent.get_analyst", lambda *args, **kwargs: FakeAnalyst())
     monkeypatch.setattr("app.scanner.pipeline._persist_results", fake_persist)
     monkeypatch.setattr("app.scanner.pipeline._investigate_host", fake_investigate_host)
+    monkeypatch.setattr("app.scanner.config.read_effective_scanner_config", _fake_read_effective_scanner_config)
 
     summary = await run_scan(
         job_id="job-1",
@@ -219,12 +228,13 @@ async def test_persist_results_skips_weak_hosts_and_marks_offline(monkeypatch):
         topology_inference.append(asset.ip_address)
 
     monkeypatch.setattr("app.scanner.config.has_meaningful_scan_evidence", lambda result: result is strong)
+    monkeypatch.setattr("app.scanner.config.read_effective_scanner_config", _fake_read_effective_scanner_config)
     monkeypatch.setattr("app.db.upsert.upsert_scan_result", fake_upsert_scan_result)
     monkeypatch.setattr("app.db.upsert.mark_offline", fake_mark_offline)
     monkeypatch.setattr("app.alerting.notify_new_device_if_enabled", fake_notify_new_device_if_enabled)
     monkeypatch.setattr("app.alerting.notify_devices_offline_if_enabled", fake_notify_devices_offline_if_enabled)
     monkeypatch.setattr("app.scanner.topology.infer_topology_links_from_snmp", fake_infer_topology_links_from_snmp)
-    monkeypatch.setattr("app.topology.segments.ensure_segment_for_asset", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.topology.segments.ensure_segment_for_asset", _fake_ensure_segment)
 
     from app.scanner.models import ScanSummary
 
@@ -255,6 +265,7 @@ async def test_persist_results_does_not_mark_assets_outside_target_scope_offline
         host=DiscoveredHost(ip_address="192.168.96.21"),
         probes=[ProbeResult(probe_type="snmp", success=True, data={"neighbors": []})],
         ai_analysis=AIAnalysis(device_class=DeviceClass.SERVER, confidence=0.9),
+        reverse_hostname=None,
     )
 
     class FakeAsset:
@@ -276,7 +287,7 @@ async def test_persist_results_does_not_mark_assets_outside_target_scope_offline
             return None
 
     async def fake_upsert_scan_result(_db, result):
-        return FakeAsset(result.host.ip_address), "updated"
+        return FakeAsset(result.host.ip_address), "discovered"
 
     async def fake_mark_offline(_db, offline_ips):
         return len(offline_ips), [FakeAsset(ip) for ip in offline_ips]
@@ -288,6 +299,7 @@ async def test_persist_results_does_not_mark_assets_outside_target_scope_offline
         notifications.append(payload)
 
     monkeypatch.setattr("app.scanner.config.has_meaningful_scan_evidence", lambda result: True)
+    monkeypatch.setattr("app.scanner.config.read_effective_scanner_config", _fake_read_effective_scanner_config)
     monkeypatch.setattr("app.db.upsert.upsert_scan_result", fake_upsert_scan_result)
     monkeypatch.setattr("app.db.upsert.mark_offline", fake_mark_offline)
     monkeypatch.setattr("app.alerting.notify_new_device_if_enabled", fake_notify_new_device_if_enabled)
@@ -296,7 +308,7 @@ async def test_persist_results_does_not_mark_assets_outside_target_scope_offline
         return None
 
     monkeypatch.setattr("app.scanner.topology.infer_topology_links_from_snmp", fake_infer_topology_links_from_snmp)
-    monkeypatch.setattr("app.topology.segments.ensure_segment_for_asset", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr("app.topology.segments.ensure_segment_for_asset", _fake_ensure_segment)
 
     from app.scanner.models import ScanSummary
 

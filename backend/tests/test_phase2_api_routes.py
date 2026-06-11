@@ -244,7 +244,7 @@ async def test_running_scan_cancel_discard_hard_revokes_and_releases_queue(api_c
 
 @pytest.mark.asyncio
 async def test_trigger_scan_rejects_unroutable_targets(api_client, admin_user, monkeypatch):
-    monkeypatch.setattr("app.api.routes.scans.validate_scan_targets_routable", lambda targets: f"Unroutable: {targets}")
+    monkeypatch.setattr("app.services.scans.validate_scan_targets_routable", lambda targets: f"Unroutable: {targets}")
 
     response = await api_client.post(
         "/api/v1/scans/trigger",
@@ -404,7 +404,7 @@ async def test_scan_and_inventory_routes_handle_permissions_and_side_effects(api
         def delay(job_id: str):
             calls.append(job_id)
 
-    monkeypatch.setattr("app.api.routes.scans.run_scan_job", StubTask)
+    monkeypatch.setattr("app.services.scans.run_scan_job", StubTask)
 
     viewer_trigger = await api_client.post(
         "/api/v1/scans/trigger",

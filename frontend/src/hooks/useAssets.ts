@@ -190,13 +190,24 @@ export function useAssetInventory() {
   })
 }
 
+let lastEtag: string | undefined = undefined
+let cachedGraph: TopologyGraph | null = null
+
 export function useTopologyGraph() {
   const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<TopologyGraph>({
     queryKey: ['topology'],
     queryFn: async () => {
-      const { data } = await topologyApi.getGraph()
-      return data
+      const response = await topologyApi.getGraph(lastEtag)
+      if (response.status === 304 && cachedGraph) {
+        return cachedGraph
+      }
+      const newEtag = response.headers?.etag
+      if (newEtag) {
+        lastEtag = newEtag
+      }
+      cachedGraph = response.data
+      return response.data
     },
     refetchInterval: wsConnected ? false : 120_000,
   })

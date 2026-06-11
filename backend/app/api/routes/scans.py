@@ -317,7 +317,10 @@ async def trigger_scan(
     _: AdminUser,
 ):
     """Enqueue a manual scan. The scanner worker picks this up via Redis."""
-    job, should_start = await enqueue_manual_scan(db, targets=payload.targets, scan_type=payload.scan_type)
+    try:
+        job, should_start = await enqueue_manual_scan(db, targets=payload.targets, scan_type=payload.scan_type)
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail=str(exc))
     return {"job_id": str(job.id), "status": "started" if should_start else "queued", "queue_position": job.queue_position}
 
 

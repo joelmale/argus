@@ -88,23 +88,64 @@ async def get_topology_summary(db: DBSession, _: CurrentUser):
 async def get_segment_graph(segment_id: int, db: DBSession, _: CurrentUser):
     from sqlalchemy import select  # noqa: PLC0415
     from sqlalchemy.orm import selectinload  # noqa: PLC0415
-    from app.db.models import Asset, NetworkSegment  # noqa: PLC0415
+    from app.db.models import Asset, NetworkSegment, TopologyLink  # noqa: PLC0415
+    from app.topology.segments import infer_ipv4_segment_cidr  # noqa: PLC0415
     _, effective = await read_effective_scanner_config(db)
-    assets = list((await db.execute(select(Asset).options(selectinload(Asset.ports), selectinload(Asset.tags)))).scalars().all())
-    segments = list((await db.execute(select(NetworkSegment))).scalars().all())
-    links = list((await db.execute(select(TopologyLink))).scalars().all())
+    
+    segment = await db.get(NetworkSegment, segment_id)
+    if not segment:
+        raise HTTPException(status_code=404, detail="Segment not found")
+        
+    all_assets = (await db.execute(select(Asset.id, Asset.ip_address))).all()
+    matching_ids = [
+        row.id for row in all_assets
+        if infer_ipv4_segment_cidr(row.ip_address, effective.topology_default_segment_prefix_v4) == segment.cidr
+    ]
+    
+    assets = []
+    links = []
+    if matching_ids:
+        assets = list((await db.execute(
+            select(Asset)
+            .options(selectinload(Asset.ports), selectinload(Asset.tags))
+            .where(Asset.id.in_(matching_ids))
+        )).scalars().all())
+        links = list((await db.execute(
+            select(TopologyLink).where(
+                TopologyLink.source_id.in_(matching_ids),
+                TopologyLink.target_id.in_(matching_ids)
+            )
+        )).scalars().all())
+        
+    segments = [segment]
     return build_segment_graph(segment_id, assets, segments, links, prefix_v4=effective.topology_default_segment_prefix_v4)
 
 
 @router.get("/graph/neighborhood/{asset_id}")
 async def get_neighborhood_graph(asset_id: UUID, db: DBSession, _: CurrentUser):
-    from sqlalchemy import select  # noqa: PLC0415
+    from sqlalchemy import select, or_  # noqa: PLC0415
     from sqlalchemy.orm import selectinload  # noqa: PLC0415
-    from app.db.models import Asset, NetworkSegment  # noqa: PLC0415
+    from app.db.models import Asset, NetworkSegment, TopologyLink  # noqa: PLC0415
     _, effective = await read_effective_scanner_config(db)
-    assets = list((await db.execute(select(Asset).options(selectinload(Asset.ports), selectinload(Asset.tags)))).scalars().all())
+    
+    links = list((await db.execute(
+        select(TopologyLink).where(
+            or_(TopologyLink.source_id == asset_id, TopologyLink.target_id == asset_id)
+        )
+    )).scalars().all())
+    
+    neighbor_ids = {asset_id}
+    for link in links:
+        neighbor_ids.add(link.source_id)
+        neighbor_ids.add(link.target_id)
+        
+    assets = list((await db.execute(
+        select(Asset)
+        .options(selectinload(Asset.ports), selectinload(Asset.tags))
+        .where(Asset.id.in_(neighbor_ids))
+    )).scalars().all())
+    
     segments = list((await db.execute(select(NetworkSegment))).scalars().all())
-    links = list((await db.execute(select(TopologyLink))).scalars().all())
     return build_neighborhood_graph(str(asset_id), assets, segments, links, prefix_v4=effective.topology_default_segment_prefix_v4)
 
 

@@ -25,7 +25,7 @@ async def test_identity_resolver_rehomes_existing_asset_by_stable_mac():
     async with AsyncSessionLocal() as db:
         existing = Asset(
             ip_address="192.168.1.20",
-            mac_address="AA:BB:CC:DD:EE:FF",
+            mac_address="00:BB:CC:DD:EE:FF",
             hostname="desktop",
             status="online",
         )
@@ -35,7 +35,7 @@ async def test_identity_resolver_rehomes_existing_asset_by_stable_mac():
 
         resolver = AssetIdentityResolver(db, source="test")
         resolved = await resolver.resolve_asset(
-            mac="AA:BB:CC:DD:EE:FF",
+            mac="00:BB:CC:DD:EE:FF",
             ip="192.168.1.21",
             hostname="desktop",
             lookup_order=("mac", "ip"),
