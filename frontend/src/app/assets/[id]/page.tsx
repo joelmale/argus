@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useRef, useEffect } from 'react'
+import { useState, useEffect } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useAddAssetNote, useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useRefreshAssetAiAnalysis, useRemoveAssetTag, useRestoreAssist, useRunAssetPortScan, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
@@ -738,28 +738,8 @@ export default function AssetDetailPage() {
   const { mutate: refreshAiAnalysis, isPending: isAiLookupPending } = useRefreshAssetAiAnalysis()
   const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
   const [showAutopsy, setShowAutopsy] = useState(false)
-  const [showExport, setShowExport] = useState(false)
   const [enrichmentStatus, setEnrichmentStatus] = useState<string | null>(null)
   const [portScanStatus, setPortScanStatus] = useState<string | null>(null)
-  const exportRef = useRef<HTMLDivElement>(null)
-
-  useEffect(() => {
-    if (!showExport) return
-    function handleOutsideClick(event: MouseEvent) {
-      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
-        setShowExport(false)
-      }
-    }
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setShowExport(false)
-    }
-    document.addEventListener('mousedown', handleOutsideClick)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [showExport])
 
   if (isLoading) return (
     <AppShell>
@@ -857,36 +837,36 @@ export default function AssetDetailPage() {
                 Autopsy
                 {showAutopsy ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
               </button>
-              <div className="relative" ref={exportRef}>
+              <div className="relative">
                 <button
                   type="button"
-                  onClick={() => setShowExport((o) => !o)}
-                  aria-haspopup="true"
-                  aria-expanded={showExport}
+                  popoverTarget="asset-detail-export-menu"
                   className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
                 >
                   <Download className="w-3.5 h-3.5" />
                   Export
-                  <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', showExport && 'rotate-180')} />
+                  <ChevronDown className="w-3.5 h-3.5" />
                 </button>
-                {showExport && (
-                  <div className="absolute right-0 top-full z-10 mt-1 min-w-[9rem] rounded-lg border border-gray-200 bg-white py-1 shadow-md dark:border-zinc-700 dark:bg-zinc-900">
-                    {([
-                      { label: 'JSON', icon: FileJson2, action: () => exportAssetJson(asset) },
-                      { label: 'CSV',  icon: Sheet,     action: () => exportAssetCsv(asset) },
-                    ] as const).map(({ label, icon: Icon, action }) => (
-                      <button
-                        key={label}
-                        type="button"
-                        onClick={() => { action(); setShowExport(false) }}
-                        className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-600 hover:bg-gray-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                      >
-                        <Icon className="w-3.5 h-3.5 shrink-0" />
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                )}
+                <div
+                  id="asset-detail-export-menu"
+                  popover="auto"
+                  className="absolute right-0 top-full z-10 mt-1 min-w-[9rem] rounded-lg border border-gray-200 bg-white py-1 shadow-md dark:border-zinc-700 dark:bg-zinc-900"
+                >
+                  {([
+                    { label: 'JSON', icon: FileJson2, action: () => exportAssetJson(asset) },
+                    { label: 'CSV',  icon: Sheet,     action: () => exportAssetCsv(asset) },
+                  ] as const).map(({ label, icon: Icon, action }) => (
+                    <button
+                      key={label}
+                      type="button"
+                      onClick={action}
+                      className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-600 hover:bg-gray-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                    >
+                      <Icon className="w-3.5 h-3.5 shrink-0" />
+                      {label}
+                    </button>
+                  ))}
+                </div>
               </div>
               <DeviceClassBadge deviceClass={ai?.device_class ?? asset.device_type} />
               <StatusBadge status={asset.status} />

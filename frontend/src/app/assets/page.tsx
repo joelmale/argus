@@ -63,10 +63,8 @@ function AssetsPageContent() {
 
   const [selectedAssetIds, setSelectedAssetIds] = useState<string[]>([])
   const [recentCutoff] = useState(() => Date.now() - 24 * 60 * 60 * 1000)
-  const [exportOpen, setExportOpen] = useState(false)
   const [exportMessage, setExportMessage] = useState<string | null>(null)
   const [deleteDialogOpen, setDeleteDialogOpen] = useState(false)
-  const exportRef = useRef<HTMLDivElement>(null)
   // Keep a ref so the search-sync effect can read the current status without
   // adding it to the dependency array (which would fire on every status change,
   // duplicating the update already handled by handleStatusChange).
@@ -76,23 +74,6 @@ function AssetsPageContent() {
     statusRef.current = status
   }, [status])
 
-  useEffect(() => {
-    if (!exportOpen) return
-    function handleOutsideClick(event: MouseEvent) {
-      if (exportRef.current && !exportRef.current.contains(event.target as Node)) {
-        setExportOpen(false)
-      }
-    }
-    function handleEscape(event: KeyboardEvent) {
-      if (event.key === 'Escape') setExportOpen(false)
-    }
-    document.addEventListener('mousedown', handleOutsideClick)
-    document.addEventListener('keydown', handleEscape)
-    return () => {
-      document.removeEventListener('mousedown', handleOutsideClick)
-      document.removeEventListener('keydown', handleEscape)
-    }
-  }, [exportOpen])
   const debouncedSearch = useDebounced(search, 300)
 
   async function handleExportCsv() {
@@ -311,38 +292,38 @@ function AssetsPageContent() {
             </button>
           )}
 
-          <div className="relative" ref={exportRef}>
+          <div className="relative">
             <button
-              onClick={() => setExportOpen((o) => !o)}
+              popoverTarget="assets-export-menu"
               className="flex items-center gap-1.5 px-3 py-2 rounded-lg text-sm text-zinc-500 hover:text-zinc-900 dark:hover:text-white border border-gray-200 dark:border-zinc-800 hover:bg-gray-50 dark:hover:bg-zinc-800 transition-colors"
-              aria-haspopup="true"
-              aria-expanded={exportOpen}
             >
               <Download className="w-3.5 h-3.5" />
               Export
-              <ChevronDown className={cn('w-3.5 h-3.5 transition-transform', exportOpen && 'rotate-180')} />
+              <ChevronDown className="w-3.5 h-3.5" />
             </button>
-            {exportOpen && (
-              <div className="absolute right-0 top-full z-10 mt-1 min-w-[11rem] rounded-lg border border-gray-200 bg-white py-1 shadow-md dark:border-zinc-700 dark:bg-zinc-900">
-                  {([
-                  { label: 'CSV', icon: Download, action: handleExportCsv },
-                  { label: 'Ansible inventory', icon: Boxes, action: handleExportAnsible },
-                  { label: 'Terraform data', icon: FileCode2, action: handleExportTerraform },
-                  { label: 'Inventory JSON', icon: FileJson2, action: handleExportInventoryJson },
-                  { label: 'Report JSON', icon: Sheet, action: handleExportReportJson },
-                ] as const).map(({ label, icon: Icon, action }) => (
-                  <button
-                    key={label}
-                    type="button"
-                    onClick={() => { void action(); setExportOpen(false) }}
-                    className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-600 hover:bg-gray-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
-                  >
-                    <Icon className="w-3.5 h-3.5 shrink-0" />
-                    {label}
-                  </button>
-                ))}
-              </div>
-            )}
+            <div
+              id="assets-export-menu"
+              popover="auto"
+              className="absolute right-0 top-full z-10 mt-1 min-w-[11rem] rounded-lg border border-gray-200 bg-white py-1 shadow-md dark:border-zinc-700 dark:bg-zinc-900"
+            >
+              {([
+                { label: 'CSV', icon: Download, action: handleExportCsv },
+                { label: 'Ansible inventory', icon: Boxes, action: handleExportAnsible },
+                { label: 'Terraform data', icon: FileCode2, action: handleExportTerraform },
+                { label: 'Inventory JSON', icon: FileJson2, action: handleExportInventoryJson },
+                { label: 'Report JSON', icon: Sheet, action: handleExportReportJson },
+              ] as const).map(({ label, icon: Icon, action }) => (
+                <button
+                  key={label}
+                  type="button"
+                  onClick={() => void action()}
+                  className="flex w-full items-center gap-2 px-3 py-2 text-sm text-zinc-600 hover:bg-gray-50 dark:text-zinc-300 dark:hover:bg-zinc-800"
+                >
+                  <Icon className="w-3.5 h-3.5 shrink-0" />
+                  {label}
+                </button>
+              ))}
+            </div>
           </div>
 
           {exportMessage && (

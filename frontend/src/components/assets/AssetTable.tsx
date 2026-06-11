@@ -46,8 +46,6 @@ type ColumnDef = {
 interface ColumnFilterMenuProps {
   readonly column: ColumnDef
   readonly filters: Record<FilterKey, string>
-  readonly openFilter: FilterKey | null
-  readonly setOpenFilter: Dispatch<SetStateAction<FilterKey | null>>
   readonly setFilters: Dispatch<SetStateAction<Record<FilterKey, string>>>
 }
 
@@ -183,7 +181,6 @@ export function AssetTable({
 }: AssetTableProps) {
   const [sortKey, setSortKey] = useState<SortKey>('ip')
   const [sortDirection, setSortDirection] = useState<SortDirection>('asc')
-  const [openFilter, setOpenFilter] = useState<FilterKey | null>(null)
   const [queuedEnrichmentIp, setQueuedEnrichmentIp] = useState<string | null>(null)
   const [filters, setFilters] = useState<Record<FilterKey, string>>(emptyFilters)
   const { data: currentUser } = useCurrentUser()
@@ -308,7 +305,6 @@ export function AssetTable({
 
   function clearColumnFilters() {
     setFilters(emptyFilters())
-    setOpenFilter(null)
   }
 
   return (
@@ -359,8 +355,6 @@ export function AssetTable({
                       <ColumnFilterMenu
                         column={column}
                         filters={filters}
-                        openFilter={openFilter}
-                        setOpenFilter={setOpenFilter}
                         setFilters={setFilters}
                       />
                     )}
@@ -381,22 +375,23 @@ export function AssetTable({
   )
 }
 
-function ColumnFilterMenu({ column, filters, openFilter, setOpenFilter, setFilters }: ColumnFilterMenuProps) {
+function ColumnFilterMenu({ column, filters, setFilters }: ColumnFilterMenuProps) {
   if (!column.filterKey || !column.options) {
     return null
   }
 
   const filterKey = column.filterKey
+  const popoverId = `col-filter-${filterKey}`
   const updateFilter = (value: string) => {
     setFilters((current) => ({ ...current, [filterKey]: value }))
-    setOpenFilter(null)
   }
 
   return (
     <div className="relative">
       <button
         type="button"
-        onClick={() => setOpenFilter((current) => (current === filterKey ? null : filterKey))}
+        popoverTarget={popoverId}
+        aria-label={`Filter by ${filterKey}`}
         className={cn(
           'inline-flex items-center gap-1 rounded-md border px-1.5 py-1 normal-case',
           filterMenuButtonClass(filters[filterKey]),
@@ -404,47 +399,31 @@ function ColumnFilterMenu({ column, filters, openFilter, setOpenFilter, setFilte
       >
         <ChevronDown className="w-3.5 h-3.5" />
       </button>
-      {openFilter === filterKey && (
-        <FilterOptionsMenu
-          options={column.options}
-          selectedValue={filters[filterKey]}
-          onSelect={updateFilter}
-        />
-      )}
-    </div>
-  )
-}
-
-function FilterOptionsMenu({
-  options,
-  selectedValue,
-  onSelect,
-}: Readonly<{
-  options: Array<{ value: string; label: string }>
-  selectedValue: string
-  onSelect: (value: string) => void
-}>) {
-  return (
-    <div className="absolute left-0 top-8 z-20 min-w-44 rounded-lg border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg">
-      <button
-        type="button"
-        onClick={() => onSelect('')}
-        className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
+      <div
+        id={popoverId}
+        popover="auto"
+        className="absolute left-0 top-8 z-20 min-w-44 rounded-lg border border-gray-200 dark:border-zinc-700 bg-white dark:bg-zinc-900 shadow-lg"
       >
-        <span>All</span>
-        {!selectedValue && <Check className="w-3.5 h-3.5 text-sky-500" />}
-      </button>
-      {options.map((option) => (
         <button
-          key={option.value}
           type="button"
-          onClick={() => onSelect(option.value)}
+          onClick={() => updateFilter('')}
           className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
         >
-          <span>{option.label}</span>
-          {selectedValue === option.value && <Check className="w-3.5 h-3.5 text-sky-500" />}
+          <span>All</span>
+          {!filters[filterKey] && <Check className="w-3.5 h-3.5 text-sky-500" />}
         </button>
-      ))}
+        {column.options.map((option) => (
+          <button
+            key={option.value}
+            type="button"
+            onClick={() => updateFilter(option.value)}
+            className="flex w-full items-center justify-between px-3 py-2 text-xs text-left hover:bg-gray-50 dark:hover:bg-zinc-800"
+          >
+            <span>{option.label}</span>
+            {filters[filterKey] === option.value && <Check className="w-3.5 h-3.5 text-sky-500" />}
+          </button>
+        ))}
+      </div>
     </div>
   )
 }
