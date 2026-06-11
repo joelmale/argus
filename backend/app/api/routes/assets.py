@@ -168,7 +168,7 @@ async def list_assets(
     tag: AssetTagFilter = None,
     include: AssetInclude = None,
     skip: int = Query(default=0, ge=0),
-    limit: int = Query(default=100, le=500),
+    limit: int = Query(default=5000, le=5000),
     db: DBSession = None,
     _: CurrentUser = None,
 ):

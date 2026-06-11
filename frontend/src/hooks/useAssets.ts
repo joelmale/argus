@@ -13,7 +13,7 @@ export type AssetListParams = {
   limit?: number
 }
 
-const DASHBOARD_ASSET_PARAMS: AssetListParams = { include: ['ai'] }
+const DASHBOARD_ASSET_PARAMS: AssetListParams = { include: ['ai'], limit: 5000 }
 
 function startOfToday(): number {
   const d = new Date()

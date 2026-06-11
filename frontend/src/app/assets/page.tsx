@@ -151,6 +151,7 @@ function AssetsPageContent() {
     search: debouncedSearch || undefined,
     status: status || undefined,
     include: ['ports', 'ai'],
+    limit: 5000,
   })
   const { data: assets = [], isLoading, isError, dataUpdatedAt } = assetQuery
 
