@@ -9,27 +9,14 @@ import { useAppStore } from '@/store'
 import { useQueryClient } from '@tanstack/react-query'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useTriggerScan } from '@/hooks/useScans'
-import { assetsApi, scansApi } from '@/lib/api'
+import { assetsApi } from '@/lib/api'
 import { Search, Download, X, Boxes, FileCode2, FileJson2, Sheet, Loader2, Microscope, Trash2, ChevronDown, RefreshCw } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { AlertDialog } from '@/components/ui/AlertDialog'
-import { downloadBlob } from '@/lib/exportUtils'
+import { downloadBlob, waitForExportJob } from '@/lib/exportUtils'
 
 const STATUS_OPTIONS = ['', 'online', 'offline', 'unknown']
 const TYPE_OPTIONS = ['', 'router', 'switch', 'server', 'workstation', 'nas', 'printer', 'ip_camera', 'iot_device', 'unknown']
-
-async function waitForExportJob(jobId: string) {
-  for (;;) {
-    const { data } = await scansApi.get(jobId)
-    if (data.status === 'done') {
-      return data
-    }
-    if (data.status === 'failed' || data.status === 'cancelled') {
-      throw new Error(typeof data.result_summary?.error === 'string' ? data.result_summary.error : 'Export failed')
-    }
-    await new Promise((resolve) => setTimeout(resolve, 2000))
-  }
-}
 
 async function exportAssetFile(
   exporter: () => Promise<{ data: { job_id?: string; status?: string } }>,

@@ -5,7 +5,7 @@ import axios from 'axios'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit, Download, ChevronDown, HelpCircle } from 'lucide-react'
-import { assetsApi } from '@/lib/api'
+import { openHtmlReport } from '@/lib/exportUtils'
 import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFirewallaModule, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, useOllamaModels, usePfsenseModule, usePlugins, usePullOllamaModel, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncFirewallaModule, useSyncPfsenseModule, useSyncTplinkDecoModule, useSyncUnifiModule, useTestAiConfiguration, useTestFirewallaModule, useTestPfsenseModule, useTestTplinkDecoModule, useTestUnifiModule, useTplinkDecoModule, useUnifiModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateFirewallaModule, useUpdatePfsenseModule, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUnifiModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
 import type { FirewallaConfig, FirewallaSyncRun, FingerprintDataset, PfsenseConfig, PfsenseSyncRun, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UnifiConfig, UnifiSyncRun } from '@/types'
 import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
@@ -1735,13 +1735,6 @@ function downloadTextFile(filename: string, content: string) {
   URL.revokeObjectURL(url)
 }
 
-
-async function openHtmlReport() {
-  const response = await assetsApi.exportHtmlReport()
-  const blob = new Blob([response.data], { type: 'text/html;charset=utf-8' })
-  const url = URL.createObjectURL(blob)
-  globalThis.window.open(url, '_blank', 'noopener,noreferrer')
-}
 
 export default function SettingsPage() {
   const { data: currentUser } = useCurrentUser()

@@ -1,4 +1,26 @@
+import { assetsApi, scansApi } from '@/lib/api'
 import type { Asset } from '@/types'
+
+export async function waitForExportJob(jobId: string): Promise<void> {
+  for (;;) {
+    const { data } = await scansApi.get(jobId)
+    if (data.status === 'done') return
+    if (data.status === 'failed' || data.status === 'cancelled') {
+      throw new Error(typeof data.result_summary?.error === 'string' ? data.result_summary.error : 'Export failed')
+    }
+    await new Promise((resolve) => setTimeout(resolve, 2000))
+  }
+}
+
+export async function openHtmlReport(): Promise<void> {
+  const { data: envelope } = await assetsApi.exportHtmlReport()
+  const jobId = (envelope as { job_id?: string }).job_id
+  if (!jobId) throw new Error('Export job was not created')
+  await waitForExportJob(jobId)
+  const { data: blob } = await assetsApi.downloadExportJob(jobId)
+  const url = URL.createObjectURL(new Blob([blob], { type: 'text/html;charset=utf-8' }))
+  globalThis.window.open(url, '_blank', 'noopener,noreferrer')
+}
 
 export function downloadBlob(data: Blob, filename: string) {
   const url = URL.createObjectURL(data)
