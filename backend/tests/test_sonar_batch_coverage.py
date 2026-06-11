@@ -653,7 +653,7 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
     now = datetime.now(timezone.utc)
     running = ScanJob(id=uuid4(), status="running", created_at=now, queue_position=2)
     paused = ScanJob(id=uuid4(), status="paused", created_at=now, queue_position=1)
-    child = ScanJob(id=uuid4(), status="pending", created_at=now, parent_id=uuid4())
+    ScanJob(id=uuid4(), status="pending", created_at=now, parent_id=uuid4())
     pending = ScanJob(id=uuid4(), status="pending", created_at=now, queue_position=1)
     scans_db = _FakeDb(execute_result=_ScalarResult([running, paused, pending]))
     listed = await scans_routes.list_scans(scans_db, object(), limit=3)
@@ -1158,7 +1158,7 @@ async def test_assets_routes_cover_success_paths_for_asset_views_and_backups(mon
     )
     asset.tags = [AssetTag(tag="gateway")]
     asset.ports = [Port(port_number=443, protocol="tcp", service="https", version="1.0", state="open")]
-    scan_ports = [PortResult(port=443, protocol="tcp", service="https", version="1.0", state="open")]
+    [PortResult(port=443, protocol="tcp", service="https", version="1.0", state="open")]
     asset.history = []
     asset.ai_analysis = None
     asset.evidence = []
@@ -2148,7 +2148,7 @@ async def test_topology_resolution_and_upsert_helpers_cover_core_paths():
     source = Asset(id=uuid4(), ip_address="192.168.1.1", hostname="switch-a", mac_address="00:AA:AA:AA:AA:AA", status="online")
     target = Asset(id=uuid4(), ip_address="192.168.1.2", hostname="host-a", mac_address="00:BB:BB:BB:BB:BB", status="online")
 
-    no_match_db = _FakeDb(execute_result=_ScalarResult([]))
+    _FakeDb(execute_result=_ScalarResult([]))
 
 
     match_db = _FakeDb(execute_result=_ScalarResult([target]))

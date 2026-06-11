@@ -33,8 +33,6 @@ from app.db.models import (
     AssetHistory,
     AssetNote,
     AssetTag,
-    ConfigBackupSnapshot,
-    Finding,
     Port,
     ScanJob,
     User,

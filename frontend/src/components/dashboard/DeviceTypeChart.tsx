@@ -29,13 +29,13 @@ export function DeviceTypeChart() {
   const total = chartData.reduce((s, d) => s + d.value, 0)
 
   const gradient = useMemo(() => {
-    let offset = 0
-    const stops = chartData.map((slice) => {
+    let currentOffset = 0
+    const stops: string[] = []
+    for (const slice of chartData) {
       const pct = total > 0 ? (slice.value / total) * 100 : 0
-      const stop = `${slice.fill} ${offset.toFixed(2)}% ${(offset + pct).toFixed(2)}%`
-      offset += pct
-      return stop
-    })
+      stops.push(`${slice.fill} ${currentOffset.toFixed(2)}% ${(currentOffset + pct).toFixed(2)}%`)
+      currentOffset += pct
+    }
     return `conic-gradient(${stops.join(', ')})`
   }, [chartData, total])
 
