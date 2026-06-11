@@ -6,6 +6,7 @@ import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card'
 import { useCurrentUser } from '@/hooks/useAuth'
 import { useFindings, useIngestFindings, useUpdateFinding } from '@/hooks/useFindings'
+import { cn, severityColor } from '@/lib/utils'
 
 export default function FindingsPage() {
   const { data: currentUser } = useCurrentUser()
@@ -80,7 +81,7 @@ export default function FindingsPage() {
                     {finding.description && <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2">{finding.description}</p>}
                   </div>
                   <div className="flex items-center gap-2">
-                    <span className="px-2 py-0.5 rounded-full text-xs bg-red-500/10 text-red-600 dark:text-red-400">{finding.severity}</span>
+                    <span className={cn("px-2 py-0.5 rounded-full text-xs border capitalize", severityColor(finding.severity))}>{finding.severity}</span>
                     <span className="px-2 py-0.5 rounded-full text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">{finding.status}</span>
                   </div>
                 </div>

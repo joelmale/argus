@@ -13,6 +13,8 @@ import { ScanPulseDots, formatScanStage } from '@/components/scans/ScanActivity'
 const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/assets':    'Asset Inventory',
+  '/findings':  'Vulnerability Findings',
+  '/inventory': 'Inventory Statistics',
   '/snmp':      'SNMP Monitoring',
   '/topology':  'Topology Map',
   '/scans':     'Scan Management',
