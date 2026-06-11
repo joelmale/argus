@@ -655,23 +655,24 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
     paused = ScanJob(id=uuid4(), status="paused", created_at=now, queue_position=1)
     child = ScanJob(id=uuid4(), status="pending", created_at=now, parent_id=uuid4())
     pending = ScanJob(id=uuid4(), status="pending", created_at=now, queue_position=1)
-    scans_db = _FakeDb(execute_result=_ScalarResult([pending, child, paused, running]))
+    scans_db = _FakeDb(execute_result=_ScalarResult([running, paused, pending]))
     listed = await scans_routes.list_scans(scans_db, object(), limit=3)
     assert [scan.status for scan in listed] == ["running", "paused", "pending"]
+
+    from app.services import scans as scans_service
 
     async def fake_get_config(_db):
         return SimpleNamespace()
 
-    async def fake_create_graph(_db, *, targets, scan_type, triggered_by):
+    async def fake_enqueue_scan_job(db, targets, scan_type, triggered_by):
         job = ScanJob(id=uuid4(), targets=targets, scan_type=scan_type, triggered_by=triggered_by, queue_position=1)
-        return job, []
+        return job, True
 
-    monkeypatch.setattr(scans_routes, "get_or_create_scanner_config", fake_get_config)
-    monkeypatch.setattr(scans_routes, "resolve_scan_targets", lambda _config, targets: targets or "auto")
-    monkeypatch.setattr(scans_routes, "materialize_scan_targets", lambda targets: f"materialized:{targets}")
-    monkeypatch.setattr(scans_routes, "validate_scan_targets_routable", lambda targets: None)
-    monkeypatch.setattr(scans_routes, "_create_scan_job_graph", fake_create_graph)
-    monkeypatch.setattr(scans_routes, "_has_active_scan", lambda _db: asyncio.sleep(0, result=False))
+    monkeypatch.setattr(scans_service, "get_or_create_scanner_config", fake_get_config)
+    monkeypatch.setattr(scans_service, "resolve_scan_targets", lambda _config, targets: targets or "auto")
+    monkeypatch.setattr(scans_service, "materialize_scan_targets", lambda targets: f"materialized:{targets}")
+    monkeypatch.setattr(scans_service, "validate_scan_targets_routable", lambda targets: None)
+    monkeypatch.setattr(scans_service, "enqueue_scan_job", fake_enqueue_scan_job)
 
     started = []
 
@@ -680,9 +681,9 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
         def delay(job_id: str):
             started.append(job_id)
 
-    monkeypatch.setattr(scans_routes, "run_scan_job", _Runner())
+    monkeypatch.setattr(scans_service, "run_scan_job", _Runner())
     trigger_db = _FakeDb()
-    response = await scans_routes.trigger_scan(scans_routes.TriggerScanRequest(targets="192.168.1.0/24", scan_type="balanced"), trigger_db, object())
+    response = await scans_routes.trigger_scan(_request_with_headers({}), scans_routes.TriggerScanRequest(targets="192.168.1.0/24", scan_type="balanced"), trigger_db, object())
     assert response["status"] == "started"
     assert started == [response["job_id"]]
 
@@ -725,6 +726,7 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
         captured_payload["payload"] = payload_obj
         now = datetime.now(timezone.utc)
         config = SimpleNamespace(
+            id=1,
             enabled=True,
             scheduled_scans_enabled=True,
             default_targets=None,
@@ -771,6 +773,9 @@ async def test_route_units_cover_assets_scans_and_system_paths(monkeypatch):
             effective_targets="192.168.1.0/24",
             enabled=True,
             scheduled_scans_enabled=True,
+            passive_arp_effective_interface="en0",
+            passive_arp_interface_auto=False,
+            topology_default_segment_prefix_v4=24,
             default_targets="192.168.1.0/24",
             auto_detect_targets=False,
             detected_targets=None,
@@ -857,10 +862,11 @@ async def test_route_units_cover_assets_exports_scan_errors_and_reset(monkeypatc
         await assets_routes.get_wireless_clients(uuid4(), missing_db, object())
     assert asset_exc.value.status_code == 404
 
-    monkeypatch.setattr(scans_routes, "get_or_create_scanner_config", lambda _db: _completed_task(SimpleNamespace()))
-    monkeypatch.setattr(scans_routes, "resolve_scan_targets", lambda _config, _targets: (_ for _ in ()).throw(ValueError("bad targets")))
+    from app.services import scans as scans_service
+    monkeypatch.setattr(scans_service, "get_or_create_scanner_config", lambda _db: _completed_task(SimpleNamespace()))
+    monkeypatch.setattr(scans_service, "resolve_scan_targets", lambda _config, _targets: (_ for _ in ()).throw(ValueError("bad targets")))
     with pytest.raises(HTTPException) as trigger_exc:
-        await scans_routes.trigger_scan(scans_routes.TriggerScanRequest(targets="bad", scan_type="balanced"), _FakeDb(), object())
+        await scans_routes.trigger_scan(_request_with_headers({}), scans_routes.TriggerScanRequest(targets="bad", scan_type="balanced"), _FakeDb(), object())
     assert trigger_exc.value.status_code == 400
 
     child = ScanJob(id=uuid4(), parent_id=uuid4(), status="pending")
@@ -1052,9 +1058,11 @@ async def test_assets_routes_cover_additional_exports_and_backup_error_paths(mon
     class _AssetsReportDb(_FakeDb):
         async def execute(self, stmt):
             self.executed.append(stmt)
-            text = str(stmt)
-            if "asset_history" in text.lower():
+            text = str(stmt).lower()
+            if "asset_history" in text:
                 return _ScalarResult([history_entry])
+            if "scanjob" in text or "scan_job" in text:
+                return _ScalarResult([])
             return _ScalarResult([asset])
 
         async def scalar(self, stmt):
@@ -1219,6 +1227,8 @@ async def test_assets_routes_cover_success_paths_for_asset_views_and_backups(mon
                 return _ScalarResult([SimpleNamespace(id=1, asset_id=asset.id, change_type="updated", changed_at=now)])
             if "ports" in text and "from ports" in text:
                 return _ScalarResult(asset.ports)
+            if "scanjob" in text or "scan_job" in text:
+                return _ScalarResult([])
             return _ScalarResult([asset])
 
     db = _RichAssetDb(get_result=asset)
@@ -1283,9 +1293,9 @@ async def test_assets_routes_cover_success_paths_for_asset_views_and_backups(mon
     assert restore == {"steps": ["restore"]}
 
     port_scan = await assets_routes.run_asset_port_scan(asset.id, db, object())
-    ai_refresh = await assets_routes.run_asset_ai_refresh(asset.id, db, object())
-    assert port_scan["ip_address"] == "192.168.1.44"
-    assert ai_refresh["hostname"] == "edge"
+    ai_refresh = await assets_routes.run_asset_ai_refresh(_request_with_headers({}), asset.id, db, object())
+    assert "job_id" in port_scan
+    assert "job_id" in ai_refresh
 
 
 @pytest.mark.asyncio
@@ -1353,6 +1363,7 @@ async def test_asset_note_routes_serialize_and_create():
 def test_scanner_config_helpers_cover_normalization_and_routing(monkeypatch):
     config = SimpleNamespace(
         enabled=True,
+        scheduled_scans_enabled=False,
         default_targets=None,
         auto_detect_targets=False,
         default_profile="balanced",
@@ -1362,8 +1373,16 @@ def test_scanner_config_helpers_cover_normalization_and_routing(monkeypatch):
         top_ports_count=1,
         deep_probe_timeout_seconds=60,
         ai_after_scan_enabled=True,
+        ai_backend="ollama",
+        ai_model="llama",
+        fingerprint_ai_backend="ollama",
+        ollama_base_url=None,
+        openai_base_url=None,
+        openai_api_key=None,
+        anthropic_api_key=None,
         passive_arp_enabled=True,
         passive_arp_interface=" ",
+        topology_default_segment_prefix_v4=24,
         snmp_enabled=False,
         snmp_version="V3",
         snmp_community=" ",
@@ -2126,15 +2145,15 @@ async def test_worker_task_helpers_cover_scheduled_and_resume_entrypoints(monkey
 
 @pytest.mark.asyncio
 async def test_topology_resolution_and_upsert_helpers_cover_core_paths():
-    source = Asset(id=uuid4(), ip_address="192.168.1.1", hostname="switch-a", mac_address="AA:AA:AA:AA:AA:AA", status="online")
-    target = Asset(id=uuid4(), ip_address="192.168.1.2", hostname="host-a", mac_address="BB:BB:BB:BB:BB:BB", status="online")
+    source = Asset(id=uuid4(), ip_address="192.168.1.1", hostname="switch-a", mac_address="00:AA:AA:AA:AA:AA", status="online")
+    target = Asset(id=uuid4(), ip_address="192.168.1.2", hostname="host-a", mac_address="00:BB:BB:BB:BB:BB", status="online")
 
     no_match_db = _FakeDb(execute_result=_ScalarResult([]))
 
 
     match_db = _FakeDb(execute_result=_ScalarResult([target]))
     assert await topology_mod._resolve_asset_by_ip_or_mac(match_db, "192.168.1.2", None) is target
-    assert await topology_mod._resolve_asset_by_hostname_or_mac(match_db, None, "BB:BB:BB:BB:BB:BB") is target
+    assert await topology_mod._resolve_asset_by_hostname_or_mac(match_db, None, "00:BB:BB:BB:BB:BB") is target
 
     link_db = _FakeDb(execute_result=_ScalarResult([]))
     created = await topology_mod._upsert_topology_link(
@@ -2385,8 +2404,16 @@ async def test_scanner_config_bootstrap_create_update_and_effective_helpers(monk
         top_ports_count=100,
         deep_probe_timeout_seconds=5,
         ai_after_scan_enabled=False,
+        ai_backend="ollama",
+        ai_model="llama",
+        fingerprint_ai_backend="ollama",
+        ollama_base_url=None,
+        openai_base_url=None,
+        openai_api_key=None,
+        anthropic_api_key=None,
         passive_arp_enabled=True,
         passive_arp_interface="eth0",
+        topology_default_segment_prefix_v4=24,
         snmp_enabled=True,
         snmp_version="3",
         snmp_community="public",
@@ -2865,7 +2892,7 @@ async def test_pipeline_full_run_tallies_summary_and_persists(monkeypatch):
         fingerprint_ai_prompt_suffix=None,
         internet_lookup_enabled=False,
         internet_lookup_allowed_domains=None,
-        internet_budget=2,
+        internet_lookup_budget=2,
         internet_lookup_timeout_seconds=3,
         last_scheduled_scan_at=None,
     )
@@ -3622,7 +3649,7 @@ async def test_tplink_deco_config_and_resolution_helpers_cover_crud_and_asset_re
     assert updated.owner_password == "pass"
     assert updated.request_timeout_seconds == 3
 
-    existing_asset = Asset(id=uuid4(), ip_address="192.168.1.50", mac_address="AA:BB:CC:DD:EE:FF", status="offline")
+    existing_asset = Asset(id=uuid4(), ip_address="192.168.1.50", mac_address="00:BB:CC:DD:EE:FF", status="offline")
 
     class _ResolveDb(_FakeDb):
         async def execute(self, stmt):
@@ -3631,14 +3658,14 @@ async def test_tplink_deco_config_and_resolution_helpers_cover_crud_and_asset_re
                 sql_str = str(stmt.compile(compile_kwargs={"literal_binds": True}))
             except Exception:
                 sql_str = str(stmt)
-            if "aa:bb:cc:dd:ee:ff" in sql_str.lower():
+            if "00:bb:cc:dd:ee:ff" in sql_str.lower():
                 return _ScalarResult([existing_asset])
             elif "192.168.1.50" in sql_str:
                 return _ScalarResult([existing_asset])
             return _ScalarResult([])
 
     resolve_db = _ResolveDb()
-    client_with_mac = tplink_deco.DecoClientRecord(mac="AA:BB:CC:DD:EE:FF", ip="192.168.1.51", hostname="host", nickname=None, device_model=None, connection_type=None, access_point_name=None, raw={})
+    client_with_mac = tplink_deco.DecoClientRecord(mac="00:BB:CC:DD:EE:FF", ip="192.168.1.51", hostname="host", nickname=None, device_model=None, connection_type=None, access_point_name=None, raw={})
     assert await tplink_deco._resolve_asset_for_client(resolve_db, client_with_mac) is existing_asset
 
     client_new = tplink_deco.DecoClientRecord(mac=None, ip="192.168.1.60", hostname="new-host", nickname="nick", device_model=None, connection_type=None, access_point_name=None, raw={})

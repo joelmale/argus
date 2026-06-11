@@ -90,7 +90,7 @@ jobs:
       - name: Lint backend
         run: npm run lint:backend:local
       - name: Test backend with coverage
-        run: cd backend && PYTHONPATH=. pytest tests --cov=app --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml --cov-fail-under=55 -q
+        run: cd backend && PYTHONPATH=. pytest tests --cov=app --cov-config=.coveragerc --cov-report=term-missing --cov-report=xml --cov-fail-under=60 -q
       - name: Upload backend coverage
         uses: actions/upload-artifact@v4
         with:

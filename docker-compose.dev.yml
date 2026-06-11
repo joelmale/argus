@@ -59,6 +59,9 @@ services:
       - ./backend:/app
     network_mode: host
 
+  db:
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "full_page_writes=off"]
+
   frontend:
     build:
       context: ./frontend

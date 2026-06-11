@@ -19,32 +19,14 @@ from app.db.session import engine  # noqa: E402
 from app.main import app  # noqa: E402
 
 
-@pytest.fixture(scope="session")
-def event_loop():
-    loop = asyncio.new_event_loop()
-    yield loop
-    loop.close()
-
-
-@pytest_asyncio.fixture(autouse=True)
-async def reset_async_engine():
-    await engine.dispose()
-    yield
-    await engine.dispose()
-
-
 @pytest_asyncio.fixture(autouse=True)
 async def clean_database():
     # Keep every test hermetic so route-level coverage can safely exercise the
     # real app and persistence layer without leaking state into the next test.
     table_names = ", ".join(table.name for table in reversed(Base.metadata.sorted_tables))
-    await engine.dispose()
     async with engine.begin() as conn:
         await conn.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
     yield
-    await engine.dispose()
-    async with engine.begin() as conn:
-        await conn.execute(text(f"TRUNCATE TABLE {table_names} RESTART IDENTITY CASCADE"))
 
 
 @pytest_asyncio.fixture
