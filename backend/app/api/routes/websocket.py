@@ -68,19 +68,17 @@ async def websocket_events(websocket: WebSocket):
             await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="User not found")
             return
 
-    pubsub = _get_redis().pubsub()
+    pubsub = _get_redis().pubsub(ignore_subscribe_messages=True)
     await pubsub.subscribe(REDIS_CHANNEL)
     heartbeat_task = asyncio.create_task(_send_heartbeats(websocket))
 
     try:
-        while True:
-            message = await pubsub.get_message(ignore_subscribe_messages=True, timeout=5.0)
-            if message and message["data"]:
+        async for message in pubsub.listen():
+            if message and message.get("data"):
                 try:
                     await websocket.send_json(json.loads(message["data"]))
                 except (RuntimeError, WebSocketDisconnect):
                     break
-            await asyncio.sleep(0.1)
     except (RuntimeError, WebSocketDisconnect):
         pass
     finally:
