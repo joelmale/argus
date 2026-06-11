@@ -13,6 +13,8 @@ export default function FindingsPage() {
   const [status, setStatus] = useState('')
   const [severity, setSeverity] = useState('')
   const [importJson, setImportJson] = useState('')
+  const [importError, setImportError] = useState<string | null>(null)
+  const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null)
   const { data: findings = [] } = useFindings({
     status: status || undefined,
     severity: severity || undefined,
@@ -21,9 +23,32 @@ export default function FindingsPage() {
   const { mutate: updateFinding, isPending: isUpdating } = useUpdateFinding()
 
   function handleImport() {
-    const parsed = JSON.parse(importJson) as { source_tool?: string; findings?: Array<Record<string, unknown>> }
-    ingest({ source_tool: parsed.source_tool || 'import', findings: parsed.findings || [] })
-    setImportJson('')
+    setImportError(null)
+    setImportSuccessMessage(null)
+    try {
+      const parsed = JSON.parse(importJson) as { source_tool?: string; findings?: Array<Record<string, unknown>> }
+      if (typeof parsed !== 'object' || parsed === null) {
+        throw new Error('JSON input must be an object.')
+      }
+      ingest(
+        { source_tool: parsed.source_tool || 'import', findings: parsed.findings || [] },
+        {
+          onSuccess: (response) => {
+            const { created, updated, skipped } = response.data
+            setImportSuccessMessage(
+              `Imported findings: ${created} created, ${updated} updated, ${skipped} skipped.`
+            )
+            setImportJson('')
+          },
+          onError: (err: any) => {
+            const detail = err.response?.data?.detail
+            setImportError(typeof detail === 'string' ? detail : err.message || 'Server error during ingestion')
+          },
+        }
+      )
+    } catch (err: any) {
+      setImportError(err.message || 'Invalid JSON format')
+    }
   }
 
   return (
@@ -39,7 +64,26 @@ export default function FindingsPage() {
             <CardHeader><CardTitle>Import Findings</CardTitle></CardHeader>
             <CardBody className="space-y-3">
               <p className="text-sm text-zinc-500">Paste JSON like <code className="font-mono">{"{\"source_tool\":\"nessus\",\"findings\":[...]}"}</code> to ingest imported assessment results.</p>
-              <textarea value={importJson} onChange={(event) => setImportJson(event.target.value)} rows={8} className="w-full px-3 py-2 rounded-lg text-sm font-mono bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700" />
+              <textarea
+                value={importJson}
+                onChange={(event) => {
+                  setImportJson(event.target.value)
+                  setImportError(null)
+                  setImportSuccessMessage(null)
+                }}
+                rows={8}
+                className="w-full px-3 py-2 rounded-lg text-sm font-mono bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
+              />
+              {importError && (
+                <div className="text-sm text-red-600 dark:text-red-400 bg-red-500/10 px-3 py-2 rounded-lg border border-red-500/20">
+                  {importError}
+                </div>
+              )}
+              {importSuccessMessage && (
+                <div className="text-sm text-emerald-600 dark:text-emerald-400 bg-emerald-500/10 px-3 py-2 rounded-lg border border-emerald-500/20">
+                  {importSuccessMessage}
+                </div>
+              )}
               <button onClick={handleImport} disabled={isIngesting || !importJson.trim()} className="px-4 py-2 rounded-lg text-sm bg-sky-500 text-white">
                 {isIngesting ? 'Importing…' : 'Import findings'}
               </button>
