@@ -1,6 +1,7 @@
 import { clsx, type ClassValue } from 'clsx'
 import { twMerge } from 'tailwind-merge'
 import { formatDistanceToNow, format } from 'date-fns'
+import { isAxiosError } from 'axios'
 
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
@@ -43,4 +44,12 @@ export function severityColor(severity: string): string {
     case 'low':      return 'bg-blue-500/20 text-blue-400 border-blue-500/30'
     default:         return 'bg-zinc-500/20 text-zinc-400 border-zinc-500/30'
   }
+}
+
+export function getErrorDetail(error: any): string | undefined {
+  if (!isAxiosError(error)) {
+    return undefined
+  }
+  const detail = error.response?.data?.detail
+  return typeof detail === 'string' ? detail : undefined
 }

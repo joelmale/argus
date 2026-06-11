@@ -7,9 +7,8 @@ import { useAddAssetNote, useAddAssetTag, useAsset, useAssetFindings, useConfigB
 import { useTriggerScan } from '@/hooks/useScans'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
-import { severityColor, formatDate, timeAgo } from '@/lib/utils'
+import { severityColor, formatDate, timeAgo, getErrorDetail } from '@/lib/utils'
 import { Bot, Shield, Info, Network, ChevronLeft, Tag, Save, Plus, X, Router, Play, ServerCog, Wifi, ShieldAlert, Microscope, ChevronDown, ChevronUp, Workflow, Loader2, MessageSquareText, Download, FileJson2, Sheet } from 'lucide-react'
-import { isAxiosError } from 'axios'
 import Link from 'next/link'
 import { useParams, useRouter } from 'next/navigation'
 import type { Asset, AssetAutopsyStage, ConfigBackupTarget } from '@/types'
@@ -32,13 +31,6 @@ const DEVICE_TYPE_OPTIONS = [
   'unknown',
 ] as const
 
-function getErrorDetail(error: Error): string | undefined {
-  if (!isAxiosError(error)) {
-    return undefined
-  }
-  const detail = error.response?.data?.detail
-  return typeof detail === 'string' ? detail : undefined
-}
 
 function AssetMetadataEditor({ asset }: Readonly<{ asset: Asset }>) {
   const { mutate: updateAsset, isPending: isSaving } = useUpdateAsset()

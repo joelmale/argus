@@ -9,7 +9,7 @@ import { ScanHistory } from '@/components/scans/ScanHistory'
 import { ScanActivityBar, ScanPulseDots, formatScanStage } from '@/components/scans/ScanActivity'
 import { useClearScanQueue, useScans, useTriggerScan } from '@/hooks/useScans'
 import { useAppStore } from '@/store'
-import { cn } from '@/lib/utils'
+import { cn, getErrorDetail } from '@/lib/utils'
 import {
   ScanLine, CheckCircle, XCircle,
   Cpu, Loader2, Radio, Target, Layers, Trash2,
@@ -57,11 +57,47 @@ export default function ScansPage() {
     e.preventDefault()
     setError(null)
     setLastResult(null)
+
+    const trimmedTargets = targets.trim()
+    if (trimmedTargets) {
+      const tokens = trimmedTargets.replace(/,/g, ' ').split(/\s+/)
+      const ipRegex = /^([0-9]{1,3}\.){3}[0-9]{1,3}$/
+      const cidrRegex = /^([0-9]{1,3}\.){3}[0-9]{1,3}\/([0-9]|[1-2][0-9]|3[0-2])$/
+
+      for (const token of tokens) {
+        const isIp = ipRegex.test(token)
+        const isCidr = cidrRegex.test(token)
+        if (!isIp && !isCidr) {
+          setError(`Invalid target format: "${token}". Must be a valid IP address or CIDR range.`)
+          setLastResult('error')
+          return
+        }
+
+        const ipPart = token.split('/')[0]
+        const octets = ipPart.split('.')
+        for (const octet of octets) {
+          const num = parseInt(octet, 10)
+          if (num < 0 || num > 255) {
+            setError(`Invalid IP octet: "${octet}" in target "${token}". IP octets must be between 0 and 255.`)
+            setLastResult('error')
+            return
+          }
+        }
+      }
+    }
+
     trigger(
-      { targets: targets.trim() || undefined, scan_type: profile },
+      { targets: trimmedTargets || undefined, scan_type: profile },
       {
-        onSuccess: () => { setLastResult('success'); setTargets('') },
-        onError:   () => { setLastResult('error') },
+        onSuccess: () => {
+          setLastResult('success')
+          setTargets('')
+        },
+        onError: (err) => {
+          setLastResult('error')
+          const detail = getErrorDetail(err)
+          setError(typeof detail === 'string' ? detail : 'Failed to enqueue')
+        },
       },
     )
   }
