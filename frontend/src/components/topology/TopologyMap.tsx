@@ -17,10 +17,15 @@ import {
   useCreateTopologyLink,
   useUpdateTopologyLink,
   useDeleteTopologyLink,
+  useCorrectTopologyLink,
+  useRefreshAssetAiAnalysis,
+  useRefreshAssetSnmp,
   useUpdateAsset,
+  useUpdateTopologyRole,
 } from '@/hooks/useAssets'
+import { useCurrentUser } from '@/hooks/useAuth'
 import { useRouter } from 'next/navigation'
-import { cn } from '@/lib/utils'
+import { cn, timeAgo } from '@/lib/utils'
 import {
   ArrowRight,
   CheckCircle,
@@ -242,6 +247,7 @@ function clearSavedPositions(): void {
 // ─── types ────────────────────────────────────────────────────────────────────
 
 type LayoutMode = 'radial' | 'overview' | 'hierarchy' | 'raw'
+type TopologyRoleOverride = 'gateway' | 'gateway_candidate' | 'switch' | 'access_point' | 'infrastructure' | 'endpoint'
 
 type SelectedGraphItem =
   | { kind: 'node'; data: Record<string, unknown> }
@@ -277,8 +283,14 @@ export function TopologyMap() {
   const { data: neighborhoodGraph } = useNeighborhoodGraph(focusAssetId)
   const createLink = useCreateTopologyLink()
   const updateLink = useUpdateTopologyLink()
+  const correctLink = useCorrectTopologyLink()
   const deleteLink = useDeleteTopologyLink()
   const updateAsset = useUpdateAsset()
+  const updateRole = useUpdateTopologyRole()
+  const refreshSnmp = useRefreshAssetSnmp()
+  const refreshAi = useRefreshAssetAiAnalysis()
+  const { data: currentUser } = useCurrentUser()
+  const isViewer = currentUser?.role === 'viewer'
 
   // Derive the active graph data (full or neighborhood focus)
   const activeGraph = focusAssetId && neighborhoodGraph ? neighborhoodGraph : graph
@@ -324,6 +336,10 @@ export function TopologyMap() {
     const tierOffsets = new Map<string, number>()
     const savedPositions = loadSavedPositions()
     const radialPositions = buildRadialPositions(filteredGraph.nodes, filteredGraph.segments)
+    const nodeLabels = new Map(filteredGraph.nodes.map((node) => [
+      String(node.data.id),
+      String(node.data.label || node.data.ip || node.data.id),
+    ]))
 
     const nodes = filteredGraph.nodes.map((node) => {
       const segmentId = node.data.segment_id ?? -1
@@ -348,6 +364,7 @@ export function TopologyMap() {
           device_type: node.data.device_type,
           topology_role: node.data.topology_role,
           topology_confidence: node.data.topology_confidence,
+          topology_role_overridden: node.data.topology_role_overridden,
           is_gateway: node.data.is_gateway,
           segment_id: node.data.segment_id,
           segment_cidr: node.data.segment_cidr,
@@ -376,12 +393,20 @@ export function TopologyMap() {
           lineStyle: edgeLineStyle(edge.data.observed),
           color: relationshipColor(edge.data.relationship_type),
           source_kind: edge.data.source_kind,
+          relationship_status: edge.data.relationship_status,
+          manual_override: edge.data.manual_override,
           segment_id: edge.data.segment_id,
           local_interface: edge.data.local_interface,
           remote_interface: edge.data.remote_interface,
           ssid: edge.data.ssid,
+          vlan_id: edge.data.vlan_id,
           evidence: edge.data.evidence,
           link_id: edge.data.link_id,
+          last_seen: edge.data.last_seen,
+          explanation: edge.data.explanation,
+          suppressed: edge.data.suppressed,
+          source_label: nodeLabels.get(String(edge.data.source)) ?? String(edge.data.source).slice(0, 8),
+          target_label: nodeLabels.get(String(edge.data.target)) ?? String(edge.data.target).slice(0, 8),
           // dim inferred edges when toggle is on
           edgeOpacity: dimInferred && isInferred ? 0.2 : Math.max(0.3, (edge.data.confidence ?? 0.5) * 0.95),
           edgeWidth: dimInferred && isInferred ? 1 : Math.max(1.5, (edge.data.confidence ?? 0.5) * 4),
@@ -791,7 +816,7 @@ export function TopologyMap() {
       <aside className="rounded-2xl border border-gray-200 bg-white p-4 dark:border-zinc-800 dark:bg-zinc-950 overflow-y-auto">
         <h3 className="text-sm font-semibold text-zinc-900 dark:text-white">Topology Detail</h3>
         <p className="mt-1 text-xs text-zinc-500">
-          Select a node or edge to inspect it. Click a node twice to focus its neighbourhood.
+          Select a node or edge to inspect its evidence, confidence, and correction options.
         </p>
 
         {!selectedItem ? (
@@ -808,6 +833,11 @@ export function TopologyMap() {
             onUpdateDeviceType={(type) => {
               updateAsset.mutate({ id: String(selectedItem.data.id), payload: { device_type: type } })
             }}
+            onUpdateTopologyRole={(role) => {
+              updateRole.mutate({ assetId: String(selectedItem.data.id), payload: { topology_role: role } })
+            }}
+            onRefreshSnmp={() => refreshSnmp.mutate(String(selectedItem.data.id))}
+            onRefreshAi={() => refreshAi.mutate(String(selectedItem.data.id))}
             onReparent={(parentId) => {
               createLink.mutate({
                 source_id: parentId,
@@ -817,6 +847,8 @@ export function TopologyMap() {
                 confidence: 1.0,
               })
             }}
+            isViewer={isViewer}
+            isPending={updateRole.isPending || refreshSnmp.isPending || refreshAi.isPending}
           />
         ) : (
           <EdgeDetailPanel
@@ -824,16 +856,39 @@ export function TopologyMap() {
             onConfirm={() => {
               const linkId = selectedItem.data.link_id as number | undefined
               if (linkId != null) {
-                updateLink.mutate({ linkId, payload: { observed: true } })
+                updateLink.mutate({ linkId, payload: { observed: true, suppressed: false, confidence: 1.0 } })
+              } else {
+                correctLink.mutate({
+                  source_id: String(selectedItem.data.source),
+                  target_id: String(selectedItem.data.target),
+                  relationship_type: String(selectedItem.data.relationship_type ?? 'neighbor_l2'),
+                  action: 'confirm',
+                  link_type: String(selectedItem.data.link_type ?? 'inferred'),
+                  evidence: selectedItem.data.evidence as Record<string, unknown> | null,
+                })
               }
             }}
-            onDeny={() => {
+            onSuppress={() => {
               const linkId = selectedItem.data.link_id as number | undefined
               if (linkId != null) {
                 updateLink.mutate({ linkId, payload: { suppressed: true } })
+              } else {
+                correctLink.mutate({
+                  source_id: String(selectedItem.data.source),
+                  target_id: String(selectedItem.data.target),
+                  relationship_type: String(selectedItem.data.relationship_type ?? 'neighbor_l2'),
+                  action: 'suppress',
+                  link_type: String(selectedItem.data.link_type ?? 'inferred'),
+                  evidence: selectedItem.data.evidence as Record<string, unknown> | null,
+                })
               }
             }}
-            isPending={updateLink.isPending}
+            onDelete={() => {
+              const linkId = selectedItem.data.link_id as number | undefined
+              if (linkId != null) deleteLink.mutate(linkId)
+            }}
+            isPending={updateLink.isPending || correctLink.isPending || deleteLink.isPending}
+            isViewer={isViewer}
           />
         )}
       </aside>
@@ -917,17 +972,28 @@ function NodeDetailPanel({
   onOpenAsset,
   onFocus,
   onUpdateDeviceType,
+  onUpdateTopologyRole,
+  onRefreshSnmp,
+  onRefreshAi,
   onReparent,
+  isViewer,
+  isPending,
 }: Readonly<{
   data: Record<string, unknown>
   infrastructureNodes: TopologyNode[]
   onOpenAsset: () => void
   onFocus: () => void
   onUpdateDeviceType: (type: string) => void
+  onUpdateTopologyRole: (role: TopologyRoleOverride | null) => void
+  onRefreshSnmp: () => void
+  onRefreshAi: () => void
   onReparent: (parentId: string) => void
+  isViewer: boolean
+  isPending: boolean
 }>) {
   const [editingType, setEditingType] = useState(false)
   const [reparentOpen, setReparentOpen] = useState(false)
+  const roleOptions: TopologyRoleOverride[] = ['gateway', 'gateway_candidate', 'switch', 'access_point', 'infrastructure', 'endpoint']
 
   return (
     <div className="mt-4 space-y-4">
@@ -937,12 +1003,13 @@ function NodeDetailPanel({
       </div>
       <dl className="space-y-2 text-sm">
         <DetailRow label="Role" value={String(data.topology_role ?? 'unknown')} />
+        <DetailRow label="Role source" value={data.topology_role_overridden ? 'Manual override' : 'Inferred'} />
 
         {/* Inline device type editor */}
         <div className="flex items-start justify-between gap-3">
           <dt className="text-sm text-zinc-500">Device type</dt>
           <dd className="text-right">
-            {editingType ? (
+            {editingType && !isViewer ? (
               <select
                 autoFocus
                 defaultValue={String(data.device_type ?? 'unknown')}
@@ -955,7 +1022,9 @@ function NodeDetailPanel({
             ) : (
               <button
                 type="button"
-                onClick={() => setEditingType(true)}
+                onClick={() => {
+                  if (!isViewer) setEditingType(true)
+                }}
                 className="text-sm text-zinc-900 dark:text-zinc-100 underline-offset-2 hover:underline"
                 title="Click to edit"
               >
@@ -975,11 +1044,36 @@ function NodeDetailPanel({
         <DetailRow label="OS" value={String(data.os ?? '—')} />
       </dl>
 
+      <div className="rounded-xl border border-gray-200 p-3 dark:border-zinc-800">
+        <p className="text-xs font-medium text-zinc-500">Topology role override</p>
+        <select
+          value={String(data.topology_role ?? 'endpoint')}
+          disabled={isViewer || isPending}
+          onChange={(event) => onUpdateTopologyRole(event.target.value as TopologyRoleOverride)}
+          className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-60"
+        >
+          {roleOptions.map((role) => (
+            <option key={role} value={role}>{role.replace(/_/g, ' ')}</option>
+          ))}
+        </select>
+        {Boolean(data.topology_role_overridden) && !isViewer && (
+          <button
+            type="button"
+            onClick={() => onUpdateTopologyRole(null)}
+            disabled={isPending}
+            className="mt-2 text-xs text-zinc-500 hover:text-zinc-900 disabled:opacity-60 dark:hover:text-zinc-100"
+          >
+            Clear manual override
+          </button>
+        )}
+      </div>
+
       {/* Re-parent */}
       <div>
         <button
           type="button"
           onClick={() => setReparentOpen((v) => !v)}
+          disabled={isViewer}
           className="inline-flex items-center gap-1.5 text-xs text-zinc-500 hover:text-zinc-800 dark:hover:text-zinc-200"
         >
           <ChevronDown className={cn('h-3.5 w-3.5 transition-transform', reparentOpen && 'rotate-180')} />
@@ -989,6 +1083,7 @@ function NodeDetailPanel({
           <select
             className="mt-2 w-full rounded-lg border border-gray-200 bg-white px-3 py-2 text-xs dark:border-zinc-700 dark:bg-zinc-800"
             defaultValue=""
+            disabled={isViewer}
             onChange={(e) => {
               if (e.target.value) {
                 onReparent(e.target.value)
@@ -1025,6 +1120,24 @@ function NodeDetailPanel({
           <Eye className="h-4 w-4" />
           Focus
         </button>
+        <button
+          type="button"
+          onClick={onRefreshSnmp}
+          disabled={isViewer || isPending}
+          className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-zinc-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-zinc-800"
+        >
+          <Radio className="h-4 w-4" />
+          Refresh SNMP
+        </button>
+        <button
+          type="button"
+          onClick={onRefreshAi}
+          disabled={isViewer || isPending}
+          className="inline-flex items-center gap-2 rounded-lg border border-gray-200 px-3 py-2 text-sm dark:border-zinc-700 hover:bg-gray-50 disabled:cursor-not-allowed disabled:opacity-60 dark:hover:bg-zinc-800"
+        >
+          <Eye className="h-4 w-4" />
+          Refresh AI
+        </button>
       </div>
     </div>
   )
@@ -1033,17 +1146,23 @@ function NodeDetailPanel({
 function EdgeDetailPanel({
   data,
   onConfirm,
-  onDeny,
+  onSuppress,
+  onDelete,
   isPending,
+  isViewer,
 }: Readonly<{
   data: Record<string, unknown>
   onConfirm: () => void
-  onDeny: () => void
+  onSuppress: () => void
+  onDelete: () => void
   isPending: boolean
+  isViewer: boolean
 }>) {
   const evidence = (data.evidence && typeof data.evidence === 'object' ? data.evidence : null) as Record<string, unknown> | null
   const isInferred = data.observed === false
   const hasLinkId = data.link_id != null
+  const isManual = data.manual_override === true || data.relationship_status === 'manual'
+  const kindLabel = isManual ? 'Manual' : isInferred ? 'Inferred' : 'Observed'
 
   return (
     <div className="mt-4 space-y-4">
@@ -1052,44 +1171,63 @@ function EdgeDetailPanel({
           {String(data.relationship_type ?? data.link_type ?? 'Link').replace(/_/g, ' ')}
         </p>
         <p className="text-xs text-zinc-500">
-          {String(data.source ?? '').slice(0, 8)} → {String(data.target ?? '').slice(0, 8)}
+          {String(data.source_label ?? data.source ?? '').slice(0, 48)} → {String(data.target_label ?? data.target ?? '').slice(0, 48)}
         </p>
       </div>
       <dl className="space-y-2 text-sm">
-        <DetailRow label="Observed" value={data.observed === false ? 'No (inferred)' : 'Yes'} />
+        <DetailRow label="Kind" value={kindLabel} />
         <DetailRow label="Confidence" value={typeof data.confidence === 'number' ? `${Math.round(Number(data.confidence) * 100)}%` : '—'} />
         <DetailRow label="Source" value={String(data.source_kind ?? '—')} />
+        <DetailRow label="Last seen" value={data.last_seen ? timeAgo(String(data.last_seen)) : '—'} />
         <DetailRow label="SSID" value={String(data.ssid ?? '—')} />
         <DetailRow label="Local interface" value={String(data.local_interface ?? '—')} />
         <DetailRow label="Remote interface" value={String(data.remote_interface ?? '—')} />
       </dl>
 
-      {/* Confirm / Deny — only for inferred links that have been persisted */}
-      {isInferred && hasLinkId && (
+      {Boolean(data.explanation) && (
+        <div className="rounded-xl border border-sky-100 bg-sky-50 p-3 text-xs text-sky-800 dark:border-sky-900 dark:bg-sky-950/30 dark:text-sky-200">
+          {String(data.explanation)}
+        </div>
+      )}
+
+      {!isViewer && (
         <div className="flex gap-2">
+          {isInferred && (
+            <button
+              type="button"
+              onClick={onConfirm}
+              disabled={isPending}
+              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-2 text-sm text-white hover:bg-emerald-600 disabled:opacity-50"
+            >
+              <CheckCircle className="h-4 w-4" />
+              Confirm
+            </button>
+          )}
           <button
             type="button"
-            onClick={onConfirm}
-            disabled={isPending}
-            className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-emerald-500 px-3 py-2 text-sm text-white hover:bg-emerald-600 disabled:opacity-50"
-          >
-            <CheckCircle className="h-4 w-4" />
-            Confirm
-          </button>
-          <button
-            type="button"
-            onClick={onDeny}
+            onClick={onSuppress}
             disabled={isPending}
             className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg bg-red-500 px-3 py-2 text-sm text-white hover:bg-red-600 disabled:opacity-50"
           >
             <XCircle className="h-4 w-4" />
-            Deny
+            Suppress
           </button>
+          {hasLinkId && isManual && (
+            <button
+              type="button"
+              onClick={onDelete}
+              disabled={isPending}
+              className="inline-flex flex-1 items-center justify-center gap-1.5 rounded-lg border border-gray-200 px-3 py-2 text-sm text-zinc-600 hover:bg-gray-50 disabled:opacity-50 dark:border-zinc-700 dark:text-zinc-300 dark:hover:bg-zinc-800"
+            >
+              <Unlink className="h-4 w-4" />
+              Delete
+            </button>
+          )}
         </div>
       )}
-      {isInferred && !hasLinkId && (
+      {isInferred && !hasLinkId && !isViewer && (
         <p className="text-xs text-zinc-400">
-          This edge is computed at render time and not yet persisted. Run a scan to generate a DB-backed link that can be confirmed or denied.
+          Confirming or suppressing this inferred edge creates a durable manual correction.
         </p>
       )}
 

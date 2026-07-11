@@ -571,6 +571,53 @@ export interface AssetStats {
   new_today: number;
 }
 
+export interface OperatorBriefAction {
+  label: string;
+  route: string;
+  kind: string;
+  requires_admin: boolean;
+  payload: Record<string, unknown> | null;
+}
+
+export interface OperatorBriefItem {
+  key: string;
+  title: string;
+  reason: string;
+  severity: "critical" | "high" | "medium" | "low" | "info" | string;
+  target_type: string | null;
+  target_id: string | null;
+  target_label: string | null;
+  route: string | null;
+  action: OperatorBriefAction | null;
+  occurred_at: string | null;
+  metadata: Record<string, unknown>;
+}
+
+export interface OperatorBriefSection {
+  key: "changed" | "attention" | "unknowns" | "risk" | "recommendations" | string;
+  title: string;
+  question: string;
+  items: OperatorBriefItem[];
+  total: number;
+}
+
+export interface OperatorBrief {
+  generated_at: string;
+  window: {
+    hours: number;
+    started_at: string;
+    ended_at: string;
+  };
+  summary: {
+    changed: number;
+    attention: number;
+    unknowns: number;
+    risk: number;
+    recommendations: number;
+  };
+  sections: OperatorBriefSection[];
+}
+
 export interface ScanJob {
   id: string;
   targets: string;
@@ -600,6 +647,7 @@ export interface TopologyNode {
     segment_id?: number | null;
     topology_role?: string | null;
     topology_confidence?: number | null;
+    topology_role_overridden?: boolean;
     is_gateway?: boolean;
     layout_tier?: string | null;
     tier_hint?: string | null;
@@ -619,6 +667,8 @@ export interface TopologyEdge {
     observed?: boolean;
     confidence?: number;
     source_kind?: string;
+    relationship_status?: "observed" | "inferred" | "manual" | string;
+    manual_override?: boolean;
     segment_id?: number | null;
     local_interface?: string | null;
     remote_interface?: string | null;
@@ -626,6 +676,8 @@ export interface TopologyEdge {
     layout_tier?: string | null;
     evidence?: Record<string, unknown> | null;
     vlan_id: number | null;
+    last_seen?: string | null;
+    explanation?: string | null;
     /** Numeric link id — present on persisted (non-inferred) edges only. */
     link_id?: number | null;
     suppressed?: boolean;
@@ -661,6 +713,20 @@ export interface TopologyLinkUpdateRequest {
   local_interface?: string | null;
   remote_interface?: string | null;
   ssid?: string | null;
+}
+
+export interface TopologyLinkCorrectionRequest {
+  source_id: string;
+  target_id: string;
+  relationship_type: string;
+  action: "confirm" | "suppress";
+  link_type?: string;
+  confidence?: number | null;
+  evidence?: Record<string, unknown> | null;
+}
+
+export interface TopologyRoleUpdateRequest {
+  topology_role: "gateway" | "gateway_candidate" | "switch" | "access_point" | "infrastructure" | "endpoint" | null;
 }
 
 export interface TopologySegment {

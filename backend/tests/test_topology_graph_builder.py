@@ -79,6 +79,11 @@ def test_graph_builder_preserves_observed_links_without_duplicate_inferred_edges
 
     assert (str(ap.id), str(phone.id), "wireless_ap_for") in edge_pairs
     assert (str(gateway.id), str(phone.id), "gateway_for") not in edge_pairs
+    observed_edge = next(edge["data"] for edge in graph["edges"] if edge["data"]["relationship_type"] == "wireless_ap_for")
+    assert observed_edge["link_id"] == 1
+    assert observed_edge["source_kind"] == "snmp"
+    assert observed_edge["relationship_status"] == "observed"
+    assert observed_edge["manual_override"] is False
 
 
 def test_graph_builder_infers_wireless_parent_before_gateway_fallback():
@@ -119,3 +124,31 @@ def test_tagged_infrastructure_roles_have_full_confidence():
 
     assert infer_topology_role(switch) == ("switch", 1.0)
     assert infer_topology_role(ap) == ("access_point", 1.0)
+
+
+def test_suppressed_inferred_gateway_link_blocks_regeneration():
+    gateway = _asset("192.168.100.1", device_type="router", hostname="gateway", ports=[53, 67, 80, 443])
+    endpoint = _asset("192.168.100.20", device_type="workstation", hostname="desktop")
+    segment = NetworkSegment(id=1, cidr="192.168.100.0/24", label="Main LAN", source="heuristic_ipv4_24", confidence=0.55)
+    suppressed = TopologyLink(
+        id=7,
+        source_id=gateway.id,
+        target_id=endpoint.id,
+        link_type="inferred",
+        relationship_type="gateway_for",
+        observed=False,
+        confidence=0.0,
+        source="manual_suppression",
+        suppressed=True,
+    )
+
+    graph = build_topology_graph([gateway, endpoint], [segment], [suppressed])
+
+    assert graph["edges"] == []
+
+
+def test_topology_role_override_from_custom_fields_wins():
+    asset = _asset("192.168.100.15", device_type="workstation", hostname="desktop")
+    asset.custom_fields = {"topology_role_override": "switch"}
+
+    assert infer_topology_role(asset) == ("switch", 1.0)

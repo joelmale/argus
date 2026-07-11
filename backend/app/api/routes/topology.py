@@ -2,14 +2,17 @@
 import hashlib
 import json
 from typing import Annotated
+from typing import Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from pydantic import BaseModel
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
-from app.db.models import TopologyLink, User
+from app.audit import log_audit_event
+from app.db.models import Asset, TopologyLink, User
 from app.db.session import get_db
 from app.scanner.config import read_effective_scanner_config
 from app.services.topology import load_topology_graph
@@ -46,6 +49,20 @@ class TopologyLinkUpdateRequest(BaseModel):
     local_interface: str | None = None
     remote_interface: str | None = None
     ssid: str | None = None
+
+
+class TopologyLinkCorrectionRequest(BaseModel):
+    source_id: UUID
+    target_id: UUID
+    relationship_type: str
+    action: Literal["confirm", "suppress"]
+    link_type: str = "inferred"
+    confidence: float | None = None
+    evidence: dict | None = None
+
+
+class TopologyRoleUpdateRequest(BaseModel):
+    topology_role: Literal["gateway", "gateway_candidate", "switch", "access_point", "infrastructure", "endpoint"] | None = None
 
 
 async def _publish_topology_updated() -> None:
@@ -153,7 +170,7 @@ async def get_neighborhood_graph(asset_id: UUID, db: DBSession, _: CurrentUser):
 async def create_topology_link(
     payload: TopologyLinkCreateRequest,
     db: DBSession,
-    _: AdminUser,
+    user: AdminUser,
 ):
     link = TopologyLink(
         source_id=payload.source_id,
@@ -167,8 +184,22 @@ async def create_topology_link(
         local_interface=payload.local_interface,
         remote_interface=payload.remote_interface,
         ssid=payload.ssid,
+        evidence={"operator_action": "manual_link_created"},
     )
     db.add(link)
+    await db.flush()
+    await log_audit_event(
+        db,
+        action="topology.link.created",
+        user=user,
+        target_type="topology_link",
+        target_id=str(link.id),
+        details={
+            "source_id": str(payload.source_id),
+            "target_id": str(payload.target_id),
+            "relationship_type": payload.relationship_type,
+        },
+    )
     await db.commit()
     await db.refresh(link)
     await _publish_topology_updated()
@@ -180,17 +211,21 @@ async def update_topology_link(
     link_id: int,
     payload: TopologyLinkUpdateRequest,
     db: DBSession,
-    _: AdminUser,
+    user: AdminUser,
 ):
     link = await db.get(TopologyLink, link_id)
     if link is None:
         raise HTTPException(status_code=404, detail="Link not found")
     if payload.observed is not None:
         link.observed = payload.observed
-        if payload.observed and link.source == "inference":
+        if payload.observed:
             link.source = "manual"
     if payload.suppressed is not None:
         link.suppressed = payload.suppressed
+        if payload.suppressed:
+            link.source = "manual_suppression"
+        elif link.source == "manual_suppression":
+            link.source = "manual"
     if payload.confidence is not None:
         link.confidence = payload.confidence
     if payload.relationship_type is not None:
@@ -201,21 +236,125 @@ async def update_topology_link(
         link.remote_interface = payload.remote_interface
     if payload.ssid is not None:
         link.ssid = payload.ssid
+    await log_audit_event(
+        db,
+        action="topology.link.updated",
+        user=user,
+        target_type="topology_link",
+        target_id=str(link.id),
+        details=payload.model_dump(exclude_unset=True, mode="json"),
+    )
     await db.commit()
     await db.refresh(link)
     await _publish_topology_updated()
     return link
 
 
+@router.post("/links/correction", status_code=201)
+async def correct_topology_link(
+    payload: TopologyLinkCorrectionRequest,
+    db: DBSession,
+    user: AdminUser,
+):
+    result = await db.execute(
+        select(TopologyLink).where(
+            TopologyLink.source_id == payload.source_id,
+            TopologyLink.target_id == payload.target_id,
+            TopologyLink.relationship_type == payload.relationship_type,
+        )
+    )
+    link = result.scalar_one_or_none()
+    if link is None:
+        link = TopologyLink(
+            source_id=payload.source_id,
+            target_id=payload.target_id,
+            link_type=payload.link_type,
+            relationship_type=payload.relationship_type,
+        )
+        db.add(link)
+
+    evidence = dict(link.evidence or {})
+    evidence.update(payload.evidence or {})
+    evidence["operator_action"] = f"inferred_link_{payload.action}ed"
+
+    if payload.action == "confirm":
+        link.observed = True
+        link.suppressed = False
+        link.confidence = payload.confidence if payload.confidence is not None else max(float(link.confidence or 0), 0.9)
+        link.source = "manual"
+    else:
+        link.observed = False
+        link.suppressed = True
+        link.confidence = payload.confidence if payload.confidence is not None else 0.0
+        link.source = "manual_suppression"
+    link.evidence = evidence
+
+    await db.flush()
+    await log_audit_event(
+        db,
+        action=f"topology.link.{payload.action}ed",
+        user=user,
+        target_type="topology_link",
+        target_id=str(link.id),
+        details={
+            "source_id": str(payload.source_id),
+            "target_id": str(payload.target_id),
+            "relationship_type": payload.relationship_type,
+        },
+    )
+    await db.commit()
+    await db.refresh(link)
+    await _publish_topology_updated()
+    return link
+
+
+@router.patch("/nodes/{asset_id}/role")
+async def update_topology_role(
+    asset_id: UUID,
+    payload: TopologyRoleUpdateRequest,
+    db: DBSession,
+    user: AdminUser,
+):
+    asset = await db.get(Asset, asset_id)
+    if asset is None:
+        raise HTTPException(status_code=404, detail="Asset not found")
+    custom_fields = dict(asset.custom_fields or {})
+    if payload.topology_role is None:
+        custom_fields.pop("topology_role_override", None)
+    else:
+        custom_fields["topology_role_override"] = payload.topology_role
+    asset.custom_fields = custom_fields or None
+    await log_audit_event(
+        db,
+        action="topology.node.role_updated",
+        user=user,
+        target_type="asset",
+        target_id=str(asset.id),
+        details={"topology_role": payload.topology_role},
+    )
+    await db.commit()
+    await db.refresh(asset)
+    await _publish_topology_updated()
+    return {"asset_id": str(asset.id), "topology_role": payload.topology_role}
+
+
 @router.delete("/links/{link_id}", status_code=204)
 async def delete_topology_link(
     link_id: int,
     db: DBSession,
-    _: AdminUser,
+    user: AdminUser,
 ):
     link = await db.get(TopologyLink, link_id)
     if link is None:
         return
+    await log_audit_event(
+        db,
+        action="topology.link.deleted",
+        user=user,
+        target_type="topology_link",
+        target_id=str(link.id),
+        details={"source_id": str(link.source_id), "target_id": str(link.target_id), "relationship_type": link.relationship_type},
+    )
     await db.delete(link)
     await db.commit()
     await _publish_topology_updated()
