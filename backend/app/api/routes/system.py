@@ -13,7 +13,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from app.api.deps import get_current_admin
+from app.api.deps import get_current_admin, get_current_user
 from app.core.security import mask_secret
 from app.audit import log_audit_event
 from app.backups import get_backup_policy, list_backup_drivers, update_backup_policy
@@ -64,10 +64,12 @@ from app.modules.firewalla import (
 )
 from app.plugins import list_plugins
 from app.scanner.config import ScannerConfigUpdateInput, clear_inventory, read_effective_scanner_config, update_scanner_config
+from app.services.operator_brief import build_operator_brief
 
 router = APIRouter()
 DBSession = Annotated[AsyncSession, Depends(get_db)]
 AdminUser = Annotated[User, Depends(get_current_admin)]
+CurrentUser = Annotated[User, Depends(get_current_user)]
 FINGERPRINT_REFRESH_RESPONSES = {404: {"description": "Fingerprint dataset not found"}}
 TPLINK_MODULE_RESPONSES = {
     400: {"description": "Module configuration is invalid"},
@@ -180,6 +182,15 @@ class FirewallaConfigUpdateRequest(BaseModel):
     request_timeout_seconds: int = 15
     fetch_devices: bool = True
     fetch_alarms: bool = True
+
+
+@router.get("/operator-brief")
+async def get_operator_brief(
+    _: CurrentUser,
+    db: DBSession,
+    window_hours: int = 24,
+):
+    return await build_operator_brief(db, window_hours=window_hours)
 
 
 def _serialize_dataset(row) -> dict:

@@ -28,6 +28,11 @@ def infer_ipv4_segment_cidr(ip_value: str | None, prefix_v4: int = 24) -> str | 
 
 
 def infer_topology_role(asset: Asset, gateway_ids: set[str] | None = None) -> tuple[str, float]:
+    custom_fields = asset.custom_fields or {}
+    role_override = str(custom_fields.get("topology_role_override") or "").strip()
+    if role_override in {"gateway", "gateway_candidate", "switch", "access_point", "infrastructure", "endpoint"}:
+        return role_override, 1.0
+
     effective_type = (asset.effective_device_type or "unknown").lower()
     hostname = (asset.hostname or "").lower()
     tags = _asset_tag_names(asset)

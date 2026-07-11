@@ -4,6 +4,7 @@ import { ActivityFeed } from '@/components/dashboard/ActivityFeed'
 import { DeviceTypeChart } from '@/components/dashboard/DeviceTypeChart'
 import { FindingsSummary } from '@/components/dashboard/FindingsSummary'
 import { OsCompositionWidget } from '@/components/dashboard/OsCompositionWidget'
+import { OperatorBrief } from '@/components/dashboard/OperatorBrief'
 import { RecentAssets } from '@/components/dashboard/RecentAssets'
 import { QuickScan } from '@/components/scans/QuickScan'
 
@@ -11,6 +12,8 @@ export default function DashboardPage() {
   return (
     <AppShell>
       <div className="space-y-6 max-w-7xl mx-auto">
+        <OperatorBrief />
+
         {/* Stats row */}
         <StatsGrid />
 

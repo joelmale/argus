@@ -103,6 +103,11 @@ export const authApi = {
     api.post("/api/v1/system/inventory/reset", payload),
 };
 
+export const systemApi = {
+  operatorBrief: (windowHours = 24) =>
+    api.get("/api/v1/system/operator-brief", { params: { window_hours: windowHours } }),
+};
+
 // ─── Asset endpoints ────────────────────────────────────────────
 export const assetsApi = {
   list: (params?: { search?: string; status?: string; tag?: string; include?: string[]; skip?: number; limit?: number }) => {
@@ -188,6 +193,10 @@ export const topologyApi = {
     api.patch(`/api/v1/topology/links/${linkId}`, payload),
   deleteLink: (linkId: number) =>
     api.delete(`/api/v1/topology/links/${linkId}`),
+  correctLink: (payload: import("@/types").TopologyLinkCorrectionRequest) =>
+    api.post("/api/v1/topology/links/correction", payload),
+  updateRole: (assetId: string, payload: import("@/types").TopologyRoleUpdateRequest) =>
+    api.patch(`/api/v1/topology/nodes/${assetId}/role`, payload),
 };
 
 // ─── WebSocket helper ───────────────────────────────────────────

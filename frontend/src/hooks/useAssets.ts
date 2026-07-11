@@ -1,7 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query'
 import { assetsApi, topologyApi } from '@/lib/api'
 import { useAppStore } from '@/store'
-import type { Asset, AssetStats, AssetSummary, ConfigBackupSnapshot, ConfigBackupTarget, Finding, TopologyGraph, TopologyLinkCreateRequest, TopologyLinkUpdateRequest, WirelessAssociation } from '@/types'
+import type { Asset, AssetStats, AssetSummary, ConfigBackupSnapshot, ConfigBackupTarget, Finding, TopologyGraph, TopologyLinkCorrectionRequest, TopologyLinkCreateRequest, TopologyLinkUpdateRequest, TopologyRoleUpdateRequest, WirelessAssociation } from '@/types'
 
 export type AssetListInclude = 'ports' | 'tags' | 'ai' | 'probe_runs'
 export type AssetListParams = {
@@ -245,11 +245,40 @@ export function useUpdateTopologyLink() {
   })
 }
 
+export function useCorrectTopologyLink() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (payload: TopologyLinkCorrectionRequest) => topologyApi.correctLink(payload),
+    onSuccess: () => {
+      lastEtag = undefined
+      cachedGraph = null
+      qc.invalidateQueries({ queryKey: ['topology'] })
+    },
+  })
+}
+
+export function useUpdateTopologyRole() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ assetId, payload }: { assetId: string; payload: TopologyRoleUpdateRequest }) =>
+      topologyApi.updateRole(assetId, payload),
+    onSuccess: (_, { assetId }) => {
+      lastEtag = undefined
+      cachedGraph = null
+      qc.invalidateQueries({ queryKey: ['topology'] })
+      qc.invalidateQueries({ queryKey: ['assets', assetId] })
+      qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
 export function useDeleteTopologyLink() {
   const qc = useQueryClient()
   return useMutation({
     mutationFn: (linkId: number) => topologyApi.deleteLink(linkId),
     onSuccess: () => {
+      lastEtag = undefined
+      cachedGraph = null
       qc.invalidateQueries({ queryKey: ['topology'] })
     },
   })

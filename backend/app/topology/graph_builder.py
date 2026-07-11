@@ -28,12 +28,19 @@ def build_topology_graph(
         for asset in assets
     ]
 
+    active_links = [link for link in links if not link.suppressed]
+    suppressed_links = [link for link in links if link.suppressed]
     persisted_edges = [
         {"data": _serialize_link(link)}
-        for link in links
-        if not link.suppressed
+        for link in active_links
     ]
-    inferred_edges = _build_inferred_gateway_edges(segment_assets, segment_by_cidr, persisted_edges, gateway_candidates)
+    inferred_edges = _build_inferred_gateway_edges(
+        segment_assets,
+        segment_by_cidr,
+        persisted_edges,
+        gateway_candidates,
+        suppressed_links,
+    )
 
     serialized_segments = [
         _serialize_segment(segment, gateway_candidates.get(segment.cidr))
@@ -61,6 +68,7 @@ def _serialize_node(asset: Asset, segment_by_cidr: dict[str, NetworkSegment], ga
         "topology_role": topology_role,
         "topology_confidence": topology_confidence,
         "is_gateway": str(asset.id) in gateway_ids,
+        "topology_role_overridden": bool((asset.custom_fields or {}).get("topology_role_override")),
         "layout_tier": layout_tier,
         "tier_hint": _tier_hint_for_asset(asset),
         "avg_latency_ms": asset.avg_latency_ms,
@@ -70,15 +78,20 @@ def _serialize_node(asset: Asset, segment_by_cidr: dict[str, NetworkSegment], ga
 
 
 def _serialize_link(link: TopologyLink) -> dict:
+    source_kind = link.source or "inference"
+    manual_override = source_kind.startswith("manual")
     return {
         "id": f"e{link.id}",
+        "link_id": link.id,
         "source": str(link.source_id),
         "target": str(link.target_id),
         "link_type": link.link_type,
         "relationship_type": link.relationship_type,
         "observed": link.observed,
         "confidence": link.confidence,
-        "source_kind": link.source,
+        "source_kind": source_kind,
+        "relationship_status": "manual" if manual_override else "observed" if link.observed else "inferred",
+        "manual_override": manual_override,
         "segment_id": link.segment_id,
         "local_interface": link.local_interface,
         "remote_interface": link.remote_interface,
@@ -86,6 +99,9 @@ def _serialize_link(link: TopologyLink) -> dict:
         "vlan_id": link.vlan_id,
         "layout_tier": _edge_layout_tier(link.relationship_type),
         "evidence": link.evidence or link.link_metadata,
+        "last_seen": link.last_seen.isoformat() if link.last_seen else None,
+        "suppressed": link.suppressed,
+        "explanation": _edge_explanation(link.relationship_type, source_kind, link.observed),
     }
 
 
@@ -106,10 +122,15 @@ def _build_inferred_gateway_edges(
     segment_by_cidr: dict[str, NetworkSegment],
     persisted_edges: list[dict],
     gateway_candidates: dict[str, Asset],
+    suppressed_links: list[TopologyLink] | None = None,
 ) -> list[dict]:
     linked_pairs = {
         (edge["data"]["source"], edge["data"]["target"])
         for edge in persisted_edges
+    }
+    blocked_relationships = {
+        (str(link.source_id), str(link.target_id), link.relationship_type)
+        for link in (suppressed_links or [])
     }
     parented_asset_ids = {
         edge["data"]["target"]
@@ -140,6 +161,8 @@ def _build_inferred_gateway_edges(
                     pair = (str(access_point.id), str(asset.id))
                     reverse_pair = (str(asset.id), str(access_point.id))
                     if pair not in linked_pairs and reverse_pair not in linked_pairs:
+                        if (pair[0], pair[1], "inferred_wireless") in blocked_relationships:
+                            continue
                         inferred_edges.append(
                             {
                                 "data": {
@@ -151,12 +174,18 @@ def _build_inferred_gateway_edges(
                                     "observed": False,
                                     "confidence": 0.58,
                                     "source_kind": "heuristic_same_segment_wifi_ap",
+                                    "relationship_status": "inferred",
+                                    "manual_override": False,
                                     "segment_id": segment_id,
                                     "local_interface": None,
                                     "remote_interface": None,
                                     "ssid": None,
                                     "vlan_id": vlan_id,
                                     "layout_tier": "distribution",
+                                    "link_id": None,
+                                    "last_seen": None,
+                                    "suppressed": False,
+                                    "explanation": "Argus inferred this wireless parent from same-segment AP evidence and WiFi tagging.",
                                     "evidence": {
                                         "source": "heuristic_same_segment_wifi_ap",
                                         "segment": cidr,
@@ -175,6 +204,8 @@ def _build_inferred_gateway_edges(
             reverse_pair = (str(asset.id), str(gateway.id))
             if pair in linked_pairs or reverse_pair in linked_pairs:
                 continue
+            if (pair[0], pair[1], "gateway_for") in blocked_relationships:
+                continue
             inferred_edges.append(
                 {
                     "data": {
@@ -186,12 +217,18 @@ def _build_inferred_gateway_edges(
                         "observed": False,
                         "confidence": 0.46,
                         "source_kind": "heuristic_gateway_segment",
+                        "relationship_status": "inferred",
+                        "manual_override": False,
                         "segment_id": segment_id,
                         "local_interface": None,
                         "remote_interface": None,
                         "ssid": None,
                         "vlan_id": vlan_id,
                         "layout_tier": "gateway",
+                        "link_id": None,
+                        "last_seen": None,
+                        "suppressed": False,
+                        "explanation": "Argus inferred this gateway relationship because the segment has no stronger observed parent link.",
                         "evidence": {
                             "source": "heuristic_gateway_segment",
                             "segment": cidr,
@@ -201,6 +238,15 @@ def _build_inferred_gateway_edges(
                 }
             )
     return inferred_edges
+
+
+def _edge_explanation(relationship_type: str | None, source_kind: str, observed: bool) -> str:
+    relationship_label = (relationship_type or "link").replace("_", " ")
+    if source_kind.startswith("manual"):
+        return f"An operator manually set this {relationship_label} relationship."
+    if observed:
+        return f"Argus observed this {relationship_label} relationship from {source_kind} evidence."
+    return f"Argus inferred this {relationship_label} relationship from {source_kind} evidence."
 
 
 def _layout_tier_for_role(role: str) -> str:
