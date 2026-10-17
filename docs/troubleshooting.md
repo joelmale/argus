@@ -59,6 +59,28 @@ Look in the browser console:
 - `401 Unauthorized` usually means real auth rejection
 - network failure or CORS failure points to backend reachability or server errors
 
+### Locked out or forgot the admin password
+
+Argus has no email-based reset. Recovery is a break-glass CLI that runs inside
+the backend container, so it requires Docker access to the host.
+
+```bash
+# list usernames, roles and active state
+docker exec -it argus_backend python scripts/reset_password.py --list
+
+# set a new password (prompted, not echoed); also re-activates the account
+docker exec -it argus_backend python scripts/reset_password.py --username admin
+
+# or generate a random password and print it once
+docker exec -it argus_backend python scripts/reset_password.py --username admin --generate
+
+# also restore the admin role if it was lost
+docker exec -it argus_backend python scripts/reset_password.py --username admin --make-admin
+```
+
+Each reset writes an `auth.password_reset_cli` audit log entry. Replace
+`argus_backend` with your backend container name if it differs.
+
 ## Asset Detail Fails to Load
 
 Symptoms:
