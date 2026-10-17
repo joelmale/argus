@@ -75,6 +75,9 @@ services:
       SMTP_PASSWORD: ${SMTP_PASSWORD:-}
       SMTP_FROM: ${SMTP_FROM:-}
       SMTP_TO: ${SMTP_TO:-}
+      PASSWORD_MIN_LENGTH: ${PASSWORD_MIN_LENGTH:-6}
+      PASSWORD_RESET_EXPIRE_MINUTES: ${PASSWORD_RESET_EXPIRE_MINUTES:-30}
+      APP_BASE_URL: ${APP_BASE_URL:-}
       NOTIFY_WEBHOOK_URL: ${NOTIFY_WEBHOOK_URL:-}
     volumes:
       - argus_secrets:/run/secrets

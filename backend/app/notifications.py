@@ -47,11 +47,22 @@ async def _send_email(subject: str, body: str) -> None:
     await asyncio.to_thread(_send_email_sync, subject, body)
 
 
-def _send_email_sync(subject: str, body: str) -> None:
+def smtp_configured() -> bool:
+    return bool(settings.SMTP_HOST and settings.SMTP_FROM)
+
+
+async def send_email_to(recipient: str, subject: str, body: str) -> None:
+    """Send a one-off email to a specific recipient (e.g. password reset)."""
+    if not smtp_configured():
+        return
+    await asyncio.to_thread(_send_email_sync, subject, body, recipient)
+
+
+def _send_email_sync(subject: str, body: str, recipient: str | None = None) -> None:
     message = EmailMessage()
     message["Subject"] = subject
     message["From"] = settings.SMTP_FROM
-    message["To"] = settings.SMTP_TO
+    message["To"] = recipient or settings.SMTP_TO
     message.set_content(body)
 
     with smtplib.SMTP(settings.SMTP_HOST, settings.SMTP_PORT, timeout=10) as smtp:

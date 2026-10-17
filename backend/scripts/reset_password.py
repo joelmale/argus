@@ -31,7 +31,9 @@ from app.core.security import hash_password  # noqa: E402
 from app.db.models import User  # noqa: E402
 from app.db.session import AsyncSessionLocal, engine  # noqa: E402
 
-MIN_PASSWORD_LENGTH = 10
+from app.core.config import settings  # noqa: E402
+
+MIN_PASSWORD_LENGTH = settings.PASSWORD_MIN_LENGTH
 
 
 def _parse_args() -> argparse.Namespace:

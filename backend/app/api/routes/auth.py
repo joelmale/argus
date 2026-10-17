@@ -1,11 +1,12 @@
 """Auth endpoints — login and token refresh."""
+import logging
 from typing import Annotated, Literal
 from uuid import UUID
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
-from sqlalchemy import func, select
+from sqlalchemy import func, or_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.api.deps import get_current_admin, get_current_user
@@ -14,10 +15,14 @@ from app.audit import log_audit_event
 from app.core.security import (
     api_key_prefix,
     create_access_token,
+    create_password_reset_token,
+    decode_password_reset_token,
     generate_api_key,
     hash_api_key,
+    password_reset_token_matches,
     verify_password,
 )
+from app.notifications import send_email_to, smtp_configured
 from app.db.models import ApiKey, AuditLog, User
 from app.db.session import get_db
 from app.core.config import settings
@@ -51,6 +56,33 @@ class AlertRuleUpdateRequest(BaseModel):
     enabled: bool | None = None
     notify_email: bool | None = None
     notify_webhook: bool | None = None
+
+
+class ForgotPasswordRequest(BaseModel):
+    identifier: str  # username or email
+
+
+class ResetPasswordRequest(BaseModel):
+    token: str
+    password: str
+
+
+logger = logging.getLogger(__name__)
+
+
+def _require_password_length(password: str) -> None:
+    minimum = settings.PASSWORD_MIN_LENGTH
+    if len(password) < minimum:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Password must be at least {minimum} characters",
+        )
+
+
+def _reset_base_url() -> str:
+    if settings.APP_BASE_URL:
+        return settings.APP_BASE_URL.rstrip("/")
+    return settings.ALLOWED_ORIGINS[0].rstrip("/") if settings.ALLOWED_ORIGINS else ""
 
 
 class SetupStatusResponse(BaseModel):
@@ -133,6 +165,68 @@ async def login(
     return {"access_token": token, "token_type": "bearer"}
 
 
+@router.get("/password/reset-available")
+async def password_reset_available():
+    return {"available": smtp_configured()}
+
+
+@router.post("/password/forgot", status_code=status.HTTP_202_ACCEPTED)
+@limiter.limit("5/minute")
+async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: DBSession):
+    """Email a reset link. Always answers the same way so accounts can't be enumerated."""
+    response = {"detail": "If that account exists and has an email address, a reset link has been sent."}
+    identifier = payload.identifier.strip()
+    if not identifier or not smtp_configured():
+        return response
+
+    user = await db.scalar(
+        select(User).where(or_(User.username == identifier, func.lower(User.email) == identifier.lower()))
+    )
+    if user is None or not user.email or not user.is_active:
+        return response
+
+    token = create_password_reset_token(str(user.id), user.hashed_password)
+    link = f"{_reset_base_url()}/reset-password?token={token}"
+    body = (
+        f"Hi {user.username},\n\n"
+        "Someone asked to reset your Argus password. Use this link to choose a new one:\n\n"
+        f"{link}\n\n"
+        f"It expires in {settings.PASSWORD_RESET_EXPIRE_MINUTES} minutes and works once. "
+        "If you didn't ask for this, ignore this email.\n"
+    )
+    try:
+        await send_email_to(user.email, "Argus password reset", body)
+    except Exception:
+        logger.exception("Failed to send password reset email")
+        return response
+
+    await log_audit_event(db, action="auth.password_reset_requested", target_type="user", target_id=str(user.id))
+    await db.commit()
+    return response
+
+
+@router.post("/password/reset")
+@limiter.limit("10/minute")
+async def reset_password(request: Request, payload: ResetPasswordRequest, db: DBSession):
+    invalid = HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Reset link is invalid or has expired")
+    decoded = decode_password_reset_token(payload.token)
+    if decoded is None:
+        raise invalid
+    user_id, fingerprint = decoded
+    try:
+        user = await db.get(User, UUID(user_id))
+    except ValueError:
+        raise invalid
+    if user is None or not user.is_active or not password_reset_token_matches(user.hashed_password, fingerprint):
+        raise invalid
+
+    _require_password_length(payload.password)
+    user.hashed_password = hash_password(payload.password)
+    await log_audit_event(db, action="auth.password_reset_completed", user=user, target_type="user", target_id=str(user.id))
+    await db.commit()
+    return {"detail": "Password updated. You can sign in now."}
+
+
 @router.get("/setup/status", response_model=SetupStatusResponse)
 async def setup_status(db: DBSession):
     user_count = await db.scalar(select(func.count()).select_from(User)) or 0
@@ -154,8 +248,7 @@ async def initialize_first_admin(
 
     if len(username) < 3:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username must be at least 3 characters")
-    if len(password) < 10:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 10 characters")
+    _require_password_length(password)
 
     user = User(
         username=username,
@@ -195,8 +288,7 @@ async def create_user(
 
     if len(username) < 3:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Username must be at least 3 characters")
-    if len(payload.password) < 10:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Password must be at least 10 characters")
+    _require_password_length(payload.password)
 
     existing = await db.execute(select(User).where(User.username == username))
     if existing.scalar_one_or_none() is not None:

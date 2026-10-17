@@ -108,6 +108,36 @@ export function useSetupStatus() {
   })
 }
 
+export function usePasswordResetAvailable() {
+  return useQuery<{ available: boolean }>({
+    queryKey: ['auth', 'password-reset-available'],
+    queryFn: async () => {
+      const { data } = await authApi.passwordResetAvailable()
+      return data
+    },
+    retry: false,
+    staleTime: 60_000,
+  })
+}
+
+export function useForgotPassword() {
+  return useMutation({
+    mutationFn: async (identifier: string) => {
+      const { data } = await authApi.forgotPassword(identifier)
+      return data as { detail: string }
+    },
+  })
+}
+
+export function useResetPassword() {
+  return useMutation({
+    mutationFn: async (payload: { token: string; password: string }) => {
+      const { data } = await authApi.resetPassword(payload.token, payload.password)
+      return data as { detail: string }
+    },
+  })
+}
+
 export function useInitializeFirstAdmin() {
   const queryClient = useQueryClient()
 

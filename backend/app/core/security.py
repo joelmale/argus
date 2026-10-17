@@ -43,6 +43,38 @@ def decode_token(token: str) -> str | None:
         return None
 
 
+def _password_fingerprint(hashed_password: str) -> str:
+    return hashlib.sha256(hashed_password.encode()).hexdigest()[:16]
+
+
+def create_password_reset_token(user_id: str, hashed_password: str) -> str:
+    """Signed, short-lived token bound to the current password hash.
+
+    Changing the password changes the fingerprint, so a reset link works once.
+    """
+    expire = datetime.now(timezone.utc) + timedelta(minutes=settings.PASSWORD_RESET_EXPIRE_MINUTES)
+    return jwt.encode(
+        {"sub": user_id, "exp": expire, "purpose": "password_reset", "pwf": _password_fingerprint(hashed_password)},
+        settings.APP_SECRET_KEY,
+        algorithm=settings.JWT_ALGORITHM,
+    )
+
+
+def decode_password_reset_token(token: str) -> tuple[str, str] | None:
+    """Return (user_id, password_fingerprint) for a valid reset token, else None."""
+    try:
+        payload = jwt.decode(token, settings.APP_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
+    except JWTError:
+        return None
+    if payload.get("purpose") != "password_reset" or not payload.get("sub") or not payload.get("pwf"):
+        return None
+    return payload["sub"], payload["pwf"]
+
+
+def password_reset_token_matches(hashed_password: str, fingerprint: str) -> bool:
+    return hmac.compare_digest(_password_fingerprint(hashed_password), fingerprint)
+
+
 def generate_api_key() -> str:
     return f"argus_{secrets.token_urlsafe(24)}"
 

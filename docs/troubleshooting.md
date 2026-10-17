@@ -59,9 +59,19 @@ Look in the browser console:
 - `401 Unauthorized` usually means real auth rejection
 - network failure or CORS failure points to backend reachability or server errors
 
+### Forgot password (email reset)
+
+When SMTP is configured (`SMTP_HOST` and `SMTP_FROM`), the login page shows a
+"Forgot password?" link. Enter a username or email and Argus emails a one-time
+reset link to the address on the account. Links expire after
+`PASSWORD_RESET_EXPIRE_MINUTES` (default 30) and stop working once the password
+changes. The link points at `APP_BASE_URL`, or the first `ALLOWED_ORIGINS` entry
+if that is unset. Accounts without an email address cannot use this; use the CLI
+below. The minimum password length is `PASSWORD_MIN_LENGTH` (default 6).
+
 ### Locked out or forgot the admin password
 
-Argus has no email-based reset. Recovery is a break-glass CLI that runs inside
+If email reset isn't available, recovery is a break-glass CLI that runs inside
 the backend container, so it requires Docker access to the host.
 
 ```bash

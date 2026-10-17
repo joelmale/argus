@@ -50,6 +50,10 @@ export const authApi = {
   getSetupStatus: () => api.get("/api/v1/auth/setup/status"),
   initializeFirstAdmin: (payload: { username: string; password: string; email?: string }) =>
     api.post("/api/v1/auth/setup/initialize", payload),
+  passwordResetAvailable: () => api.get("/api/v1/auth/password/reset-available"),
+  forgotPassword: (identifier: string) => api.post("/api/v1/auth/password/forgot", { identifier }),
+  resetPassword: (token: string, password: string) =>
+    api.post("/api/v1/auth/password/reset", { token, password }),
   me: () => api.get("/api/v1/auth/me"),
   listUsers: () => api.get("/api/v1/auth/users"),
   createUser: (payload: { username: string; password: string; email?: string; role: "admin" | "viewer" }) =>

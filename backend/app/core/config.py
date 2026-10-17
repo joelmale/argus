@@ -46,6 +46,11 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 240
     JWT_REMEMBER_ME_EXPIRE_MINUTES: int = 5760
 
+    PASSWORD_MIN_LENGTH: int = 6
+    PASSWORD_RESET_EXPIRE_MINUTES: int = 30
+    # Base URL used in password-reset emails; falls back to the first ALLOWED_ORIGINS entry.
+    APP_BASE_URL: str = ""
+
     ADMIN_USERNAME: str = ""
     ADMIN_PASSWORD: SecretStr | None = None
 

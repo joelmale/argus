@@ -3,8 +3,9 @@
 import { useEffect, useState, type ComponentProps } from 'react'
 import axios from 'axios'
 import { Eye, Loader2 } from 'lucide-react'
+import Link from 'next/link'
 import { useRouter } from 'next/navigation'
-import { SAVED_USERNAME_KEY, useCurrentUser, useInitializeFirstAdmin, useLogin, useSetupStatus } from '@/hooks/useAuth'
+import { SAVED_USERNAME_KEY, useCurrentUser, useInitializeFirstAdmin, useLogin, usePasswordResetAvailable, useSetupStatus } from '@/hooks/useAuth'
 
 type FormSubmitHandler = NonNullable<ComponentProps<'form'>['onSubmit']>
 const APP_VERSION = process.env.NEXT_PUBLIC_APP_VERSION ?? 'v1.5-dev'
@@ -65,6 +66,7 @@ export function LoginPageClient({ initialNextPath }: Readonly<LoginPageClientPro
   const router = useRouter()
   const { data: currentUser, isLoading: isLoadingUser } = useCurrentUser()
   const { data: setupStatus, isLoading: isLoadingSetup } = useSetupStatus()
+  const { data: resetAvailable } = usePasswordResetAvailable()
   const { mutate: login, isPending: isPendingLogin } = useLogin()
   const { mutate: initializeFirstAdmin, isPending: isPendingSetup } = useInitializeFirstAdmin()
   const nextPath = initialNextPath
@@ -186,7 +188,6 @@ export function LoginPageClient({ initialNextPath }: Readonly<LoginPageClientPro
                 className="w-full rounded-xl border border-zinc-200 dark:border-zinc-800 bg-white dark:bg-zinc-900 px-4 py-3 text-sm outline-none focus:border-sky-500 focus:ring-2 focus:ring-sky-500/20"
                 autoComplete="new-password"
               />
-              <p className="mt-1 text-[11px] text-zinc-500">Use at least 10 characters.</p>
             </div>
 
             <div>
@@ -271,6 +272,14 @@ export function LoginPageClient({ initialNextPath }: Readonly<LoginPageClientPro
               {isPendingLogin && <Loader2 className="h-4 w-4 animate-spin" />}
               Sign in
             </button>
+
+            {resetAvailable?.available && (
+              <div className="text-center">
+                <Link href="/forgot-password" className="text-sm text-sky-600 hover:underline dark:text-sky-400">
+                  Forgot password?
+                </Link>
+              </div>
+            )}
           </form>
         )}
 
