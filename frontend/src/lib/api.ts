@@ -56,9 +56,9 @@ export const authApi = {
     api.post("/api/v1/auth/password/reset", { token, password }),
   me: () => api.get("/api/v1/auth/me"),
   listUsers: () => api.get("/api/v1/auth/users"),
-  createUser: (payload: { username: string; password: string; email?: string; role: "admin" | "viewer" }) =>
+  createUser: (payload: { username: string; password: string; email?: string; role: "admin" | "viewer" | "service" }) =>
     api.post("/api/v1/auth/users", payload),
-  updateUser: (id: string, payload: { role?: "admin" | "viewer"; is_active?: boolean }) =>
+  updateUser: (id: string, payload: { role?: "admin" | "viewer" | "service"; is_active?: boolean }) =>
     api.patch(`/api/v1/auth/users/${id}`, payload),
   listApiKeys: () => api.get("/api/v1/auth/api-keys"),
   createApiKey: (payload: { name: string }) => api.post("/api/v1/auth/api-keys", payload),

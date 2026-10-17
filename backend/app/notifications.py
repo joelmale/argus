@@ -1,12 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import smtplib
+from datetime import datetime, timezone
 from email.message import EmailMessage
 
 import httpx
 
 from app.core.config import settings
+
+log = logging.getLogger(__name__)
 
 
 async def notify_new_device(payload: dict, *, webhook: bool = True, email: bool = True) -> None:
@@ -34,11 +38,39 @@ async def notify_devices_offline(devices: list[dict], *, webhook: bool = True, e
         await asyncio.gather(*tasks)
 
 
+async def notify_ports_changed(data: dict, *, webhook: bool = True, email: bool = False) -> None:
+    tasks = []
+    if webhook:
+        tasks.append(_send_webhook({"event": "ports_changed", "data": data}))
+    if email:
+        tasks.append(_send_email(f"Argus port changes: {data.get('ip', 'unknown')}", _format_lines(data)))
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
+async def notify_new_findings(data: dict, *, webhook: bool = True, email: bool = False) -> None:
+    tasks = []
+    if webhook:
+        tasks.append(_send_webhook({"event": "new_findings", "data": data}))
+    if email:
+        body = "\n".join(f"[{item.get('severity')}] {item.get('title')}" for item in data.get("findings", []))
+        tasks.append(_send_email(f"Argus new findings: {len(data.get('findings', []))}", body))
+    if tasks:
+        await asyncio.gather(*tasks)
+
+
 async def _send_webhook(payload: dict) -> None:
     if not settings.NOTIFY_WEBHOOK_URL:
         return
-    async with httpx.AsyncClient(timeout=10) as client:
-        await client.post(settings.NOTIFY_WEBHOOK_URL, json=payload)
+    headers = {"Authorization": f"Bearer {settings.NOTIFY_WEBHOOK_TOKEN}"} if settings.NOTIFY_WEBHOOK_TOKEN else {}
+    body = {**payload, "source": "argus", "sent_at": datetime.now(timezone.utc).isoformat()}
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            response = await client.post(settings.NOTIFY_WEBHOOK_URL, json=body, headers=headers)
+            response.raise_for_status()
+    except httpx.HTTPError as exc:
+        # A down receiver must never break a scan or ingest.
+        log.warning("Webhook delivery failed for %s: %s", payload.get("event"), exc)
 
 
 async def _send_email(subject: str, body: str) -> None:

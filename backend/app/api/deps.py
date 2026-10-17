@@ -55,6 +55,13 @@ def get_current_admin(user: User = Depends(get_current_user)) -> User:
     return user
 
 
+def get_ingest_user(user: User = Depends(get_current_user)) -> User:
+    """Admins, or `service` accounts used by integrations (read access plus ingest only)."""
+    if user.role not in ("admin", "service"):
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Admin or service access required")
+    return user
+
+
 def require_role(role: str) -> Callable[[User], User]:
     def _require_role(user: User = Depends(get_current_user)) -> User:
         if user.role != role:

@@ -9,7 +9,14 @@ from app.db.models import Asset, Finding, Port
 from app.services.identity import AssetIdentityResolver
 
 
-async def ingest_findings(db: AsyncSession, findings: list[dict], *, source_default: str = "import") -> dict[str, int]:
+async def ingest_findings(
+    db: AsyncSession,
+    findings: list[dict],
+    *,
+    source_default: str = "import",
+    created_out: list[dict] | None = None,
+) -> dict[str, int]:
+    """Upsert findings. If `created_out` is given, a summary of each newly created finding is appended to it."""
     created = 0
     updated = 0
     skipped = 0
@@ -34,6 +41,15 @@ async def ingest_findings(db: AsyncSession, findings: list[dict], *, source_defa
             finding = _build_finding(asset, port, item, source_tool, external_id, title, now)
             db.add(finding)
             created += 1
+            if created_out is not None:
+                created_out.append({
+                    "asset_id": str(asset.id),
+                    "ip": asset.ip_address,
+                    "source_tool": source_tool,
+                    "external_id": external_id,
+                    "title": title,
+                    "severity": finding.severity,
+                })
         else:
             _update_finding(finding, port, item, now)
             updated += 1

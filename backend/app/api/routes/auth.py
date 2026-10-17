@@ -40,11 +40,11 @@ class UserCreateRequest(BaseModel):
     username: str
     password: str
     email: str | None = None
-    role: Literal["admin", "viewer"] = "viewer"
+    role: Literal["admin", "viewer", "service"] = "viewer"
 
 
 class UserUpdateRequest(BaseModel):
-    role: Literal["admin", "viewer"] | None = None
+    role: Literal["admin", "viewer", "service"] | None = None
     is_active: bool | None = None
 
 

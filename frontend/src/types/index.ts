@@ -16,7 +16,7 @@ export type DeviceType =
   | "iot_device"
   | "voip"
   | "unknown";
-export type UserRole = "admin" | "viewer";
+export type UserRole = "admin" | "viewer" | "service";
 
 export interface CurrentUser {
   id: string;

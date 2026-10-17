@@ -7,7 +7,7 @@ import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
 import { ScanLine, Bell, Wifi, Database, Construction, Shield, UserPlus, KeyRound, Trash2, History, FileText, PlugZap, ActivitySquare, HouseWifi, RefreshCw, LibraryBig, Bot, BrainCircuit, Download, ChevronDown, HelpCircle } from 'lucide-react'
 import { openHtmlReport } from '@/lib/exportUtils'
 import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFirewallaModule, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, useOllamaModels, usePfsenseModule, usePlugins, usePullOllamaModel, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncFirewallaModule, useSyncPfsenseModule, useSyncTplinkDecoModule, useSyncUnifiModule, useTestAiConfiguration, useTestFirewallaModule, useTestPfsenseModule, useTestTplinkDecoModule, useTestUnifiModule, useTplinkDecoModule, useUnifiModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateFirewallaModule, useUpdatePfsenseModule, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUnifiModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
-import type { FirewallaConfig, FirewallaSyncRun, FingerprintDataset, PfsenseConfig, PfsenseSyncRun, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UnifiConfig, UnifiSyncRun } from '@/types'
+import type { FirewallaConfig, FirewallaSyncRun, FingerprintDataset, PfsenseConfig, PfsenseSyncRun, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UnifiConfig, UnifiSyncRun, UserRole } from '@/types'
 import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
 
 type BackupPolicyFormProps = Readonly<{
@@ -1778,7 +1778,7 @@ export default function SettingsContent() {
   const { mutate: resetInventory, isPending: isResettingInventory } = useResetInventory()
   const [newUsername, setNewUsername] = useState('')
   const [newPassword, setNewPassword] = useState('')
-  const [newRole, setNewRole] = useState<'admin' | 'viewer'>('viewer')
+  const [newRole, setNewRole] = useState<UserRole>('viewer')
   const [userError, setUserError] = useState<string | null>(null)
   const [apiKeyName, setApiKeyName] = useState('')
   const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null)
@@ -2129,9 +2129,10 @@ export default function SettingsContent() {
                 <form onSubmit={handleCreateUser} className="grid grid-cols-1 md:grid-cols-[1fr_1fr_140px_auto] gap-3">
                   <TextInputField label="Username" value={newUsername} onChange={(event) => setNewUsername(event.target.value)} placeholder="Username" />
                   <TextInputField label="Temporary password" type="password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} placeholder="Temporary password" />
-                  <SelectField label="Role" value={newRole} onChange={(event) => setNewRole(event.target.value as 'admin' | 'viewer')}>
+                  <SelectField label="Role" value={newRole} onChange={(event) => setNewRole(event.target.value as UserRole)}>
                     <option value="viewer">Viewer</option>
                     <option value="admin">Admin</option>
+                    <option value="service">Service (integrations)</option>
                   </SelectField>
                   <button
                     type="submit"
@@ -2155,11 +2156,12 @@ export default function SettingsContent() {
                       <select
                         value={user.role}
                         disabled={isUpdatingUser}
-                        onChange={(event) => updateUser({ id: user.id, payload: { role: event.target.value as 'admin' | 'viewer' } })}
+                        onChange={(event) => updateUser({ id: user.id, payload: { role: event.target.value as UserRole } })}
                         className="px-3 py-2 rounded-lg text-sm bg-gray-50 dark:bg-zinc-800 border border-gray-200 dark:border-zinc-700"
                       >
                         <option value="viewer">Viewer</option>
                         <option value="admin">Admin</option>
+                        <option value="service">Service (integrations)</option>
                       </select>
                       <label className="inline-flex items-center gap-2 text-sm text-zinc-600 dark:text-zinc-300">
                         <input

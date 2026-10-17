@@ -7,7 +7,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.api.deps import get_current_admin, get_current_user
+from app.alerting import notify_new_findings_if_enabled
+from app.api.deps import get_current_admin, get_current_user, get_ingest_user
 from app.db.models import Finding, User
 from app.db.session import get_db
 from app.findings import ingest_findings, summarize_findings
@@ -16,6 +17,7 @@ router = APIRouter()
 DBSession = Annotated[AsyncSession, Depends(get_db)]
 AdminUser = Annotated[User, Depends(get_current_admin)]
 CurrentUser = Annotated[User, Depends(get_current_user)]
+IngestUser = Annotated[User, Depends(get_ingest_user)]
 SeverityFilter = Annotated[str | None, Query()]
 StatusFilter = Annotated[str | None, Query(alias="status")]
 AssetFilter = Annotated[str | None, Query()]
@@ -103,13 +105,18 @@ async def get_findings_summary(
 async def ingest_findings_route(
     payload: FindingIngestRequest,
     db: DBSession,
-    _: AdminUser,
+    _: IngestUser,
 ):
-    return await ingest_findings(
+    created: list[dict] = []
+    result = await ingest_findings(
         db,
         [item.model_dump(mode="json") for item in payload.findings],
         source_default=payload.source_tool,
+        created_out=created,
     )
+    if created:
+        await notify_new_findings_if_enabled(db, {"findings": created})
+    return result
 
 
 @router.patch("/{finding_id}")

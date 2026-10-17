@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.models import AlertRule
-from app.notifications import notify_devices_offline, notify_new_device
+from app.notifications import notify_devices_offline, notify_new_device, notify_new_findings, notify_ports_changed
 
 DEFAULT_ALERT_RULES = {
     "new_device": {
@@ -17,6 +17,18 @@ DEFAULT_ALERT_RULES = {
         "description": "Notify when a device goes offline",
         "enabled": True,
         "notify_email": True,
+        "notify_webhook": True,
+    },
+    "ports_changed": {
+        "description": "Notify when a device opens or closes ports",
+        "enabled": True,
+        "notify_email": False,
+        "notify_webhook": True,
+    },
+    "new_findings": {
+        "description": "Notify when new security findings are ingested",
+        "enabled": True,
+        "notify_email": False,
         "notify_webhook": True,
     },
 }
@@ -47,6 +59,20 @@ async def notify_devices_offline_if_enabled(db: AsyncSession, devices: list[dict
     if not rule or not rule.enabled:
         return
     await notify_devices_offline(devices, webhook=rule.notify_webhook, email=rule.notify_email)
+
+
+async def notify_ports_changed_if_enabled(db: AsyncSession, data: dict) -> None:
+    rule = await _get_rule(db, "ports_changed")
+    if not rule or not rule.enabled:
+        return
+    await notify_ports_changed(data, webhook=rule.notify_webhook, email=rule.notify_email)
+
+
+async def notify_new_findings_if_enabled(db: AsyncSession, data: dict) -> None:
+    rule = await _get_rule(db, "new_findings")
+    if not rule or not rule.enabled:
+        return
+    await notify_new_findings(data, webhook=rule.notify_webhook, email=rule.notify_email)
 
 
 async def _get_rule(db: AsyncSession, event_type: str) -> AlertRule | None:

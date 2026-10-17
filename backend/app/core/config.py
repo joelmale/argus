@@ -57,6 +57,8 @@ class Settings(BaseSettings):
     ALLOWED_ORIGINS: list[str] = ["http://localhost:3000"]
 
     NOTIFY_WEBHOOK_URL: str = ""
+    # Sent as "Authorization: Bearer <token>" on webhook posts (e.g. to InSOC).
+    NOTIFY_WEBHOOK_TOKEN: str = ""
     NOTIFY_OFFLINE_MINUTES: int = 0
     SMTP_HOST: str = ""
     SMTP_PORT: int = 587

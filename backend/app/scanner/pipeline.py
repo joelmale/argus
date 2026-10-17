@@ -30,6 +30,7 @@ import ipaddress
 import logging
 import time
 from dataclasses import dataclass
+from datetime import datetime, timezone
 
 from app.scanner.models import (
     DiscoveredHost,
@@ -970,10 +971,13 @@ async def _persist_result(
         return
 
     try:
+        upsert_started = datetime.now(timezone.utc)
         asset, change_type = await upsert_scan_result(db_session, result)
         await ensure_segment_for_asset(db_session, asset, prefix_v4=topology_default_segment_prefix_v4)
         await _persist_snmp_topology(db_session, asset, result, infer_topology_links_from_snmp)
         await _update_summary(summary, broadcast_fn, job_id, result, change_type, db_session, notify_new_device_if_enabled, stage)
+        if change_type == "updated":
+            await _notify_port_changes(db_session, asset, job_id, upsert_started)
     except Exception as exc:
         log.error("DB upsert failed for %s: %s", result.host.ip_address, exc)
         summary.errors.append(f"{result.host.ip_address}: {exc}")
@@ -1011,6 +1015,36 @@ async def _persist_snmp_topology(db_session, asset, result: HostScanResult, infe
     snmp_probe = next((probe for probe in result.probes if probe.probe_type == "snmp" and probe.success), None)
     if snmp_probe:
         await infer_topology_links_from_snmp(db_session, asset, snmp_probe.data)
+
+
+async def _notify_port_changes(db_session, asset, job_id: str, since: datetime) -> None:
+    """Send a ports_changed alert built from the history rows this upsert just wrote."""
+    from sqlalchemy import select
+
+    from app.alerting import notify_ports_changed_if_enabled
+    from app.db.models import AssetHistory
+
+    try:
+        rows = (await db_session.execute(
+            select(AssetHistory).where(
+                AssetHistory.asset_id == asset.id,
+                AssetHistory.changed_at >= since,
+                AssetHistory.change_type.like("port\\_%"),
+            )
+        )).scalars().all()
+        changes = {key: diff for row in rows for key, diff in (row.diff or {}).items()}
+        if not changes:
+            return
+        await notify_ports_changed_if_enabled(db_session, {
+            "job_id": job_id,
+            "asset_id": str(asset.id),
+            "ip": asset.ip_address,
+            "hostname": asset.hostname,
+            "changes": changes,
+        })
+    except Exception as exc:
+        # Alerting is best-effort; never fail the asset upsert over it.
+        log.warning("ports_changed alert failed for %s: %s", getattr(asset, "ip_address", "?"), exc)
 
 
 async def _update_summary(

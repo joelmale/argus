@@ -18,7 +18,13 @@ _BLOCKED_NMAP_FLAGS: frozenset[str] = frozenset({
     "-sI", "--idlescan",
     # Route scans through proxies
     "--proxies",
+    # Read files from the scanner host
+    "--excludefile", "--resume", "--stylesheet",
 })
+
+# --script may name scripts or categories, never a filesystem path: a custom
+# .nse file runs arbitrary Lua with the scanner's raw-socket privileges.
+_SCRIPT_PATH_MARKERS: tuple[str, ...] = ("/", "\\", "..", ".nse", "~")
 
 # Prefix-based checks for flags that embed a value without a separator,
 # e.g. -oN/tmp/out or --script-args=foo
@@ -54,9 +60,14 @@ def validate_nmap_args(args: str) -> None:
     except ValueError as exc:
         raise ValueError(f"Malformed nmap argument string: {exc}") from exc
 
-    for token in tokens:
+    for index, token in enumerate(tokens):
         # Normalise --flag=value → --flag
         flag = token.split("=")[0]
+
+        if flag == "--script":
+            value = token.split("=", 1)[1] if "=" in token else (tokens[index + 1] if index + 1 < len(tokens) else "")
+            if any(marker in value for marker in _SCRIPT_PATH_MARKERS):
+                raise ValueError("--script must name built-in scripts or categories, not file paths.")
 
         if flag in _BLOCKED_NMAP_FLAGS:
             raise ValueError(

@@ -897,6 +897,11 @@ empty-state handling, and first-use experience without touching core data paths.
 
 ### Phase 10a: Security and Ops Hardening
 
+Status: complete (commit `7fd37dd`). `--script` was later restricted to
+script/category names (no file paths), and `--excludefile`, `--resume` and
+`--stylesheet` were blocked. Custom nmap arguments are not currently reachable
+from the API.
+
 These items are low blast-radius fixes that should land as soon as possible,
 independent of the UX work below.
 
