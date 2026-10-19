@@ -61,7 +61,7 @@ async def test_alert_rules_gate_notification_dispatch(monkeypatch):
     async with AsyncSessionLocal() as db:
         await ensure_default_alert_rules(db)
         rules = (await db.execute(select(AlertRule).order_by(AlertRule.event_type.asc()))).scalars().all()
-        assert {rule.event_type for rule in rules} == {"devices_offline", "new_device"}
+        assert {rule.event_type for rule in rules} == {"devices_offline", "new_device", "ports_changed", "new_findings"}
 
         new_device_rule = next(rule for rule in rules if rule.event_type == "new_device")
         new_device_rule.notify_email = False
