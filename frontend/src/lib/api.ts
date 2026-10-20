@@ -177,6 +177,15 @@ export const findingsApi = {
   unack: (id: number) => api.post(`/api/v1/findings/${id}/unack`),
 };
 
+// ─── Security (InSOC, proxied by the Argus backend) ─────────────
+export const socApi = {
+  status: () => api.get("/api/v1/soc/status"),
+  incidents: (limit = 50) => api.get("/api/v1/soc/incidents", { params: { limit } }),
+  incident: (id: string) => api.get(`/api/v1/soc/incidents/${encodeURIComponent(id)}`),
+  resume: (id: string, payload: { approve: string[]; deny: string[] }) =>
+    api.post(`/api/v1/soc/incidents/${encodeURIComponent(id)}/resume`, payload),
+};
+
 // ─── Topology endpoint ──────────────────────────────────────────
 export const topologyApi = {
   getGraph: (ifNoneMatch?: string) =>

@@ -73,3 +73,22 @@ API (admin or service role):
 InSOC pushes after each recorded run, using the finding key as `external_id`, and
 pulls acknowledgements before classifying. So acknowledging in either UI
 silences re-alerts in both. Its key needs the **service** role.
+
+## Security page (Phase 4)
+
+**Security** in the Argus sidebar shows InSOC's incidents. For each one you see the
+report, the findings from that run and their states, and any remediation actions
+waiting for approval. Argus's backend proxies InSOC:
+
+| Argus route | Who | InSOC route |
+|---|---|---|
+| `GET /api/v1/soc/status` | any user | `/healthz` |
+| `GET /api/v1/soc/incidents` | any user | `GET /incidents` (summary fields only) |
+| `GET /api/v1/soc/incidents/{id}` | any user | `GET /incidents/{id}` (no internal ledger) |
+| `POST /api/v1/soc/incidents/{id}/resume` | admin, audit-logged | `POST /incidents/{id}/resume` |
+
+Configure on the Argus **backend**: `INSOC_URL` (e.g. `http://192.168.100.20:8765`)
+and `INSOC_API_TOKEN` (InSOC's API token, stored as a secret). The token never
+reaches the browser. Incident ids are validated against InSOC's format before
+anything is forwarded. The report is model-written, so it's rendered as plain
+text, never HTML. Phoenix traces and InSOC's own console still work as before.
