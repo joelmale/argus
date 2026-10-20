@@ -27,6 +27,12 @@ class Settings(BaseSettings):
     SCANNER_INTERVAL_MINUTES: int = 60
     SCANNER_NMAP_ARGS: str = "-sV -O --osscan-guess -T4"
     SCANNER_PASSIVE_ARP: bool = True
+    # A "running" scan with no recorded progress for this long is treated as orphaned
+    # (its worker died) and marked failed so it stops blocking the queue.
+    SCAN_JOB_STALE_MINUTES: int = 180
+    # On scanner worker start, fail any scan still marked running. Safe with the single
+    # scanner worker Argus ships with; disable if you run several scanner workers.
+    SCAN_INTERRUPT_ORPHANS_ON_STARTUP: bool = True
     ASSET_HEARTBEAT_INTERVAL_SECONDS: int = 10
     ASSET_HEARTBEAT_TARGET_INTERVAL_SECONDS: int = 30
     ASSET_HEARTBEAT_MISS_THRESHOLD: int = 3

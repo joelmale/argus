@@ -20,7 +20,7 @@ from uuid import UUID
 
 from celery import Celery
 from celery.signals import worker_ready, worker_shutdown
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from sqlalchemy import select
 
 from app.core.config import settings
@@ -818,6 +818,14 @@ async def _enqueue_scheduled_scan() -> None:
                 if not getattr(config, "scheduled_scans_enabled", False):
                     log.debug("Scheduled scan skipped: scheduler disabled")
                 return
+            stale = await _interrupt_orphaned_jobs(
+                db,
+                reason=f"No progress for {settings.SCAN_JOB_STALE_MINUTES} minutes; treated as orphaned",
+                stale_before=datetime.now(timezone.utc) - timedelta(minutes=settings.SCAN_JOB_STALE_MINUTES),
+            )
+            if stale:
+                await db.flush()
+                log.warning("Interrupted %d stale scan job(s): %s", len(stale), ", ".join(stale))
             existing_scheduled = await db.scalar(
                 select(ScanJob.id).where(
                     ScanJob.parent_id.is_(None),
@@ -1004,6 +1012,68 @@ async def _has_active_scan(db) -> bool:
     return result.scalar_one_or_none() is not None
 
 
+def _job_last_activity(job) -> datetime | None:
+    """Latest sign of life for a job: last recorded progress, else start, else creation."""
+    candidates = [job.started_at or job.created_at]
+    stamp = (job.result_summary or {}).get("last_progress_at")
+    if stamp:
+        try:
+            candidates.append(datetime.fromisoformat(stamp))
+        except (TypeError, ValueError):
+            pass
+    candidates = [c if c.tzinfo else c.replace(tzinfo=timezone.utc) for c in candidates if c is not None]
+    return max(candidates) if candidates else None
+
+
+async def _interrupt_orphaned_jobs(db, *, reason: str, stale_before: datetime | None = None) -> list[str]:
+    """Mark "running" jobs as failed so they stop blocking the scan queue.
+
+    With `stale_before`, only jobs whose last activity (including any running child
+    chunk's) is older than that are touched; without it, every running job is. Pending
+    chunks of an interrupted parent are cancelled. Returns the interrupted job ids.
+    """
+    running = list((await db.execute(select(ScanJob).where(ScanJob.status == "running"))).scalars().all())
+    if not running:
+        return []
+
+    children: dict = {}
+    for job in running:
+        if job.parent_id is not None:
+            children.setdefault(job.parent_id, []).append(job)
+
+    def activity(job) -> datetime | None:
+        stamps = [_job_last_activity(j) for j in [job, *children.get(job.id, [])]]
+        stamps = [s for s in stamps if s is not None]
+        return max(stamps) if stamps else None
+
+    now = datetime.now(timezone.utc)
+    interrupted = []
+    for job in running:
+        last = activity(job)
+        if stale_before is not None and last is not None and last >= stale_before:
+            continue
+        job.status = "failed"
+        job.finished_at = now
+        job.result_summary = {
+            **(job.result_summary or {}),
+            "stage": "interrupted",
+            "error": reason,
+            "interrupted_at": now.isoformat(),
+        }
+        interrupted.append(job)
+
+    parent_ids = [job.id for job in interrupted if job.parent_id is None]
+    if parent_ids:
+        pending_children = (await db.execute(
+            select(ScanJob).where(ScanJob.parent_id.in_(parent_ids), ScanJob.status == "pending")
+        )).scalars().all()
+        for child in pending_children:
+            child.status = "cancelled"
+            child.finished_at = now
+
+    return [str(job.id) for job in interrupted]
+
+
 async def _next_queue_position(db) -> int:
     result = await db.execute(
         select(ScanJob)
@@ -1056,6 +1126,13 @@ async def _resume_pending_queue_on_startup() -> None:
 
     async with session_factory() as db:
         async with acquire_scan_queue_lock(db):
+            if settings.SCAN_INTERRUPT_ORPHANS_ON_STARTUP:
+                # No scan can be running in a worker that is only now becoming ready, so
+                # anything still marked running was orphaned by a restart or crash.
+                orphaned = await _interrupt_orphaned_jobs(db, reason="Scanner restarted while this scan was running")
+                if orphaned:
+                    await db.commit()
+                    log.warning("Scanner startup interrupted %d orphaned scan job(s): %s", len(orphaned), ", ".join(orphaned))
             if await _has_active_scan(db):
                 return
             next_job = await _get_next_queued_job(db)
@@ -1088,6 +1165,7 @@ async def _record_job_progress(db, job, payload: dict, progress_state: dict) -> 
     data = payload.get("data", {})
     summary = dict(job.result_summary or {})
     summary.update(data)
+    summary["last_progress_at"] = datetime.now(timezone.utc).isoformat()
     job.result_summary = summary
 
     now = time.monotonic()
