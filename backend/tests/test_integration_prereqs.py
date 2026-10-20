@@ -133,3 +133,84 @@ async def test_webhook_failure_is_swallowed(monkeypatch):
     monkeypatch.setattr(settings, "NOTIFY_WEBHOOK_URL", "http://insoc.test/hooks/argus")
 
     await _send_webhook({"event": "new_device", "data": {}})  # must not raise
+
+
+# ── admin-created API keys for other users ───────────────────────────────────
+
+@pytest.fixture
+async def service_user_id():
+    async with engine.begin() as conn:
+        result = await conn.execute(
+            User.__table__.insert().values(
+                username="insoc",
+                hashed_password=hash_password("service-pass"),
+                role="service",
+                is_active=True,
+            ).returning(User.__table__.c.id)
+        )
+        return str(result.scalar_one())
+
+
+@pytest.mark.asyncio
+async def test_admin_creates_key_for_service_user(api_client, admin_user, service_user_id):
+    admin_headers = {"Authorization": f"Bearer {admin_user['token']}"}
+    created = await api_client.post(
+        "/api/v1/auth/api-keys", json={"name": "insoc", "user_id": service_user_id}, headers=admin_headers
+    )
+    assert created.status_code == 201
+    body = created.json()
+    assert body["user_id"] == service_user_id
+    assert body["owner_username"] == "insoc"
+
+    async with AsyncSessionLocal() as db:
+        now = datetime.now(timezone.utc)
+        db.add(Asset(ip_address="192.168.77.9", status="online", first_seen=now, last_seen=now))
+        await db.commit()
+
+    key_headers = {"X-API-Key": body["token"]}
+    ingest = await api_client.post(
+        "/api/v1/findings/ingest",
+        json={"source_tool": "insoc", "findings": [{"ip_address": "192.168.77.9", "title": "t", "severity": "low"}]},
+        headers=key_headers,
+    )
+    assert ingest.status_code == 200
+    assert (await api_client.get("/api/v1/findings/", headers=key_headers)).status_code == 200
+    assert (await api_client.get("/api/v1/auth/users", headers=key_headers)).status_code == 403
+    assert (await api_client.get("/api/v1/auth/api-keys", headers=key_headers)).status_code == 403
+
+    listed = await api_client.get("/api/v1/auth/api-keys", headers=admin_headers)
+    assert [k["owner_username"] for k in listed.json()] == ["insoc"]
+    filtered = await api_client.get(f"/api/v1/auth/api-keys?user_id={admin_user['id']}", headers=admin_headers)
+    assert filtered.json() == []
+
+    deleted = await api_client.delete(f"/api/v1/auth/api-keys/{body['id']}", headers=admin_headers)
+    assert deleted.status_code == 204
+    assert (await api_client.get("/api/v1/findings/", headers=key_headers)).status_code == 401
+
+    logs = await api_client.get("/api/v1/auth/audit-logs", headers=admin_headers)
+    assert logs.status_code == 200
+    created_log = next(e for e in logs.json() if e["action"] == "auth.api_key_created")
+    assert created_log["details"]["owner_username"] == "insoc"
+
+
+@pytest.mark.asyncio
+async def test_api_key_defaults_to_caller_and_rejects_unknown_owner(api_client, admin_user):
+    headers = {"Authorization": f"Bearer {admin_user['token']}"}
+    own = await api_client.post("/api/v1/auth/api-keys", json={"name": "mine"}, headers=headers)
+    assert own.json()["user_id"] == admin_user["id"]
+    missing = await api_client.post(
+        "/api/v1/auth/api-keys",
+        json={"name": "x", "user_id": "00000000-0000-0000-0000-000000000000"},
+        headers=headers,
+    )
+    assert missing.status_code == 404
+
+
+@pytest.mark.asyncio
+async def test_non_admin_cannot_create_key_for_others(api_client, viewer_user, service_user_id):
+    response = await api_client.post(
+        "/api/v1/auth/api-keys",
+        json={"name": "x", "user_id": service_user_id},
+        headers={"Authorization": f"Bearer {viewer_user['token']}"},
+    )
+    assert response.status_code == 403

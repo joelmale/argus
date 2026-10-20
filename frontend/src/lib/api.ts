@@ -61,7 +61,7 @@ export const authApi = {
   updateUser: (id: string, payload: { role?: "admin" | "viewer" | "service"; is_active?: boolean }) =>
     api.patch(`/api/v1/auth/users/${id}`, payload),
   listApiKeys: () => api.get("/api/v1/auth/api-keys"),
-  createApiKey: (payload: { name: string }) => api.post("/api/v1/auth/api-keys", payload),
+  createApiKey: (payload: { name: string; user_id?: string }) => api.post("/api/v1/auth/api-keys", payload),
   deleteApiKey: (id: string) => api.delete(`/api/v1/auth/api-keys/${id}`),
   listAuditLogs: () => api.get("/api/v1/auth/audit-logs"),
   listAlertRules: () => api.get("/api/v1/auth/alert-rules"),
