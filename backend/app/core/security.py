@@ -36,11 +36,18 @@ def create_access_token(subject: str, expire_minutes: int | None = None) -> str:
 
 
 def decode_token(token: str) -> str | None:
+    """Subject of a login (access) token, or None.
+
+    Special-purpose tokens signed with the same key (e.g. password reset) carry a
+    `purpose` claim and must never be accepted as a login token.
+    """
     try:
         payload = jwt.decode(token, settings.APP_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
-        return payload.get("sub")
     except JWTError:
         return None
+    if payload.get("purpose"):
+        return None
+    return payload.get("sub")
 
 
 def _password_fingerprint(hashed_password: str) -> str:

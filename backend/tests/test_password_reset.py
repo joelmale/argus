@@ -93,3 +93,22 @@ async def test_reset_rejects_garbage_token(api_client):
 
 def test_verify_helper_sanity():
     assert verify_password("a", hash_password("a"))
+
+
+def test_reset_token_is_not_a_login_token():
+    from app.core.security import decode_token
+
+    assert decode_token(create_password_reset_token("user-1", hash_password("pw"))) is None
+
+
+@pytest.mark.asyncio
+async def test_reset_token_cannot_authenticate_api_requests(api_client, admin_user):
+    from app.db.models import User
+    from app.db.session import AsyncSessionLocal
+
+    async with AsyncSessionLocal() as db:
+        user = await db.get(User, admin_user["id"])
+        token = create_password_reset_token(admin_user["id"], user.hashed_password)
+
+    response = await api_client.get("/api/v1/auth/me", headers={"Authorization": f"Bearer {token}"})
+    assert response.status_code == 401
