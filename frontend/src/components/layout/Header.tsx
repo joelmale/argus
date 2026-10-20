@@ -14,6 +14,7 @@ const PAGE_TITLES: Record<string, string> = {
   '/dashboard': 'Dashboard',
   '/assets':    'Asset Inventory',
   '/findings':  'Vulnerability Findings',
+  '/soc':       'Security Operations',
   '/inventory': 'Inventory Statistics',
   '/snmp':      'SNMP Monitoring',
   '/topology':  'Topology Map',

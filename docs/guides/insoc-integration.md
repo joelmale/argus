@@ -42,3 +42,53 @@ Delivery failures are logged and never interrupt scans or ingest.
 
 Both the `backend` and `scanner` containers need the webhook and SMTP
 variables, because scan-time alerts fire from the scanner worker.
+
+## Findings lifecycle (Phase 3)
+
+Argus is the system of record for findings, including InSOC's. Each finding is
+`open`, `acknowledged` (open, with `ack_until` in the future), `resolved` or
+`ignored` (suppressed).
+
+Re-ingesting a finding (same asset, `source_tool` and `external_id`; or same
+title when there is no external id) applies these rules:
+
+| Situation | Result |
+|---|---|
+| Seen again | `occurrences` +1, `last_seen` updated, title refreshed |
+| Seen again after being resolved | reopened (`state: open`), acknowledgement cleared |
+| Seen at a higher severity | escalated: acknowledgement cleared so it alerts again |
+| Ignored | stays ignored whatever the severity |
+| Listed in `resolved_external_ids` | resolved (`resolved_at` set) |
+
+The ingest response adds `reopened`, `escalated` and `resolved` counts.
+
+API (admin or service role):
+
+- `POST /api/v1/findings/{id}/ack` `{"hours": 24, "note": "..."}`; leave out `hours`
+  to acknowledge until the finding resolves.
+- `POST /api/v1/findings/{id}/unack`
+- `GET /api/v1/findings/?source_tool=insoc&external_id=<key>`
+- `PATCH /api/v1/findings/{id}` `{"status": "open" | "resolved" | "ignored"}` (admin)
+
+InSOC pushes after each recorded run, using the finding key as `external_id`, and
+pulls acknowledgements before classifying. So acknowledging in either UI
+silences re-alerts in both. Its key needs the **service** role.
+
+## Security page (Phase 4)
+
+**Security** in the Argus sidebar shows InSOC's incidents. For each one you see the
+report, the findings from that run and their states, and any remediation actions
+waiting for approval. Argus's backend proxies InSOC:
+
+| Argus route | Who | InSOC route |
+|---|---|---|
+| `GET /api/v1/soc/status` | any user | `/healthz` |
+| `GET /api/v1/soc/incidents` | any user | `GET /incidents` (summary fields only) |
+| `GET /api/v1/soc/incidents/{id}` | any user | `GET /incidents/{id}` (no internal ledger) |
+| `POST /api/v1/soc/incidents/{id}/resume` | admin, audit-logged | `POST /incidents/{id}/resume` |
+
+Configure on the Argus **backend**: `INSOC_URL` (e.g. `http://192.168.100.20:8765`)
+and `INSOC_API_TOKEN` (InSOC's API token, stored as a secret). The token never
+reaches the browser. Incident ids are validated against InSOC's format before
+anything is forwarded. The report is model-written, so it's rendered as plain
+text, never HTML. Phoenix traces and InSOC's own console still work as before.

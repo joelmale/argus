@@ -167,12 +167,23 @@ export const scansApi = {
 };
 
 export const findingsApi = {
-  list: (params?: { severity?: string; status?: string; asset_id?: string }) =>
+  list: (params?: { severity?: string; status?: string; asset_id?: string; source_tool?: string }) =>
     api.get("/api/v1/findings/", { params }),
   summary: () => api.get("/api/v1/findings/summary"),
   ingest: (payload: { source_tool: string; findings: Array<Record<string, unknown>> }) =>
     api.post("/api/v1/findings/ingest", payload),
   update: (id: number, payload: { status: string }) => api.patch(`/api/v1/findings/${id}`, payload),
+  ack: (id: number, payload: { hours?: number | null; note?: string }) => api.post(`/api/v1/findings/${id}/ack`, payload),
+  unack: (id: number) => api.post(`/api/v1/findings/${id}/unack`),
+};
+
+// ─── Security (InSOC, proxied by the Argus backend) ─────────────
+export const socApi = {
+  status: () => api.get("/api/v1/soc/status"),
+  incidents: (limit = 50) => api.get("/api/v1/soc/incidents", { params: { limit } }),
+  incident: (id: string) => api.get(`/api/v1/soc/incidents/${encodeURIComponent(id)}`),
+  resume: (id: string, payload: { approve: string[]; deny: string[] }) =>
+    api.post(`/api/v1/soc/incidents/${encodeURIComponent(id)}/resume`, payload),
 };
 
 // ─── Topology endpoint ──────────────────────────────────────────

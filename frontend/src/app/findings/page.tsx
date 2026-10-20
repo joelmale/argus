@@ -5,22 +5,28 @@ import { useState } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useFindings, useIngestFindings, useUpdateFinding } from '@/hooks/useFindings'
+import { useAckFinding, useFindings, useIngestFindings, useUnackFinding, useUpdateFinding } from '@/hooks/useFindings'
 import { cn, severityColor } from '@/lib/utils'
 
 export default function FindingsPage() {
   const { data: currentUser } = useCurrentUser()
   const [status, setStatus] = useState('')
   const [severity, setSeverity] = useState('')
+  const [source, setSource] = useState('')
   const [importJson, setImportJson] = useState('')
   const [importError, setImportError] = useState<string | null>(null)
   const [importSuccessMessage, setImportSuccessMessage] = useState<string | null>(null)
   const { data: findings = [] } = useFindings({
     status: status || undefined,
     severity: severity || undefined,
+    source_tool: source || undefined,
   })
   const { mutate: ingest, isPending: isIngesting } = useIngestFindings()
   const { mutate: updateFinding, isPending: isUpdating } = useUpdateFinding()
+  const { mutate: ackFinding, isPending: isAcking } = useAckFinding()
+  const { mutate: unackFinding, isPending: isUnacking } = useUnackFinding()
+  const canTriage = currentUser?.role === 'admin' || currentUser?.role === 'service'
+  const busy = isUpdating || isAcking || isUnacking
 
   function handleImport() {
     setImportError(null)
@@ -56,7 +62,7 @@ export default function FindingsPage() {
       <div className="max-w-7xl mx-auto space-y-6">
         <div>
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Findings</h2>
-          <p className="text-sm text-zinc-500 mt-0.5">Imported assessment results correlated to assets and services.</p>
+          <p className="text-sm text-zinc-500 mt-0.5">Assessment results and InSOC findings, correlated to assets. Acknowledge a known issue to stop re-alerts until it resolves or gets worse.</p>
         </div>
 
         {currentUser?.role === 'admin' && (
@@ -106,6 +112,11 @@ export default function FindingsPage() {
             <option value="resolved">Resolved</option>
             <option value="ignored">Ignored</option>
           </select>
+          <select value={source} onChange={(event) => setSource(event.target.value)} className="px-3 py-2 rounded-lg text-sm bg-white dark:bg-zinc-900 border border-gray-200 dark:border-zinc-800">
+            <option value="">All sources</option>
+            <option value="insoc">InSOC</option>
+            <option value="import">Import</option>
+          </select>
         </div>
 
         <Card>
@@ -123,24 +134,68 @@ export default function FindingsPage() {
                       {finding.port_number ? ` · ${finding.port_number}/${finding.protocol || 'tcp'}` : ''}
                     </p>
                     {finding.description && <p className="text-sm text-zinc-600 dark:text-zinc-300 mt-2">{finding.description}</p>}
+                    <p className="text-xs text-zinc-500 mt-1">
+                      Seen {finding.occurrences}× · last {new Date(finding.last_seen).toLocaleString()}
+                      {finding.state === 'acknowledged' && finding.ack_until && (
+                        <>
+                          {' · acknowledged'}
+                          {finding.acked_by ? ` by ${finding.acked_by}` : ''}
+                          {new Date(finding.ack_until).getFullYear() < new Date().getFullYear() + 5
+                            ? ` until ${new Date(finding.ack_until).toLocaleString()}`
+                            : ' until resolved'}
+                          {finding.ack_note ? ` (${finding.ack_note})` : ''}
+                        </>
+                      )}
+                    </p>
                   </div>
                   <div className="flex items-center gap-2">
                     <span className={cn("px-2 py-0.5 rounded-full text-xs border capitalize", severityColor(finding.severity))}>{finding.severity}</span>
-                    <span className="px-2 py-0.5 rounded-full text-xs bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300">{finding.status}</span>
+                    <span className={cn(
+                      "px-2 py-0.5 rounded-full text-xs",
+                      finding.state === 'acknowledged'
+                        ? 'bg-sky-500/15 text-sky-600 dark:text-sky-300'
+                        : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300',
+                    )}>{finding.state}</span>
                   </div>
                 </div>
                 <div className="flex flex-wrap gap-3 items-center">
                   <Link href={`/assets/${finding.asset_id}`} className="text-sm text-sky-500 hover:text-sky-600">
                     View affected asset
                   </Link>
+                  {canTriage && finding.state === 'open' && (
+                    <>
+                      <button onClick={() => ackFinding({ id: finding.id, hours: 24 })} disabled={busy} className="text-sm text-sky-600 hover:text-sky-700">
+                        Ack 24h
+                      </button>
+                      <button onClick={() => ackFinding({ id: finding.id, hours: 24 * 7 })} disabled={busy} className="text-sm text-sky-600 hover:text-sky-700">
+                        Ack 7d
+                      </button>
+                      <button onClick={() => ackFinding({ id: finding.id, hours: null })} disabled={busy} className="text-sm text-sky-600 hover:text-sky-700">
+                        Ack until resolved
+                      </button>
+                    </>
+                  )}
+                  {canTriage && finding.state === 'acknowledged' && (
+                    <button onClick={() => unackFinding(finding.id)} disabled={busy} className="text-sm text-sky-600 hover:text-sky-700">
+                      Unacknowledge
+                    </button>
+                  )}
                   {currentUser?.role === 'admin' && (
                     <>
-                      <button onClick={() => updateFinding({ id: finding.id, status: 'resolved' })} disabled={isUpdating} className="text-sm text-emerald-600 hover:text-emerald-700">
-                        Mark resolved
-                      </button>
-                      <button onClick={() => updateFinding({ id: finding.id, status: 'ignored' })} disabled={isUpdating} className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200">
-                        Ignore
-                      </button>
+                      {finding.status !== 'resolved' && (
+                        <button onClick={() => updateFinding({ id: finding.id, status: 'resolved' })} disabled={busy} className="text-sm text-emerald-600 hover:text-emerald-700">
+                          Mark resolved
+                        </button>
+                      )}
+                      {finding.status !== 'ignored' ? (
+                        <button onClick={() => updateFinding({ id: finding.id, status: 'ignored' })} disabled={busy} className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200">
+                          Ignore
+                        </button>
+                      ) : (
+                        <button onClick={() => updateFinding({ id: finding.id, status: 'open' })} disabled={busy} className="text-sm text-zinc-500 hover:text-zinc-700 dark:hover:text-zinc-200">
+                          Stop ignoring
+                        </button>
+                      )}
                     </>
                   )}
                 </div>

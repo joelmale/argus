@@ -5,7 +5,7 @@ import { findingsApi } from '@/lib/api'
 import { useAppStore } from '@/store'
 import type { Finding } from '@/types'
 
-export function useFindings(params?: { severity?: string; status?: string; asset_id?: string }) {
+export function useFindings(params?: { severity?: string; status?: string; asset_id?: string; source_tool?: string }) {
   const wsConnected = useAppStore((state) => state.wsConnected)
   return useQuery<Finding[]>({
     queryKey: ['findings', params],
@@ -19,7 +19,7 @@ export function useFindings(params?: { severity?: string; status?: string; asset
 
 export function useFindingsSummary() {
   const wsConnected = useAppStore((state) => state.wsConnected)
-  return useQuery<{ total: number; open: number; severity_counts: Record<string, number> }>({
+  return useQuery<{ total: number; open: number; acknowledged: number; severity_counts: Record<string, number> }>({
     queryKey: ['findings', 'summary'],
     queryFn: async () => {
       const { data } = await findingsApi.summary()
@@ -47,6 +47,26 @@ export function useUpdateFinding() {
     onSuccess: () => {
       qc.invalidateQueries({ queryKey: ['findings'] })
       qc.invalidateQueries({ queryKey: ['assets'] })
+    },
+  })
+}
+
+export function useAckFinding() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: ({ id, hours, note }: { id: number; hours: number | null; note?: string }) => findingsApi.ack(id, { hours, note }),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['findings'] })
+    },
+  })
+}
+
+export function useUnackFinding() {
+  const qc = useQueryClient()
+  return useMutation({
+    mutationFn: (id: number) => findingsApi.unack(id),
+    onSuccess: () => {
+      qc.invalidateQueries({ queryKey: ['findings'] })
     },
   })
 }

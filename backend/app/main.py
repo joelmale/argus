@@ -15,7 +15,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request as StarletteRequest
 from starlette.responses import Response as StarletteResponse
 
-from app.api.routes import assets, auth, findings, scans, system, topology, websocket
+from app.api.routes import assets, auth, findings, scans, soc, system, topology, websocket
 from app.bootstrap import ensure_system_defaults
 from app.core.config import settings
 from app.core.logging import configure_logging
@@ -72,6 +72,7 @@ app.include_router(findings.router, prefix="/api/v1/findings", tags=["findings"]
 app.include_router(scans.router, prefix="/api/v1/scans", tags=["scans"])
 app.include_router(topology.router, prefix="/api/v1/topology", tags=["topology"])
 app.include_router(system.router, prefix="/api/v1/system", tags=["system"])
+app.include_router(soc.router, prefix="/api/v1/soc", tags=["soc"])
 app.include_router(websocket.router, prefix="/ws", tags=["websocket"])
 
 
