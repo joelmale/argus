@@ -159,6 +159,7 @@ async def _load_open_port_counts(db: AsyncSession, asset_ids: list[UUID]) -> dic
     return {asset_id: int(count) for asset_id, count in result.all()}
 
 
+@router.get("", response_model=list[AssetSummary], response_model_exclude_none=True, include_in_schema=False)
 @router.get("/", response_model=list[AssetSummary], response_model_exclude_none=True)
 async def list_assets(
     search: AssetSearch = None,

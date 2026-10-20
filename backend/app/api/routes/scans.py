@@ -283,6 +283,7 @@ async def _create_scan_job_graph(
     return parent, children
 
 
+@router.get("", include_in_schema=False)
 @router.get("/")
 async def list_scans(
     db: DBSession,

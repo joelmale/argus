@@ -71,6 +71,7 @@ def _serialize_finding(finding: Finding) -> dict:
     }
 
 
+@router.get("", include_in_schema=False)
 @router.get("/")
 async def list_findings(
     severity: SeverityFilter = None,
