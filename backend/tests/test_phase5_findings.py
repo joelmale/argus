@@ -56,7 +56,8 @@ async def test_ingest_findings_creates_and_updates_records():
         await db.delete(asset)
         await db.commit()
 
-    assert first == {"created": 1, "updated": 0, "skipped": 0}
-    assert second == {"created": 0, "updated": 1, "skipped": 0}
+    assert {k: first[k] for k in ("created", "updated", "skipped")} == {"created": 1, "updated": 0, "skipped": 0}
+    assert {k: second[k] for k in ("created", "updated", "skipped")} == {"created": 0, "updated": 1, "skipped": 0}
+    assert second["escalated"] == 1  # medium -> high
     assert summary["total"] == 1
     assert summary["severity_counts"]["high"] == 1

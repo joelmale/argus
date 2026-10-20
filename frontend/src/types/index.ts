@@ -195,6 +195,12 @@ export interface Finding {
   metadata: Record<string, unknown> | null;
   first_seen: string;
   last_seen: string;
+  state: "open" | "acknowledged" | "resolved" | "ignored";
+  occurrences: number;
+  ack_until: string | null;
+  ack_note: string | null;
+  acked_by: string | null;
+  resolved_at: string | null;
 }
 
 export interface BackupDriver {

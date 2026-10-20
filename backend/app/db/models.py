@@ -511,6 +511,13 @@ class Finding(Base):
     finding_metadata: Mapped[dict | None] = mapped_column("metadata", JSONB)
     first_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     last_seen: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
+    # Lifecycle. status: open | resolved | ignored (suppressed). An open finding with
+    # ack_until in the future is "acknowledged": known, and not re-alerted until then.
+    occurrences: Mapped[int] = mapped_column(Integer, default=1, server_default="1", nullable=False)
+    ack_until: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    ack_note: Mapped[str | None] = mapped_column(Text)
+    acked_by: Mapped[str | None] = mapped_column(String(64))
+    resolved_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
 
 
 class ConfigBackupPolicy(Base):
