@@ -50,6 +50,7 @@ class UserUpdateRequest(BaseModel):
 
 class ApiKeyCreateRequest(BaseModel):
     name: str
+    user_id: UUID | None = None
 
 
 class AlertRuleUpdateRequest(BaseModel):
@@ -108,9 +109,11 @@ def _serialize_user(user: User) -> dict:
     }
 
 
-def _serialize_api_key(api_key: ApiKey) -> dict:
+def _serialize_api_key(api_key: ApiKey, owner: User | None = None) -> dict:
     return {
         "id": str(api_key.id),
+        "user_id": str(api_key.user_id),
+        "owner_username": owner.username if owner else None,
         "name": api_key.name,
         "key_prefix": api_key.key_prefix,
         "is_active": api_key.is_active,
@@ -374,9 +377,13 @@ async def update_user(
 async def list_api_keys(
     db: DBSession,
     current_user: AdminUser,
+    user_id: UUID | None = None,
 ):
-    result = await db.execute(select(ApiKey).where(ApiKey.user_id == current_user.id).order_by(ApiKey.created_at.desc()))
-    return [_serialize_api_key(api_key) for api_key in result.scalars().all()]
+    query = select(ApiKey, User).join(User, User.id == ApiKey.user_id).order_by(ApiKey.created_at.desc())
+    if user_id is not None:
+        query = query.where(ApiKey.user_id == user_id)
+    result = await db.execute(query)
+    return [_serialize_api_key(api_key, owner) for api_key, owner in result.all()]
 
 
 @router.post("/api-keys", status_code=status.HTTP_201_CREATED)
@@ -385,9 +392,14 @@ async def create_api_key(
     db: DBSession,
     current_user: AdminUser,
 ):
+    owner = current_user
+    if payload.user_id is not None and payload.user_id != current_user.id:
+        owner = await db.get(User, payload.user_id)
+        if owner is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     raw_key = generate_api_key()
     api_key = ApiKey(
-        user_id=current_user.id,
+        user_id=owner.id,
         name=payload.name.strip() or "API key",
         key_prefix=api_key_prefix(raw_key),
         hashed_key=hash_api_key(raw_key),
@@ -401,11 +413,16 @@ async def create_api_key(
         user=current_user,
         target_type="api_key",
         target_id=str(api_key.id),
-        details={"name": api_key.name, "key_prefix": api_key.key_prefix},
+        details={
+            "name": api_key.name,
+            "key_prefix": api_key.key_prefix,
+            "owner_id": str(owner.id),
+            "owner_username": owner.username,
+        },
     )
     await db.commit()
     await db.refresh(api_key)
-    return {**_serialize_api_key(api_key), "token": raw_key}
+    return {**_serialize_api_key(api_key, owner), "token": raw_key}
 
 
 @router.delete("/api-keys/{api_key_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -415,15 +432,21 @@ async def delete_api_key(
     current_user: AdminUser,
 ):
     api_key = await db.get(ApiKey, api_key_id)
-    if api_key is None or api_key.user_id != current_user.id:
+    if api_key is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="API key not found")
+    owner = await db.get(User, api_key.user_id)
     await log_audit_event(
         db,
         action="auth.api_key_deleted",
         user=current_user,
         target_type="api_key",
         target_id=str(api_key.id),
-        details={"name": api_key.name, "key_prefix": api_key.key_prefix},
+        details={
+            "name": api_key.name,
+            "key_prefix": api_key.key_prefix,
+            "owner_id": str(api_key.user_id),
+            "owner_username": owner.username if owner else None,
+        },
     )
     await db.delete(api_key)
     await db.commit()

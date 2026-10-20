@@ -7,7 +7,11 @@ webhooks; the codebases and databases stay separate.
 ## Service account
 
 Create a user with role **Service (integrations)** in Settings → Users, then
-create an API key for it. A service account can:
+open Settings → API Keys, pick that user in the **Owner** selector and create
+the key. Admins can create, list and revoke keys on behalf of any user, so the
+service account never needs to sign in or be promoted to admin. The same is
+available via the API: `POST /api/v1/auth/api-keys` with `{"name": "...", "user_id": "<uuid>"}`.
+A service account can:
 
 - read everything a viewer can (assets, topology, findings), and
 - call `POST /api/v1/findings/ingest`.

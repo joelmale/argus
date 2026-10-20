@@ -30,6 +30,8 @@ export interface CurrentUser {
 
 export interface ApiKey {
   id: string;
+  user_id: string;
+  owner_username: string | null;
   name: string;
   key_prefix: string;
   is_active: boolean;

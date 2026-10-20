@@ -218,7 +218,7 @@ export function useCreateApiKey() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: async (payload: { name: string }) => {
+    mutationFn: async (payload: { name: string; user_id?: string }) => {
       const { data } = await authApi.createApiKey(payload)
       return data as ApiKey & { token: string }
     },

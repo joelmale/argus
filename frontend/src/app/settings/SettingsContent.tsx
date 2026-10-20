@@ -1781,6 +1781,7 @@ export default function SettingsContent() {
   const [newRole, setNewRole] = useState<UserRole>('viewer')
   const [userError, setUserError] = useState<string | null>(null)
   const [apiKeyName, setApiKeyName] = useState('')
+  const [apiKeyOwnerId, setApiKeyOwnerId] = useState('')
   const [generatedApiKey, setGeneratedApiKey] = useState<string | null>(null)
   const [inventoryConfirm, setInventoryConfirm] = useState('')
   const [includeScanHistory, setIncludeScanHistory] = useState(false)
@@ -1804,7 +1805,7 @@ export default function SettingsContent() {
   const handleCreateApiKey: FormSubmitHandler = (event) => {
     event.preventDefault()
     createApiKey(
-      { name: apiKeyName.trim() || 'CLI key' },
+      { name: apiKeyName.trim() || 'CLI key', ...(apiKeyOwnerId ? { user_id: apiKeyOwnerId } : {}) },
       {
         onSuccess: (created) => {
           setGeneratedApiKey(created.token)
@@ -2197,6 +2198,12 @@ export default function SettingsContent() {
                     placeholder="CLI key"
                     className="flex-1"
                   />
+                  <SelectField label="Owner" value={apiKeyOwnerId} onChange={(event) => setApiKeyOwnerId(event.target.value)}>
+                    <option value="">Me ({currentUser?.username})</option>
+                    {users.filter((user) => user.id !== currentUser?.id && user.is_active).map((user) => (
+                      <option key={user.id} value={user.id}>{user.username} ({user.role})</option>
+                    ))}
+                  </SelectField>
                   <button
                     type="submit"
                     disabled={isCreatingApiKey}
@@ -2222,7 +2229,7 @@ export default function SettingsContent() {
                       <div className="flex-1">
                         <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">{apiKey.name}</p>
                         <p className="text-xs text-zinc-500">
-                          {apiKey.key_prefix} · last used {apiKey.last_used_at ? new Date(apiKey.last_used_at).toLocaleString() : 'never'}
+                          {apiKey.owner_username ?? 'unknown'} · {apiKey.key_prefix} · last used {apiKey.last_used_at ? new Date(apiKey.last_used_at).toLocaleString() : 'never'}
                         </p>
                       </div>
                       <button
