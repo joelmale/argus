@@ -15,30 +15,24 @@ function getWsBaseUrl() {
   return "";
 }
 
+// The login token lives in an httpOnly cookie set by the backend, so page scripts
+// can't read it. Requests are same-origin (proxied by Next), so the cookie is sent
+// automatically; withCredentials also covers a separate NEXT_PUBLIC_API_URL origin.
 export const api = axios.create({
   baseURL: getApiBaseUrl(),
   timeout: 15_000,
+  withCredentials: true,
 });
 
-export const TOKEN_STORAGE_KEY = "argus_token";
+// Non-secret marker meaning "this browser has signed in"; it only decides whether to
+// try loading the current user. The real check is the cookie, validated server-side.
+export const TOKEN_STORAGE_KEY = "argus_session_hint";
+const LEGACY_TOKEN_STORAGE_KEY = "argus_token";
 
-function hasBrowserWindow() {
-  return typeof globalThis.window === "object";
+if (typeof globalThis.window === "object") {
+  // Drop tokens stored by older versions of the app.
+  globalThis.localStorage.removeItem(LEGACY_TOKEN_STORAGE_KEY);
 }
-
-function getBrowserStorageToken() {
-  if (!hasBrowserWindow()) {
-    return null;
-  }
-  return globalThis.localStorage.getItem(TOKEN_STORAGE_KEY);
-}
-
-// Attach JWT token from localStorage if present
-api.interceptors.request.use((config) => {
-  const token = getBrowserStorageToken();
-  if (token) config.headers.Authorization = `Bearer ${token}`;
-  return config;
-});
 
 export const authApi = {
   login: (username: string, password: string, rememberMe = false) =>
@@ -55,6 +49,8 @@ export const authApi = {
   resetPassword: (token: string, password: string) =>
     api.post("/api/v1/auth/password/reset", { token, password }),
   me: () => api.get("/api/v1/auth/me"),
+  logout: () => api.post("/api/v1/auth/logout"),
+  revokeSessions: () => api.post("/api/v1/auth/sessions/revoke"),
   listUsers: () => api.get("/api/v1/auth/users"),
   createUser: (payload: { username: string; password: string; email?: string; role: "admin" | "viewer" | "service" }) =>
     api.post("/api/v1/auth/users", payload),

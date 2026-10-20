@@ -25,29 +25,40 @@ def verify_password(plain: str, hashed: str) -> bool:
     return pwd_context.verify(plain, hashed)
 
 
-def create_access_token(subject: str, expire_minutes: int | None = None) -> str:
+def create_access_token(subject: str, expire_minutes: int | None = None, token_version: int = 0) -> str:
     minutes = expire_minutes if expire_minutes is not None else settings.JWT_EXPIRE_MINUTES
     expire = datetime.now(timezone.utc) + timedelta(minutes=minutes)
     return jwt.encode(
-        {"sub": subject, "exp": expire},
+        {"sub": subject, "exp": expire, "tv": token_version},
         settings.APP_SECRET_KEY,
         algorithm=settings.JWT_ALGORITHM,
     )
 
 
-def decode_token(token: str) -> str | None:
-    """Subject of a login (access) token, or None.
+def decode_access_token(token: str) -> tuple[str, int] | None:
+    """(subject, token_version) of a login token, or None.
 
     Special-purpose tokens signed with the same key (e.g. password reset) carry a
-    `purpose` claim and must never be accepted as a login token.
+    `purpose` claim and must never be accepted as a login token. The caller compares
+    token_version with the user's current value so old tokens can be revoked.
     """
     try:
         payload = jwt.decode(token, settings.APP_SECRET_KEY, algorithms=[settings.JWT_ALGORITHM])
     except JWTError:
         return None
-    if payload.get("purpose"):
+    if payload.get("purpose") or not payload.get("sub"):
         return None
-    return payload.get("sub")
+    try:
+        version = int(payload.get("tv", 0))
+    except (TypeError, ValueError):
+        return None
+    return payload["sub"], version
+
+
+def decode_token(token: str) -> str | None:
+    """Subject of a login token, or None (no revocation check; see decode_access_token)."""
+    decoded = decode_access_token(token)
+    return decoded[0] if decoded else None
 
 
 def _password_fingerprint(hashed_password: str) -> str:

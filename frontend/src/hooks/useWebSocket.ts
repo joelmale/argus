@@ -64,7 +64,7 @@ export function useWebSocket(enabled = true) {
 
     ws.onopen = () => {
       if (!mountedRef.current) return
-      ws.send(JSON.stringify({ type: 'auth', token }))
+      // Authenticated by the httpOnly session cookie sent with the handshake.
       reconnectAttempt.current = 0
       setWsConnected(true)
       setWsReconnecting(false)

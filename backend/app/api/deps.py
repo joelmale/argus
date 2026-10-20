@@ -7,9 +7,26 @@ from fastapi import Depends, HTTPException, Request, status
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy import select
 
-from app.core.security import decode_token, api_key_prefix, verify_api_key
+from app.core.config import settings
+from app.core.security import decode_access_token, api_key_prefix, verify_api_key
 from app.db.models import ApiKey, User
 from app.db.session import get_db
+
+
+async def user_from_access_token(db: AsyncSession, token: str) -> User | None:
+    """Active user for a login token, or None if invalid, revoked or the user is disabled."""
+    decoded = decode_access_token(token)
+    if decoded is None:
+        return None
+    subject, version = decoded
+    try:
+        user = await db.get(User, subject)
+    except (ValueError, TypeError):
+        return None
+    if user is None or not user.is_active or version != (user.token_version or 0):
+        return None
+    return user
+
 
 async def get_current_user(
     request: Request,
@@ -18,13 +35,9 @@ async def get_current_user(
     authorization = request.headers.get("Authorization", "")
     if authorization.lower().startswith("bearer "):
         token = authorization.split(" ", 1)[1].strip()
-        subject = decode_token(token)
-        if not subject:
+        user = await user_from_access_token(db, token)
+        if user is None:
             raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid token")
-
-        user = await db.get(User, subject)
-        if user is None or not user.is_active:
-            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="User not found")
         return user
 
     raw_api_key = request.headers.get("X-API-Key")
@@ -44,6 +57,14 @@ async def get_current_user(
         if api_key.last_used_at is None or (now - api_key.last_used_at).total_seconds() > 60:
             api_key.last_used_at = now
             await db.commit()
+        return user
+
+    # Browser session: httpOnly cookie set at login (SameSite=Strict, so not sent cross-site).
+    cookie_token = request.cookies.get(settings.SESSION_COOKIE_NAME)
+    if cookie_token:
+        user = await user_from_access_token(db, cookie_token)
+        if user is None:
+            raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Session expired")
         return user
 
     raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Authentication required")

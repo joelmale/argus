@@ -30,11 +30,12 @@ export function isUnauthorizedError(error: unknown): boolean {
   return axios.isAxiosError(error) && error.response?.status === 401
 }
 
-export function setAuthToken(token: string) {
+/** Record that this browser is signed in. The token itself is an httpOnly cookie. */
+export function setAuthToken() {
   if (!hasBrowserWindow()) {
     return
   }
-  globalThis.localStorage.setItem(TOKEN_STORAGE_KEY, token)
+  globalThis.localStorage.setItem(TOKEN_STORAGE_KEY, '1')
   emitAuthChange()
 }
 
@@ -90,7 +91,7 @@ export function useLogin() {
       if (hasBrowserWindow()) {
         globalThis.localStorage.setItem(SAVED_USERNAME_KEY, variables.username)
       }
-      setAuthToken(data.access_token)
+      setAuthToken()
       await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
     },
   })
@@ -147,7 +148,7 @@ export function useInitializeFirstAdmin() {
       return data as { access_token: string; token_type: string; user: CurrentUser }
     },
     onSuccess: async (data) => {
-      setAuthToken(data.access_token)
+      setAuthToken()
       await queryClient.invalidateQueries({ queryKey: ['auth', 'me'] })
       await queryClient.invalidateQueries({ queryKey: ['auth', 'setup-status'] })
     },
@@ -157,7 +158,12 @@ export function useInitializeFirstAdmin() {
 export function useLogout() {
   const queryClient = useQueryClient()
 
-  return () => {
+  return async () => {
+    try {
+      await authApi.logout()  // clears the httpOnly session cookie
+    } catch {
+      // Signing out locally still matters if the backend is unreachable.
+    }
     clearAuthToken()
     queryClient.removeQueries({ queryKey: ['auth'] })
   }

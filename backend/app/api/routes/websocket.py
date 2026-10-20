@@ -6,9 +6,8 @@ import json
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect, status
 import redis.asyncio as redis
 
+from app.api.deps import user_from_access_token
 from app.core.config import settings
-from app.core.security import decode_token
-from app.db.models import User
 from app.db.session import AsyncSessionLocal
 
 router = APIRouter()
@@ -45,28 +44,26 @@ async def websocket_events(websocket: WebSocket):
     """
     await websocket.accept()
 
-    try:
-        raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
-        auth_msg = json.loads(raw)
-    except (asyncio.TimeoutError, json.JSONDecodeError):
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Auth timeout")
-        return
-
-    token = auth_msg.get("token") if isinstance(auth_msg, dict) else None
+    # Browsers authenticate with the session cookie sent on the handshake; other
+    # clients send {"type": "auth", "token": "<jwt>"} as their first message.
+    token = websocket.cookies.get(settings.SESSION_COOKIE_NAME)
     if not token:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token")
-        return
-
-    subject = decode_token(token)
-    if not subject:
-        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
-        return
+        try:
+            raw = await asyncio.wait_for(websocket.receive_text(), timeout=10.0)
+            auth_msg = json.loads(raw)
+        except (asyncio.TimeoutError, json.JSONDecodeError):
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Auth timeout")
+            return
+        token = auth_msg.get("token") if isinstance(auth_msg, dict) else None
+        if not token:
+            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Missing token")
+            return
 
     async with AsyncSessionLocal() as db:
-        user = await db.get(User, subject)
-        if user is None or not user.is_active:
-            await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="User not found")
-            return
+        user = await user_from_access_token(db, token)
+    if user is None:
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION, reason="Invalid token")
+        return
 
     pubsub = _get_redis().pubsub(ignore_subscribe_messages=True)
     await pubsub.subscribe(REDIS_CHANNEL)

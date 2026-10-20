@@ -557,7 +557,7 @@ def test_apply_asset_updates_and_port_upsert_cover_override_and_service_changes(
 async def test_get_current_user_handles_invalid_token_and_api_key_success(monkeypatch):
     request = _request_with_headers({"Authorization": "Bearer bad-token"})
 
-    monkeypatch.setattr(deps, "decode_token", lambda token: None)
+    monkeypatch.setattr(deps, "decode_access_token", lambda token: None)
     with pytest.raises(HTTPException) as invalid:
         await deps.get_current_user(request, _FakeDb())
     assert invalid.value.detail == "Invalid token"
@@ -579,16 +579,16 @@ async def test_get_current_user_handles_invalid_token_and_api_key_success(monkey
 @pytest.mark.asyncio
 async def test_get_current_user_and_role_helpers_cover_remaining_auth_branches(monkeypatch):
     bearer_request = _request_with_headers({"Authorization": "Bearer good-token"})
-    active_user = SimpleNamespace(id=uuid4(), is_active=True, role="admin")
-    inactive_user = SimpleNamespace(id=uuid4(), is_active=False, role="admin")
+    active_user = SimpleNamespace(id=uuid4(), is_active=True, role="admin", token_version=0)
+    inactive_user = SimpleNamespace(id=uuid4(), is_active=False, role="admin", token_version=0)
 
-    monkeypatch.setattr(deps, "decode_token", lambda token: active_user.id)
+    monkeypatch.setattr(deps, "decode_access_token", lambda token: (active_user.id, 0))
     assert await deps.get_current_user(bearer_request, _FakeDb(get_result=active_user)) is active_user
 
-    monkeypatch.setattr(deps, "decode_token", lambda token: inactive_user.id)
+    monkeypatch.setattr(deps, "decode_access_token", lambda token: (inactive_user.id, 0))
     with pytest.raises(HTTPException) as inactive_exc:
         await deps.get_current_user(bearer_request, _FakeDb(get_result=inactive_user))
-    assert inactive_exc.value.detail == "User not found"
+    assert inactive_exc.value.detail == "Invalid token"
 
     api_key_request = _request_with_headers({"X-API-Key": "bad-key"})
     monkeypatch.setattr(deps, "api_key_prefix", lambda raw: "abc")

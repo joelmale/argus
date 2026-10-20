@@ -52,6 +52,10 @@ class Settings(BaseSettings):
     JWT_EXPIRE_MINUTES: int = 240
     JWT_REMEMBER_ME_EXPIRE_MINUTES: int = 5760
 
+    # Browser sessions use an httpOnly cookie instead of a token in localStorage.
+    SESSION_COOKIE_NAME: str = "argus_session"
+    SESSION_COOKIE_SECURE: bool = False  # set true when Argus is served over HTTPS
+
     PASSWORD_MIN_LENGTH: int = 6
     PASSWORD_RESET_EXPIRE_MINUTES: int = 30
     # Base URL used in password-reset emails; falls back to the first ALLOWED_ORIGINS entry.
