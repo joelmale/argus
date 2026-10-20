@@ -81,6 +81,7 @@ async def _reset(username: str, generate: bool, make_admin: bool) -> int:
             password = _read_password()
 
         user.hashed_password = hash_password(password)
+        user.token_version = (user.token_version or 0) + 1  # sign out existing sessions
         user.is_active = True
         if make_admin:
             user.role = "admin"

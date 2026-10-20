@@ -3,7 +3,7 @@ import logging
 from typing import Annotated, Literal
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, Form, HTTPException, Request, status
+from fastapi import APIRouter, Depends, Form, HTTPException, Request, Response, status
 from fastapi.security import OAuth2PasswordRequestForm
 from pydantic import BaseModel
 from sqlalchemy import func, or_, select
@@ -26,7 +26,7 @@ from app.notifications import send_email_to, smtp_configured
 from app.db.models import ApiKey, AuditLog, User
 from app.db.session import get_db
 from app.core.config import settings
-from app.core.limiter import limiter
+from app.core.limiter import limiter, login_failures, reset_requests
 from app.core.security import hash_password
 
 router = APIRouter()
@@ -78,6 +78,28 @@ def _require_password_length(password: str) -> None:
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Password must be at least {minimum} characters",
         )
+
+
+def _set_session_cookie(response: Response, token: str, expire_minutes: int) -> None:
+    response.set_cookie(
+        settings.SESSION_COOKIE_NAME,
+        token,
+        max_age=expire_minutes * 60,
+        httponly=True,
+        secure=settings.SESSION_COOKIE_SECURE,
+        samesite="strict",
+        path="/",
+    )
+
+
+def _clear_session_cookie(response: Response) -> None:
+    response.delete_cookie(
+        settings.SESSION_COOKIE_NAME,
+        httponly=True,
+        secure=settings.SESSION_COOKIE_SECURE,
+        samesite="strict",
+        path="/",
+    )
 
 
 def _reset_base_url() -> str:
@@ -150,22 +172,48 @@ def _serialize_alert_rule(rule) -> dict:
 
 
 @router.post("/token")
-@limiter.limit("10/minute")
+@limiter.limit("60/minute")  # per proxy address; brute force is limited per account below
 async def login(
     request: Request,
+    response: Response,
     form: LoginForm,
     db: DBSession,
     remember_me: bool = Form(default=False),
 ):
+    wait = login_failures.retry_after(form.username)
+    if wait:
+        raise HTTPException(
+            status_code=status.HTTP_429_TOO_MANY_REQUESTS,
+            detail=f"Too many failed sign-in attempts for this account. Try again in {wait} seconds.",
+            headers={"Retry-After": str(wait)},
+        )
     result = await db.execute(select(User).where(User.username == form.username))
     user = result.scalar_one_or_none()
     if not user or not verify_password(form.password, user.hashed_password):
+        login_failures.record_failure(form.username)
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Incorrect credentials")
+    login_failures.reset(form.username)
     await log_audit_event(db, action="auth.login", user=user)
     await db.commit()
     expire_minutes = settings.JWT_REMEMBER_ME_EXPIRE_MINUTES if remember_me else settings.JWT_EXPIRE_MINUTES
-    token = create_access_token(subject=str(user.id), expire_minutes=expire_minutes)
+    token = create_access_token(subject=str(user.id), expire_minutes=expire_minutes, token_version=user.token_version or 0)
+    _set_session_cookie(response, token, expire_minutes)
+    # The token is also returned for API clients; the browser app relies on the cookie.
     return {"access_token": token, "token_type": "bearer"}
+
+
+@router.post("/logout", status_code=status.HTTP_204_NO_CONTENT)
+async def logout(response: Response):
+    _clear_session_cookie(response)
+
+
+@router.post("/sessions/revoke", status_code=status.HTTP_204_NO_CONTENT)
+async def revoke_my_sessions(response: Response, current_user: CurrentUser, db: DBSession):
+    """Sign out everywhere: invalidates every login token issued to this user so far."""
+    current_user.token_version = (current_user.token_version or 0) + 1
+    await log_audit_event(db, action="auth.sessions_revoked", user=current_user, target_type="user", target_id=str(current_user.id))
+    await db.commit()
+    _clear_session_cookie(response)
 
 
 @router.get("/password/reset-available")
@@ -174,13 +222,18 @@ async def password_reset_available():
 
 
 @router.post("/password/forgot", status_code=status.HTTP_202_ACCEPTED)
-@limiter.limit("5/minute")
+@limiter.limit("30/minute")
 async def forgot_password(request: Request, payload: ForgotPasswordRequest, db: DBSession):
     """Email a reset link. Always answers the same way so accounts can't be enumerated."""
     response = {"detail": "If that account exists and has an email address, a reset link has been sent."}
     identifier = payload.identifier.strip()
     if not identifier or not smtp_configured():
         return response
+    # At most a few reset emails per account per window, whoever asks. Same response
+    # either way so this can't be used to probe for accounts.
+    if reset_requests.retry_after(identifier):
+        return response
+    reset_requests.record_failure(identifier)
 
     user = await db.scalar(
         select(User).where(or_(User.username == identifier, func.lower(User.email) == identifier.lower()))
@@ -225,6 +278,7 @@ async def reset_password(request: Request, payload: ResetPasswordRequest, db: DB
 
     _require_password_length(payload.password)
     user.hashed_password = hash_password(payload.password)
+    user.token_version = (user.token_version or 0) + 1  # sign out existing sessions
     await log_audit_event(db, action="auth.password_reset_completed", user=user, target_type="user", target_id=str(user.id))
     await db.commit()
     return {"detail": "Password updated. You can sign in now."}
@@ -239,6 +293,7 @@ async def setup_status(db: DBSession):
 @router.post("/setup/initialize", status_code=status.HTTP_201_CREATED)
 async def initialize_first_admin(
     payload: InitialAdminSetupRequest,
+    response: Response,
     db: DBSession,
 ):
     user_count = await db.scalar(select(func.count()).select_from(User)) or 0
@@ -271,7 +326,8 @@ async def initialize_first_admin(
     )
     await db.commit()
     await db.refresh(user)
-    token = create_access_token(subject=str(user.id))
+    token = create_access_token(subject=str(user.id), token_version=user.token_version or 0)
+    _set_session_cookie(response, token, settings.JWT_EXPIRE_MINUTES)
     return {"user": _serialize_user(user), "access_token": token, "token_type": "bearer"}
 
 
@@ -358,6 +414,8 @@ async def update_user(
     if payload.role is not None:
         user.role = payload.role
     if payload.is_active is not None:
+        if user.is_active and not payload.is_active:
+            user.token_version = (user.token_version or 0) + 1  # end their sessions
         user.is_active = payload.is_active
 
     await log_audit_event(

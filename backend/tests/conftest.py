@@ -18,6 +18,16 @@ from app.main import app  # noqa: E402
 
 
 @pytest_asyncio.fixture(autouse=True)
+async def reset_auth_throttles():
+    from app.core.limiter import limiter, login_failures, reset_requests
+
+    login_failures.reset()
+    reset_requests.reset()
+    limiter.reset()  # per-peer limits share one in-memory store across tests
+    yield
+
+
+@pytest_asyncio.fixture(autouse=True)
 async def clean_database():
     # Keep every test hermetic so route-level coverage can safely exercise the
     # real app and persistence layer without leaking state into the next test.

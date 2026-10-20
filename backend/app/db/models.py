@@ -37,6 +37,8 @@ class User(Base):
     hashed_password: Mapped[str] = mapped_column(String(256), nullable=False)
     role: Mapped[str] = mapped_column(String(16), default="viewer")
     is_active: Mapped[bool] = mapped_column(Boolean, default=True)
+    # Bumped to invalidate every login token issued so far (password change, "sign out everywhere").
+    token_version: Mapped[int] = mapped_column(Integer, default=0, server_default="0", nullable=False)
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
     api_keys: Mapped[list["ApiKey"]] = relationship(back_populates="user", cascade=CASCADING_CHILDREN)
     audit_logs: Mapped[list["AuditLog"]] = relationship(back_populates="user")
