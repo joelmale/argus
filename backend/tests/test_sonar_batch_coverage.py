@@ -2102,6 +2102,7 @@ async def test_worker_task_helpers_cover_scheduled_and_resume_entrypoints(monkey
     monkeypatch.setattr(sys.modules["app.scanner.config"], "split_scan_targets", lambda targets: [targets])
     monkeypatch.setattr(worker_tasks, "_next_queue_position", lambda db: _completed_task(1))
     monkeypatch.setattr(worker_tasks, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(worker_tasks, "_interrupt_orphaned_jobs", lambda db, **kw: _completed_task([]))
     monkeypatch.setattr(worker_tasks.run_scan_job, "delay", lambda job_id: run_calls.append(job_id))
     await worker_tasks._enqueue_scheduled_scan()
     assert run_calls
@@ -3050,6 +3051,7 @@ async def test_worker_startup_resume_dispatches_first_pending_job(monkeypatch):
     job = SimpleNamespace(id=uuid4(), queue_position=1)
     monkeypatch.setattr(worker_tasks, "run_scan_job", _Runner())
     monkeypatch.setattr(worker_tasks, "_has_active_scan", lambda db: _completed_task(False))
+    monkeypatch.setattr(worker_tasks, "_interrupt_orphaned_jobs", lambda db, **kw: _completed_task([]))
     monkeypatch.setattr(worker_tasks, "_get_next_queued_job", lambda db: _completed_task(job))
     monkeypatch.setattr("sqlalchemy.ext.asyncio.create_async_engine", lambda *args, **kwargs: _Engine())
     monkeypatch.setattr("sqlalchemy.ext.asyncio.async_sessionmaker", lambda *args, **kwargs: _ContextSessionFactory())
