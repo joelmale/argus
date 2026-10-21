@@ -36,7 +36,9 @@ The hash-anchor sidebar nav already exists, so deferring offscreen sections is s
 
 ---
 
-### 1.3 Replace the busy-wait Redis pub/sub loop in the WebSocket endpoint — Score 16
+### ~~1.3 Replace the busy-wait Redis pub/sub loop in the WebSocket endpoint — Score 16~~
+
+Done: `backend/app/api/routes/websocket.py` now iterates `pubsub.listen()`.
 
 `backend/app/api/routes/websocket.py:76` polls `get_message(timeout=5.0)` and then sleeps 100 ms — every connected client wakes 10×/second forever, and events incur up to 100 ms extra latency. The async iterator blocks natively:
 
@@ -75,7 +77,9 @@ CSS anchor positioning (Baseline newly available) can replace the manual `absolu
 
 ---
 
-### 1.6 Move the JWT from localStorage to an httpOnly cookie — Score 14
+### ~~1.6 Move the JWT from localStorage to an httpOnly cookie — Score 14~~
+
+Done in 0bd08cf (httpOnly SameSite=Strict session cookie, token_version revocation).
 
 Every page is gated behind a client-side token check (`frontend/src/components/layout/AppShell.tsx:26–40`), so first paint is always a "Loading session…" spinner and nothing can be a Server Component. A cookie (set by the FastAPI login route, `SameSite=Lax`) lets Next.js middleware redirect unauthenticated users server-side, removes the login flash, and is the standard XSS-hardening move. The WebSocket can then authenticate from the cookie at handshake instead of the first-message token dance.
 

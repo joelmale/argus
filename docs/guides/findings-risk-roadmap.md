@@ -1,6 +1,8 @@
 # Findings Risk Roadmap
 
-This document captures a shelved roadmap for evolving Argus from a discovery-first tool into a more operationally useful risk and remediation platform. It is intentionally parked here so topology and network diagramming work can take priority.
+This document captures a roadmap for evolving Argus from a discovery-first tool into a more operationally useful risk and remediation platform.
+
+**Status (2026-10-20): active, but trimmed to lifecycle states and suppression only.** The InSOC integration shipped part of the lifecycle (commit `098aebd`, see [InSOC Integration](insoc-integration.md)). The next work is Phase 6 (suppression rules), then the remainder of Phase 7 (event history and timeline). The rule engine, criticality, AI findings and dashboard phases are deferred; InSOC's agents cover much of that ground.
 
 ## Goal
 
@@ -23,6 +25,8 @@ Argus currently spreads important security context across several surfaces:
 This means the user must do the correlation mentally. The long-term goal is for Argus to do that correlation automatically and present one actionable risk queue.
 
 ## Phase 1: Expand the Finding Model
+
+> **Status: states only.** Shipped states are `open`, `acknowledged` (open with `ack_until` in the future), `resolved` and `ignored` (suppressed), derived by `finding_state()` in `backend/app/findings.py`. `accepted_risk` and `false_positive` will be recorded as resolution reasons, not states. The other proposed fields and categories are not planned for now.
 
 Extend the `Finding` database model so findings are normalized risk records rather than mostly imported vulnerability rows.
 
@@ -89,6 +93,8 @@ Extend the `Finding` database model so findings are normalized risk records rath
 
 ## Phase 2: Add Rule-Driven Finding Generation
 
+> **Status: deferred.** Partly covered by InSOC agents, which classify and push findings into Argus.
+
 Introduce a backend rule engine that creates findings from Argus scan evidence, not just imported tools.
 
 ### New backend modules
@@ -135,6 +141,8 @@ Introduce a backend rule engine that creates findings from Argus scan evidence, 
 
 ## Phase 3: Add Asset Criticality and Context
 
+> **Status: later.**
+
 Severity alone is not enough. Priority should depend on what the asset is, how exposed it is, and how important it is.
 
 ### Proposed asset fields
@@ -168,6 +176,8 @@ Use a composite priority calculation:
 - priority calculator service
 
 ## Phase 4: Redesign the Findings UI
+
+> **Status: partially done.** `frontend/src/app/findings/page.tsx` has a state badge, acknowledge/unacknowledge actions and a source filter. The rest is deferred.
 
 Convert the Findings page into a triage workspace instead of a simple imported-results list.
 
@@ -212,6 +222,8 @@ Convert the Findings page into a triage workspace instead of a simple imported-r
 
 ## Phase 5: Promote AI Observations into First-Class Findings
 
+> **Status: deferred.** InSOC findings are already ingested with `source_tool=insoc`.
+
 Today AI observations are mostly stranded on the asset page. Those should become part of the same finding workflow.
 
 ### Goal
@@ -230,6 +242,8 @@ Map AI `security_findings` into normalized database findings while preserving AI
 - dedupe and merge logic
 
 ## Phase 6: Add Suppression and Exception Handling
+
+> **Status: NEXT.** Only per-finding ignore exists today (`PATCH /api/v1/findings/{id}` with `status: ignored`; ignored findings stay ignored on re-ingest whatever the severity).
 
 Homelab and small-network environments need practical noise control.
 
@@ -260,6 +274,8 @@ Homelab and small-network environments need practical noise control.
 
 ## Phase 7: Track Finding Lifecycle and Change
 
+> **Status: partly shipped in `098aebd`.** Re-ingesting counts `occurrences`, updates `last_seen`, reopens resolved findings, escalates findings whose severity rises (clearing the acknowledgement), supports ack/unack (`ack_until`), and resolves findings listed in `resolved_external_ids` (`resolved_at` set). **Remaining:** a finding event history and a timeline view.
+
 Findings should show whether risk is new, persistent, improved, or resolved.
 
 ### Lifecycle states and events
@@ -285,6 +301,8 @@ Findings should show whether risk is new, persistent, improved, or resolved.
 - change-focused dashboard widgets
 
 ## Phase 8: Improve Dashboard Visibility
+
+> **Status: deferred.**
 
 The dashboard should answer:
 
@@ -366,7 +384,7 @@ To avoid coverage regression:
 
 ## Shelving Note
 
-This roadmap is intentionally deferred while topology and network diagramming are prioritized. When topology work resumes, Findings should remain a downstream consumer of topology context:
+Topology work has since landed, and this roadmap is now active in trimmed form (see Status above). Findings should remain a downstream consumer of topology context:
 
 - router and gateway relationships should inform exposure scoring
 - uplink and segment placement should improve priority calculation

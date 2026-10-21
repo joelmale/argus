@@ -6,6 +6,12 @@ sidebar_position: 16
 
 # Operator Experience and Evidence-First Topology Plan
 
+> **Status note (2026-10-20):** The deterministic operator brief
+> (`backend/app/services/operator_brief.py`, shown by the dashboard
+> `OperatorBrief`) stays as it is. No AI/LLM brief will be built in Argus. The
+> narrative daily brief is InSOC's digest, surfaced on Argus's Security page
+> (`/soc`).
+
 This plan defines the next Argus product refinement phase. The goal is not to
 add unrelated capabilities. The goal is to make the existing inventory,
 scanning, findings, topology, and integration features work together as a
