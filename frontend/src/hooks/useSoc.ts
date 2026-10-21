@@ -55,6 +55,25 @@ export function useSocStatus() {
   })
 }
 
+export interface SocDigest {
+  text: string
+  generated_at: string | null
+  open: number
+  acknowledged: number
+  next_scheduled: string | null
+  timezone: string | null
+}
+
+export function useSocDigest(enabled = true) {
+  return useQuery<SocDigest>({
+    queryKey: ['soc', 'digest'],
+    queryFn: async () => (await socApi.digest()).data,
+    enabled,
+    refetchInterval: 5 * 60_000,
+    retry: false,
+  })
+}
+
 export function useSocIncidents(enabled = true) {
   return useQuery<SocIncidentRow[]>({
     queryKey: ['soc', 'incidents'],

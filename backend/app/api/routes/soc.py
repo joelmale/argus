@@ -80,6 +80,14 @@ async def soc_status(_: CurrentUser):
     return {"configured": True, "reachable": reachable}
 
 
+@router.get("/digest")
+async def get_digest(_: CurrentUser):
+    """InSOC's daily digest: the narrative brief of open findings (Argus doesn't build its own)."""
+    data = await _insoc("GET", "/digest")
+    keep = ("text", "generated_at", "open", "acknowledged", "next_scheduled", "timezone")
+    return {k: data.get(k) for k in keep}
+
+
 @router.get("/incidents")
 async def list_incidents(_: CurrentUser, limit: int = Query(default=50, ge=1, le=200)):
     rows = await _insoc("GET", "/incidents", params={"limit": limit})
