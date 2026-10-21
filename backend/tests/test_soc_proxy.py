@@ -33,6 +33,11 @@ def insoc(monkeypatch):
         path = request.url.path
         if path == "/healthz":
             return httpx.Response(200, json={"ok": True})
+        if path == "/digest":
+            return httpx.Response(200, json={"text": "2 open finding(s):\n- CRITICAL host:nas:smart: Disk failing",
+                                              "generated_at": "2026-10-20T12:00:00+00:00", "open": 1, "acknowledged": 1,
+                                              "next_scheduled": "2026-10-21T08:00:00-04:00", "timezone": "America/New_York",
+                                              "internal": "drop me"})
         if path == "/incidents":
             return httpx.Response(200, json=[{"id": IID, "status": "awaiting_approval", "severity": "warning",
                                                "trigger": {"type": "sweep"}, "input_tokens": 999, "cost_usd": 0.01}])
@@ -102,3 +107,14 @@ async def test_insoc_errors_map_to_gateway_errors(api_client, admin_user, insoc)
     state["status"] = 409
     response = await api_client.post(f"/api/v1/soc/incidents/{IID}/resume", json={"approve": ["a1b2c3d4"]}, headers=_h(admin_user))
     assert response.status_code == 409
+
+
+@pytest.mark.asyncio
+async def test_digest_is_proxied_for_any_user(api_client, viewer_user, insoc):
+    seen, _ = insoc
+    response = await api_client.get("/api/v1/soc/digest", headers=_h(viewer_user))
+    assert response.status_code == 200
+    body = response.json()
+    assert body["open"] == 1 and body["acknowledged"] == 1 and "Disk failing" in body["text"]
+    assert "internal" not in body
+    assert seen[-1].url.path == "/digest" and seen[-1].headers["authorization"] == "Bearer insoc-secret"

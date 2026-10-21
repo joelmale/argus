@@ -6,7 +6,7 @@ import { Loader2, ShieldCheck } from 'lucide-react'
 import { AppShell } from '@/components/layout/AppShell'
 import { Card, CardBody, CardHeader, CardTitle } from '@/components/ui/Card'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useResumeIncident, useSocIncident, useSocIncidents, useSocStatus, type SocIncidentRow } from '@/hooks/useSoc'
+import { useResumeIncident, useSocDigest, useSocIncident, useSocIncidents, useSocStatus, type SocIncidentRow } from '@/hooks/useSoc'
 import { cn, getErrorDetail } from '@/lib/utils'
 
 // InSOC uses nominal/info/warning/critical.
@@ -158,6 +158,33 @@ function IncidentDetail({ id, isAdmin }: Readonly<{ id: string; isAdmin: boolean
   )
 }
 
+function DailyDigest() {
+  const { data: digest, isLoading, error } = useSocDigest()
+  return (
+    <Card>
+      <CardHeader><CardTitle>Daily digest</CardTitle></CardHeader>
+      <CardBody className="space-y-2">
+        {isLoading && <p className="text-sm text-zinc-500">Loading…</p>}
+        {error && <p className="text-sm text-red-500">{getErrorDetail(error) ?? 'Could not load the digest from InSOC.'}</p>}
+        {digest && (
+          <>
+            <p className="text-xs text-zinc-500">
+              {digest.open} open · {digest.acknowledged} acknowledged
+              {digest.next_scheduled ? ` · next sent ${when(digest.next_scheduled)}` : ' · scheduled digest is off'}
+            </p>
+            {digest.text ? (
+              // InSOC-built text: rendered as plain text, never as HTML.
+              <div className="text-sm whitespace-pre-wrap text-zinc-700 dark:text-zinc-200 rounded-lg bg-gray-50 dark:bg-zinc-900 p-3">{digest.text}</div>
+            ) : (
+              <p className="text-sm text-zinc-500">No open findings. Nothing to report.</p>
+            )}
+          </>
+        )}
+      </CardBody>
+    </Card>
+  )
+}
+
 export default function SecurityPage() {
   const { data: currentUser } = useCurrentUser()
   const { data: status } = useSocStatus()
@@ -172,7 +199,7 @@ export default function SecurityPage() {
       <div className="max-w-7xl mx-auto space-y-6">
         <div>
           <h2 className="text-xl font-bold text-zinc-900 dark:text-white">Security</h2>
-          <p className="text-sm text-zinc-500 mt-0.5">InSOC investigations and the actions waiting for your approval. Findings from these runs appear on the Findings page.</p>
+          <p className="text-sm text-zinc-500 mt-0.5">InSOC&apos;s daily digest, its investigations, and the actions waiting for your approval. Findings from these runs appear on the Findings page.</p>
         </div>
 
         {status && !status.configured && (
@@ -186,6 +213,8 @@ export default function SecurityPage() {
         {status?.configured && !status.reachable && (
           <p className="text-sm text-amber-600">InSOC is configured but not answering right now.</p>
         )}
+
+        {ready && <DailyDigest />}
 
         {ready && (
           <div className="grid grid-cols-1 lg:grid-cols-[360px_1fr] gap-6">

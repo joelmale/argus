@@ -895,7 +895,7 @@ Effort: Medium (split into security/ops track and UX track — ship security ite
 Purpose: harden security and operational configuration, and improve accessibility,
 empty-state handling, and first-use experience without touching core data paths.
 
-### Phase 10a: Security and Ops Hardening
+### Phase 10a: Security and Ops Hardening ✓ Complete
 
 Status: complete (commit `7fd37dd`). `--script` was later restricted to
 script/category names (no file paths), and `--excludefile`, `--resume` and
@@ -1015,7 +1015,7 @@ table filter and sort behaviors.
 
 ## Recommended Implementation Order
 
-Implement in this order unless production pressure changes the priority:
+Items 1–8 are done. The remaining order, revised 2026-10-20:
 
 1. ~~Phase 1: correctness fixes.~~ ✓ Done (2026-04-14)
 2. ~~Phase 2: query shape and client-side performance.~~ ✓ Done (2026-04-14, completed 2026-04-15).
@@ -1024,29 +1024,42 @@ Implement in this order unless production pressure changes the priority:
 5. ~~Phase 5: async workflows and queue hardening.~~ ✓ Done (2026-04-15).
 6. ~~Phase 6: topology and metrics scaling.~~ ✓ Done (2026-04-15).
 7. ~~Phase 7: evidence-based topology hierarchy.~~ ✓ Done (2026-04-15).
-8. **Phase 10a**: nmap validation, security headers, Redis healthcheck, pool config.
-9. **Phase 9a**: build-once CI image fix (independent, can land in parallel with 10a).
-10. **Phase 10b**: UX polish — pagination, modals, skeletons, empty states, aria, error boundary, stale indicators.
-11. **Phase 9b**: E2E browser tests (including topology flows) and OpenAPI drift detection.
-12. **Phase 8a**: data models and backfill migration only.
-13. **Phase 8b**: resolver and upsert behavior.
-14. **Phase 8c**: API and UI contracts, remove denormalized write-path fields.
+8. ~~Phase 10a: nmap validation, security headers, Redis healthcheck, pool config.~~ ✓ Done.
+
+Remaining, in order:
+
+1. **Findings suppression rules and finding event history** (trimmed findings
+   roadmap Phases 6–7, see [Findings Risk Roadmap](findings-risk-roadmap.md)).
+   Lifecycle states shipped with the InSOC integration; only per-finding ignore
+   exists for suppression today, and findings have no timeline.
+2. **Phase 9b**: E2E browser tests and OpenAPI drift checks, with **Phase 9a**
+   (build-once CI image) alongside. The 2026-10 bugs (trailing-slash redirect to
+   `backend:8000` via the Next proxy, missing `/ws` proxy, a non-existent
+   asset-findings route, cookie auth) all passed unit tests.
+3. **Account self-service** (change own password, "sign out everywhere" button)
+   and review items #12 and #13 from `docs/review-2026-10-20.md`.
+4. **Phase 8a → 8b → 8c**, gated on item 2 so resolver behavior changes are
+   caught by CI before reaching production.
+5. **Phase 10b** UX polish plus backlog list 2, including server-side asset
+   pagination (the frontend currently requests `assets?limit=5000`).
 
 Reasoning:
 
-- Phases 1–7 are complete.
-- Phase 10a security items (nmap command injection, headers) are fixes, not
-  improvements — they should not wait behind a larger UX milestone.
-- Phase 9a is independent of all runtime code and can land any time.
-- Phase 10b UX polish follows once the core data and async paths are stable (already
-  true after Phases 3 and 5).
-- Phase 9b E2E coverage should be in place before Phase 8b ships so resolver
-  behavior changes are caught by CI before reaching production.
+- Phases 1–7 and 10a are complete.
+- The findings work is small and builds directly on the lifecycle already
+  shipped, so it comes first.
+- Every recent production bug passed unit tests; E2E and contract checks are the
+  gate for the riskier work. Phase 9a is independent of runtime code and can land
+  any time.
 - Phase 8 is split into three sub-phases to limit branch lifetime and blast radius.
   Sub-phase 8a is schema-additive only, 8b changes behavior, 8c changes API
   contracts. Each must be validated before the next begins.
+- Phase 10b UX polish follows once the core data and async paths are stable.
 - The sighting-first inventory redesign should wait until E2E coverage is in place
   and the surrounding code is stable.
+
+The InSOC integration (Phases 0–4) shipped 2026-10-20; see
+[InSOC Integration](insoc-integration.md).
 
 ## Done Criteria
 

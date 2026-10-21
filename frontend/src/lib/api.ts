@@ -180,6 +180,7 @@ export const findingsApi = {
 // ─── Security (InSOC, proxied by the Argus backend) ─────────────
 export const socApi = {
   status: () => api.get("/api/v1/soc/status"),
+  digest: () => api.get("/api/v1/soc/digest"),
   incidents: (limit = 50) => api.get("/api/v1/soc/incidents", { params: { limit } }),
   incident: (id: string) => api.get(`/api/v1/soc/incidents/${encodeURIComponent(id)}`),
   resume: (id: string, payload: { approve: string[]; deny: string[] }) =>
