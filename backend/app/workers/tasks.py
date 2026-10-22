@@ -1335,10 +1335,16 @@ def _apply_asset_heartbeat(
     return {"old": previous_status, "new": "offline"}
 
 
+def _is_scanner_worker() -> bool:
+    """Scanner-only startup work (ARP listener, orphaned-scan cleanup, queue resume) must not
+    run in the AI worker: it would race the scanner and mark its running scan as orphaned."""
+    return settings.WORKER_ROLE.strip().lower() != "ai"
+
+
 @worker_ready.connect
 def _start_passive_arp_listener(**_: object) -> None:
     global _passive_arp_thread
-    if not settings.SCANNER_PASSIVE_ARP:
+    if not settings.SCANNER_PASSIVE_ARP or not _is_scanner_worker():
         return
     if _passive_arp_thread and _passive_arp_thread.is_alive():
         return
@@ -1350,6 +1356,8 @@ def _start_passive_arp_listener(**_: object) -> None:
 @worker_ready.connect
 def _resume_scan_queue_on_worker_ready(**_: object) -> None:
     global _queue_resume_thread
+    if not _is_scanner_worker():
+        return
     if _queue_resume_thread and _queue_resume_thread.is_alive():
         return
 

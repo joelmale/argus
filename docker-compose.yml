@@ -221,6 +221,7 @@ services:
     network_mode: host
     env_file: .env.production
     environment:
+      WORKER_ROLE: ai
       APP_ENV: ${APP_ENV:-production}
       APP_SECRET_KEY: ${APP_SECRET_KEY:-}
       APP_DEBUG: ${APP_DEBUG:-false}

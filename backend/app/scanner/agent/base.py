@@ -155,35 +155,74 @@ def _build_initial_context(
     return "\n".join(lines)
 
 
-def _parse_final_analysis(args: dict) -> AIAnalysis:
-    """Convert the final_analysis tool arguments into an AIAnalysis model."""
+def _as_text(value) -> str:
+    """Models (local ones especially) return lists or numbers where we asked for a string."""
+    if value is None:
+        return ""
+    if isinstance(value, (list, tuple)):
+        return " ".join(_as_text(v) for v in value if v not in (None, "")).strip()
+    if isinstance(value, dict):
+        return "; ".join(f"{k}: {_as_text(v)}" for k, v in value.items())
+    return str(value).strip()
+
+
+def _as_optional_text(value) -> str | None:
+    text = _as_text(value)
+    return text if text and text.lower() not in {"null", "none", "unknown", "n/a"} else None
+
+
+def _as_text_list(value) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, str):
+        return [part.strip() for part in value.split(",") if part.strip()]
+    if isinstance(value, (list, tuple)):
+        return [text for text in (_as_text(v) for v in value) if text]
+    return [_as_text(value)]
+
+
+def _as_confidence(value) -> float:
     try:
-        device_class = DeviceClass(args.get("device_class", "unknown"))
+        number = float(str(value).strip().rstrip("%")) if value is not None else 0.0
+    except ValueError:
+        return 0.0
+    if number > 1.0:
+        number /= 100.0  # "85" or "85%"
+    return max(0.0, min(1.0, number))
+
+
+def _parse_final_analysis(args: dict) -> AIAnalysis:
+    """Convert the final_analysis tool arguments into an AIAnalysis model, tolerating loose types."""
+    try:
+        device_class = DeviceClass(_as_text(args.get("device_class")).lower() or "unknown")
     except ValueError:
         device_class = DeviceClass.UNKNOWN
 
     findings = []
-    for f in args.get("security_findings", []):
+    raw_findings = args.get("security_findings") or []
+    for f in raw_findings if isinstance(raw_findings, list) else []:
         try:
+            if isinstance(f, str):
+                f = {"title": f}
             findings.append(SecurityFinding(
-                severity=f.get("severity", "info"),
-                title=f.get("title", ""),
-                detail=f.get("detail", ""),
+                severity=_as_text(f.get("severity")).lower() or "info",
+                title=_as_text(f.get("title")),
+                detail=_as_text(f.get("detail")),
             ))
         except Exception:
             pass
 
     return AIAnalysis(
         device_class=device_class,
-        confidence=float(args.get("confidence", 0.0)),
-        vendor=args.get("vendor"),
-        model=args.get("model"),
-        os_guess=args.get("os_guess"),
-        device_role=args.get("device_role"),
-        open_services_summary=args.get("open_services_summary", []),
+        confidence=_as_confidence(args.get("confidence")),
+        vendor=_as_optional_text(args.get("vendor")),
+        model=_as_optional_text(args.get("model")),
+        os_guess=_as_optional_text(args.get("os_guess")),
+        device_role=_as_optional_text(args.get("device_role")),
+        open_services_summary=_as_text_list(args.get("open_services_summary")),
         security_findings=findings,
-        investigation_notes=args.get("investigation_notes", ""),
-        suggested_tags=args.get("suggested_tags", []),
+        investigation_notes=_as_text(args.get("investigation_notes")),
+        suggested_tags=_as_text_list(args.get("suggested_tags")),
     )
 
 

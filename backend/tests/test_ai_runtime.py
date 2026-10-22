@@ -430,3 +430,54 @@ async def test_breaker_reset_endpoint(conn, api_client, admin_user):
     response = await api_client.post("/api/v1/system/ai/breaker/reset", headers={"Authorization": f"Bearer {admin_user['token']}"})
     assert response.status_code == 200
     assert not (await AICircuitBreaker(conn).state()).open
+
+
+def test_ai_worker_skips_scanner_startup_hooks(monkeypatch):
+    from app.workers import tasks
+
+    started = []
+    monkeypatch.setattr(tasks.threading, "Thread", lambda target, daemon: SimpleNamespace(start=lambda: started.append(target), is_alive=lambda: True))
+    monkeypatch.setattr(tasks, "_passive_arp_thread", None)
+    monkeypatch.setattr(tasks, "_queue_resume_thread", None)
+    monkeypatch.setattr(settings, "SCANNER_PASSIVE_ARP", True)
+
+    monkeypatch.setattr(settings, "WORKER_ROLE", "ai")
+    tasks._start_passive_arp_listener()
+    tasks._resume_scan_queue_on_worker_ready()
+    assert started == []
+
+    monkeypatch.setattr(settings, "WORKER_ROLE", "scanner")
+    tasks._start_passive_arp_listener()
+    tasks._resume_scan_queue_on_worker_ready()
+    assert len(started) == 2
+
+
+def test_final_analysis_tolerates_loose_json_types():
+    from app.scanner.agent.base import _parse_final_analysis
+
+    analysis = _parse_final_analysis({
+        "device_class": "Router",
+        "confidence": "85%",
+        "vendor": "null",
+        "investigation_notes": ["Login page says EdgeRouter.", "SSH banner matches."],
+        "open_services_summary": "ssh, https",
+        "security_findings": ["Self-signed certificate", {"severity": "MEDIUM", "title": "Telnet", "detail": 23}],
+        "suggested_tags": None,
+    })
+    assert analysis.device_class.value == "router"
+    assert analysis.confidence == pytest.approx(0.85)
+    assert analysis.vendor is None
+    assert analysis.investigation_notes == "Login page says EdgeRouter. SSH banner matches."
+    assert analysis.open_services_summary == ["ssh", "https"]
+    assert [f.title for f in analysis.security_findings] == ["Self-signed certificate", "Telnet"]
+    assert analysis.security_findings[1].severity == "medium" and analysis.security_findings[1].detail == "23"
+
+
+@pytest.mark.asyncio
+async def test_drain_survives_an_analyst_crash(conn):
+    await _make_asset()
+    async with AsyncSessionLocal() as db:
+        await ai_queue.enqueue_scan_candidates(db, {"192.168.1.60": (PRIORITY_NEW, "sig")})
+        outcome = await ai_queue.drain_one(db, analyst_factory=lambda: _Analyst(ValueError("bad model output")), conn=conn)
+    assert outcome.status == "failed" and outcome.next_run_in == settings.AI_QUEUE_MIN_INTERVAL_SECONDS
+    assert await conn.get(ai_queue.LOCK_KEY) is None
