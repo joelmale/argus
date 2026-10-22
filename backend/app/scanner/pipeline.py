@@ -179,6 +179,9 @@ async def run_scan(
         control_fn,
     )
 
+    if ai_gate is not None and ai_gate.deferred and ai_gate.candidates:
+        await _queue_deferred_ai(db_session, ai_gate)
+
     # ── Stage 6: Finalize offline reconciliation ────────────────────────────
     if db_session is not None:
         await _check_control(
@@ -813,6 +816,8 @@ async def _build_ai_gate(db_session):
         reinvestigate_after=timedelta(days=max(0, settings.AI_REINVESTIGATE_DAYS)),
         skip_no_evidence=settings.AI_SKIP_NO_EVIDENCE,
         max_concurrent=settings.AI_MAX_CONCURRENT_HOSTS,
+        # Deferral needs persisted assets to queue against.
+        deferred=settings.AI_DEFERRED and db_session is not None,
     )
     if db_session is None:
         return gate
@@ -833,6 +838,19 @@ async def _build_ai_gate(db_session):
     return gate
 
 
+async def _queue_deferred_ai(db_session, ai_gate) -> None:
+    """Hand gated hosts to the AI worker; the scan itself never waits on the model."""
+    from app.services import ai_queue
+
+    try:
+        await db_session.flush()
+        await ai_queue.enqueue_scan_candidates(db_session, ai_gate.candidates)
+        ai_queue.kick()
+    except Exception as exc:
+        # The next scan queues them again; AI is enrichment, never a reason to fail a scan.
+        log.warning("Could not queue %d host(s) for AI investigation: %s", len(ai_gate.candidates), exc)
+
+
 async def _run_ai_investigation(analyst, result: HostScanResult, broadcast_fn, job_id: str, ip: str, ai_gate=None) -> None:
     if analyst is None:
         return
@@ -843,6 +861,9 @@ async def _run_ai_investigation(analyst, result: HostScanResult, broadcast_fn, j
         reason = ai_gate.skip_reason(result, signature)
         if reason is not None:
             log.info("AI investigation skipped for %s (%s)", ip, reason)
+            return
+        if ai_gate.deferred:
+            ai_gate.candidates[ip] = (ai_gate.priority(result, signature), signature)
             return
         result.ai_input_signature = signature
     try:

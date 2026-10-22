@@ -136,6 +136,9 @@ services:
       AI_MAX_STEPS: ${AI_MAX_STEPS:-5}
       AI_REINVESTIGATE_DAYS: ${AI_REINVESTIGATE_DAYS:-7}
       AI_SKIP_NO_EVIDENCE: ${AI_SKIP_NO_EVIDENCE:-true}
+      AI_DEFERRED: ${AI_DEFERRED:-true}
+      AI_LOCAL_MODE: ${AI_LOCAL_MODE:-single_shot}
+      AI_SINGLE_LOCAL_MODEL: ${AI_SINGLE_LOCAL_MODEL:-true}
       OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
       OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
       ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
@@ -207,6 +210,49 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     command: ["celery", "-A", "app.workers.tasks.celery_app", "beat", "--loglevel=info"]
+
+  # ── AI Worker ───────────────────────────────────────────────
+  # Drains the AI investigation queue one asset at a time, so model calls never hold a scan
+  # worker and a local Ollama only ever sees one request from Argus.
+  scanner-ai:
+    image: ${ARGUS_SCANNER_IMAGE:-ghcr.io/joelmale/argus-scanner:main}
+    container_name: argus_scanner_ai
+    restart: unless-stopped
+    network_mode: host
+    env_file: .env.production
+    environment:
+      APP_ENV: ${APP_ENV:-production}
+      APP_SECRET_KEY: ${APP_SECRET_KEY:-}
+      APP_DEBUG: ${APP_DEBUG:-false}
+      DATABASE_URL: ${SCANNER_DATABASE_URL:-postgresql+asyncpg://argus:change-me-db-password@127.0.0.1:5432/argus}
+      REDIS_URL: ${SCANNER_REDIS_URL:-redis://127.0.0.1:6379/0}
+      AI_BACKEND: ${AI_BACKEND:-ollama}
+      AI_MAX_STEPS: ${AI_MAX_STEPS:-5}
+      AI_LOCAL_MODE: ${AI_LOCAL_MODE:-single_shot}
+      AI_SINGLE_LOCAL_MODEL: ${AI_SINGLE_LOCAL_MODEL:-true}
+      AI_REQUEST_TIMEOUT_SECONDS: ${AI_REQUEST_TIMEOUT_SECONDS:-180}
+      AI_QUEUE_MIN_INTERVAL_SECONDS: ${AI_QUEUE_MIN_INTERVAL_SECONDS:-20}
+      AI_QUEUE_MAX_PER_HOUR: ${AI_QUEUE_MAX_PER_HOUR:-60}
+      AI_BREAKER_FAILURES: ${AI_BREAKER_FAILURES:-3}
+      AI_BREAKER_COOLDOWN_SECONDS: ${AI_BREAKER_COOLDOWN_SECONDS:-900}
+      AI_SLOW_CALL_SECONDS: ${AI_SLOW_CALL_SECONDS:-120}
+      AI_MODEL_SWAP_WAIT_SECONDS: ${AI_MODEL_SWAP_WAIT_SECONDS:-60}
+      AI_MODEL_SWAP_LIMIT_PER_HOUR: ${AI_MODEL_SWAP_LIMIT_PER_HOUR:-6}
+      AI_MIN_GPU_FRACTION: ${AI_MIN_GPU_FRACTION:-0.5}
+      OLLAMA_BASE_URL: ${OLLAMA_BASE_URL:-http://host.docker.internal:11434/v1}
+      OLLAMA_MODEL: ${OLLAMA_MODEL:-qwen2.5:7b}
+      ANTHROPIC_API_KEY: ${ANTHROPIC_API_KEY:-}
+      ANTHROPIC_MODEL: ${ANTHROPIC_MODEL:-claude-haiku-4-5-20251001}
+    volumes:
+      - argus_secrets:/run/secrets
+    depends_on:
+      backend:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    command: ["celery", "-A", "app.workers.tasks.celery_app", "worker", "-Q", "ai", "--concurrency", "1", "--hostname", "ai@%h", "--loglevel=info"]
 
   # ── Frontend ────────────────────────────────────────────────
   frontend:

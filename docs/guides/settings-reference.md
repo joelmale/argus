@@ -45,6 +45,19 @@ Controls the AI investigation agent that runs in Stage 5 of the pipeline.
 | **Anthropic API Key** | API key for the Anthropic API. |
 | **AI After Scan Enabled** | Master switch for AI analysis. When off, Stage 5 is skipped entirely for all profiles. |
 
+#### How AI work is paced
+
+Scans never wait on the model. Hosts that pass the AI gate (they have open ports or a successful probe, and their evidence changed or the last analysis is older than `AI_REINVESTIGATE_DAYS`) go into an AI queue. The `scanner-ai` worker works through it one asset at a time, from the evidence already stored:
+
+- **Order:** "Investigate with AI" on an asset page goes first, then new hosts, then hosts whose evidence changed, then stale re-checks. Within each group, the hosts the heuristics are least sure about go first.
+- **Pace:** at most `AI_QUEUE_MAX_PER_HOUR` investigations, spaced `AI_QUEUE_MIN_INTERVAL_SECONDS` apart.
+- **Ollama calls:** one JSON call per host (`AI_LOCAL_MODE=single_shot`). Calls are never retried and time out after `AI_REQUEST_TIMEOUT_SECONDS`.
+- **One model:** fingerprint synthesis reuses the investigation model when both run on Ollama (`AI_SINGLE_LOCAL_MODEL`). This stops Ollama swapping between two models, which puts the incoming model on the CPU.
+- **Circuit breaker:** AI work pauses for `AI_BREAKER_COOLDOWN_SECONDS` after `AI_BREAKER_FAILURES` problems in a row. Timeouts, server errors, calls slower than `AI_SLOW_CALL_SECONDS`, and a model with less than `AI_MIN_GPU_FRACTION` of itself in VRAM all count as problems. Queued assets wait; they are not dropped.
+- **Swap guard:** if Ollama has a different model loaded, Argus waits up to `AI_MODEL_SWAP_WAIT_SECONDS` for it to unload. More than `AI_MODEL_SWAP_LIMIT_PER_HOUR` forced swaps opens the breaker.
+
+The Settings page shows the queue depth, model swaps, how much of the model is on the GPU, and the breaker state, with a **Resume now** link once the cause is fixed. The same data is at `GET /api/v1/system/ai/status`.
+
 ### Fingerprint AI
 
 The fingerprint AI runs post-scan enrichment using persisted evidence. This is separate from the per-host investigation agent.
@@ -52,7 +65,7 @@ The fingerprint AI runs post-scan enrichment using persisted evidence. This is s
 | Setting | Description |
 |---|---|
 | **Fingerprint AI Backend** | Provider for post-scan fingerprint synthesis. Uses same provider options as AI Analysis. |
-| **Fingerprint AI Model** | Model name for fingerprint synthesis. |
+| **Fingerprint AI Model** | Model name for fingerprint synthesis. Ignored when both this and AI Analysis use Ollama: the investigation model is used, so only one model is loaded. |
 | **Min Confidence** | Minimum confidence score (0–1) required to apply an AI-generated classification to an asset. Results below this threshold are stored but not automatically applied. |
 | **Prompt Suffix** | Optional operator guidance appended to fingerprint prompts (e.g., custom network topology notes or known device patterns in your environment). |
 

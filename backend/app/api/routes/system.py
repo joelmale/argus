@@ -433,6 +433,32 @@ async def test_ai_configuration(
     }
 
 
+@router.get("/ai/status")
+async def get_ai_status(_: AdminUser):
+    """AI queue depth, circuit breaker and where Ollama placed the model (GPU share)."""
+    from app.scanner.ai_runtime import ai_runtime_status
+    from app.services.ai_queue import queue_depth
+
+    status = await ai_runtime_status()
+    status["queue_depth"] = await queue_depth()
+    return status
+
+
+@router.post("/ai/breaker/reset")
+async def reset_ai_breaker(_: AdminUser):
+    """Close the circuit breaker early, after fixing the cause (for example freeing VRAM)."""
+    from app.scanner.ai_runtime import AICircuitBreaker
+    from app.services import ai_queue
+
+    breaker = AICircuitBreaker()
+    try:
+        await breaker.reset()
+    finally:
+        await breaker.aclose()
+    ai_queue.kick()
+    return {"status": "reset"}
+
+
 @router.get("/ai/ollama/models")
 async def get_ollama_models(
     _: AdminUser,

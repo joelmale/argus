@@ -25,7 +25,7 @@ from app.fingerprinting.internet_lookup import build_lookup_query, normalize_all
 from app.fingerprinting.llm import synthesize_fingerprint
 from app.fingerprinting.risk import refresh_risk_and_lifecycle
 from app.services.identity import AssetIdentityResolver
-from app.scanner.config import get_or_create_scanner_config
+from app.scanner.config import get_or_create_scanner_config, resolve_fingerprint_model
 from app.scanner.models import HostScanResult
 
 log = logging.getLogger(__name__)
@@ -698,7 +698,7 @@ async def _upsert_fingerprint_hypothesis(db: AsyncSession, asset: Asset, evidenc
             asset=asset_payload,
             evidence=evidence_payload,
             backend=config.fingerprint_ai_backend,
-            model=config.fingerprint_ai_model or "qwen2.5:7b",
+            model=resolve_fingerprint_model(config),
             prompt_suffix=config.fingerprint_ai_prompt_suffix,
             base_url=config.ollama_base_url if config.fingerprint_ai_backend == "ollama" else config.openai_base_url,
             api_key=(
@@ -934,3 +934,32 @@ async def _upsert_ai_analysis(db: AsyncSession, asset: Asset, result: HostScanRe
     existing.agent_steps = analysis.agent_steps
     existing.input_signature = result.ai_input_signature
     existing.analyzed_at = result.scanned_at
+
+
+async def apply_deferred_ai_analysis(db: AsyncSession, asset: Asset, result: HostScanResult) -> None:
+    """Apply an analysis produced by the AI queue to an existing asset.
+
+    The scan already stored ports, probe runs and non-AI evidence, so only the AI-derived parts
+    change here: the analysis row, AI evidence, and the vendor/OS/device type it may improve.
+    """
+    await _upsert_ai_analysis(db, asset, result)
+    if not _should_persist_ai_fields(result):
+        return
+
+    evidence = extract_evidence(result)
+    for row in (await db.execute(
+        select(AssetEvidence).where(AssetEvidence.asset_id == asset.id, AssetEvidence.source == "ai")
+    )).scalars().all():
+        await db.delete(row)
+    _store_evidence_items(db, asset, result, [item for item in evidence if item.source == "ai"])
+
+    ai = result.ai_analysis
+    if ai.vendor:
+        asset.vendor = ai.vendor
+    if ai.os_guess and _should_apply_ai_os_guess(ai.confidence, asset.os_name, _os_fingerprint_confidence(result)):
+        asset.os_name = ai.os_guess
+    device_type, device_type_source = derive_detected_device_type(evidence)
+    if device_type and not asset.device_type_override:
+        asset.device_type = device_type
+        asset.device_type_source = device_type_source
+    await db.flush()

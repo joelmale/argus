@@ -26,10 +26,10 @@ from __future__ import annotations
 import json
 import logging
 
-from openai import AsyncOpenAI
 from openai.types.chat import ChatCompletionMessageParam
 
 from app.core.config import settings
+from app.scanner.ai_runtime import make_openai_client
 from app.scanner.agent.base import BaseAnalyst, SYSTEM_PROMPT
 from app.scanner.agent.tools import TOOL_SCHEMAS, execute
 from app.scanner.models import AIAnalysis, HostScanResult
@@ -47,10 +47,7 @@ class OllamaAnalyst(BaseAnalyst):
     """
 
     def __init__(self):
-        self.client = AsyncOpenAI(
-            base_url=settings.OLLAMA_BASE_URL,
-            api_key="ollama",   # Ollama doesn't require an API key, but client needs something
-        )
+        self.client = make_openai_client(settings.OLLAMA_BASE_URL, "ollama")  # no retries, bounded timeout
         self.model = settings.OLLAMA_MODEL
 
     async def investigate(self, result: HostScanResult) -> AIAnalysis:

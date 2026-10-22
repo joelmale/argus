@@ -9,6 +9,8 @@ import { openHtmlReport } from '@/lib/exportUtils'
 import { useAlertRules, useApiKeys, useAuditLogs, useBackupDrivers, useBackupPolicy, useCreateApiKey, useCreateUser, useCurrentUser, useDeleteApiKey, useFirewallaModule, useFingerprintDatasets, useHomeAssistantEntities, useIntegrationEvents, useOllamaModels, usePfsenseModule, usePlugins, usePullOllamaModel, useRefreshFingerprintDataset, useResetInventory, useScannerConfig, useSyncFirewallaModule, useSyncPfsenseModule, useSyncTplinkDecoModule, useSyncUnifiModule, useTestAiConfiguration, useTestFirewallaModule, useTestPfsenseModule, useTestTplinkDecoModule, useTestUnifiModule, useTplinkDecoModule, useUnifiModule, useUpdateAlertRule, useUpdateBackupPolicy, useUpdateFirewallaModule, useUpdatePfsenseModule, useUpdateScannerConfig, useUpdateTplinkDecoModule, useUpdateUnifiModule, useUpdateUser, useUsers } from '@/hooks/useAuth'
 import type { FirewallaConfig, FirewallaSyncRun, FingerprintDataset, PfsenseConfig, PfsenseSyncRun, ScannerConfig, TplinkDecoConfig, TplinkDecoSyncRun, UnifiConfig, UnifiSyncRun, UserRole } from '@/types'
 import { SETTINGS_SECTIONS } from '@/lib/settings-nav'
+import { systemApi } from '@/lib/api'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 
 type BackupPolicyFormProps = Readonly<{
   backupPolicy?: {
@@ -435,6 +437,7 @@ function ScannerConfigCard({ scannerConfig, isUpdatingScannerConfig, onSave }: S
           <TextInputField label="Deep probe timeout seconds" value={deepProbeTimeoutSeconds} type="number" min={1} max={30} onChange={(event) => setDeepProbeTimeoutSeconds(Number(event.target.value) || 6)} placeholder="6" />
           <CheckboxField label="Enable AI after-scan investigation" checked={aiAfterScanEnabled} onChange={(event) => setAiAfterScanEnabled(event.target.checked)} />
         </div>
+        <AiRuntimePanel />
         <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1">
           <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">Effective target</p>
           <p className="text-xs text-zinc-500">
@@ -1705,6 +1708,41 @@ function FirewallaModuleCard({
         </div>
       </CardBody>}
     </Card>
+  )
+}
+
+// Live view of the AI queue, circuit breaker and how much of the model Ollama keeps on the GPU.
+function AiRuntimePanel() {
+  const qc = useQueryClient()
+  const { data } = useQuery({
+    queryKey: ['ai-status'],
+    queryFn: () => systemApi.aiStatus().then((r) => r.data),
+    refetchInterval: 30_000,
+  })
+  const reset = useMutation({
+    mutationFn: () => systemApi.resetAiBreaker(),
+    onSuccess: () => qc.invalidateQueries({ queryKey: ['ai-status'] }),
+  })
+  if (!data) return null
+  const gpu = data.placement ? Math.round(Number(data.placement.gpu_fraction) * 100) : null
+  return (
+    <div className="rounded-xl border border-gray-200 dark:border-zinc-800 p-4 space-y-1 text-xs text-zinc-500">
+      <p className="text-sm font-medium text-zinc-900 dark:text-zinc-100">AI runtime</p>
+      <p>
+        Queue: {data.queue_depth} waiting · Model swaps this hour: {data.model_swaps_last_hour}
+        {data.placement && <> · {data.placement.model} {gpu}% on GPU{gpu !== null && gpu < 50 ? ' (running mostly on CPU)' : ''}</>}
+      </p>
+      {data.breaker_open ? (
+        <p className="text-amber-600 dark:text-amber-400">
+          Paused for {Math.ceil(data.retry_after_seconds / 60)} min: {data.breaker_reason}{' '}
+          <button type="button" className="underline" onClick={() => reset.mutate()} disabled={reset.isPending}>
+            Resume now
+          </button>
+        </p>
+      ) : (
+        <p>Running{data.recent_failures ? ` (${data.recent_failures} recent problem${data.recent_failures === 1 ? '' : 's'})` : ''}.</p>
+      )}
+    </div>
   )
 }
 

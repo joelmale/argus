@@ -62,8 +62,16 @@ celery_app.conf.update(
         "resume-paused-scans": {
             "task": "app.workers.tasks.run_resume_paused_scans",
             "schedule": 60,
-        }
+        },
+        # Safety net: the queue normally re-kicks itself after each investigation.
+        "ai-queue": {
+            "task": "app.workers.tasks.run_ai_queue",
+            "schedule": 300,
+        },
     },
+    # AI investigations get their own single-concurrency worker (the scanner-ai service) so a
+    # slow model never holds a scan worker slot.
+    task_routes={"app.workers.tasks.run_ai_queue": {"queue": "ai"}},
 )
 
 
@@ -162,6 +170,25 @@ def run_scan_job(self, job_id: str):
 def run_scheduled_scan():
     """Periodic task — enqueue a scan of all configured default targets."""
     asyncio.run(_enqueue_scheduled_scan())
+
+
+@celery_app.task(name="app.workers.tasks.run_ai_queue", ignore_result=True)
+def run_ai_queue():
+    """Investigate the next queued asset, then schedule the next look at the queue."""
+    outcome = asyncio.run(_run_ai_queue_async())
+    if outcome.next_run_in is not None:
+        run_ai_queue.apply_async(countdown=max(0, outcome.next_run_in))
+
+
+async def _run_ai_queue_async():
+    from app.services.ai_queue import drain_one
+
+    session_factory = _get_worker_session_factory()
+    async with session_factory() as db:
+        outcome = await drain_one(db)
+    if outcome.status not in {"empty", "busy"}:
+        log.info("AI queue: %s %s (next look in %ss)", outcome.status, outcome.asset_id or "", outcome.next_run_in)
+    return outcome
 
 
 @celery_app.task(name="app.workers.tasks.run_scheduled_backups")
