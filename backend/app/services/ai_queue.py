@@ -160,7 +160,7 @@ async def load_scan_result(db: AsyncSession, asset_id: uuid.UUID) -> tuple[Asset
 
 @dataclass
 class DrainOutcome:
-    status: str                 # investigated | empty | busy | paused | rate_limited | missing | requeued
+    status: str                 # investigated | empty | busy | paused | rate_limited | missing | requeued | failed
     asset_id: str | None = None
     next_run_in: int | None = None  # seconds until the queue should be looked at again
 
@@ -216,6 +216,11 @@ async def drain_one(db: AsyncSession, *, analyst_factory=None, conn: redis.Redis
             except AIUnavailable as exc:
                 await conn.zadd(QUEUE_KEY, {asset_id: score}, gt=True)
                 return DrainOutcome("requeued", asset_id, next_run_in=exc.retry_after)
+            except Exception:
+                # Don't requeue: a host that always breaks the analyst would block the queue.
+                log.exception("AI investigation failed for %s; dropped until the next scan queues it", asset.ip_address)
+                await conn.hdel(SIGNATURES_KEY, asset_id)
+                return DrainOutcome("failed", asset_id, next_run_in=settings.AI_QUEUE_MIN_INTERVAL_SECONDS)
 
             result.ai_input_signature = await conn.hget(SIGNATURES_KEY, asset_id) or ai_input_signature(result)
             await conn.hdel(SIGNATURES_KEY, asset_id)

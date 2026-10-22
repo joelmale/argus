@@ -93,6 +93,7 @@ class Settings(BaseSettings):
     AI_SINGLE_LOCAL_MODEL: bool = True      # fingerprint synthesis reuses the investigation model on Ollama
     # Investigations run on the "ai" Celery queue after a scan, one at a time, highest priority first.
     AI_DEFERRED: bool = True
+    WORKER_ROLE: str = "scanner"            # "ai" for the scanner-ai worker: skips scanner startup hooks
     AI_QUEUE_MIN_INTERVAL_SECONDS: int = 20
     AI_QUEUE_MAX_PER_HOUR: int = 60
     # Circuit breaker: pause all AI calls after repeated failures, slow calls or model thrash.
