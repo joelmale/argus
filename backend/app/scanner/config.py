@@ -460,6 +460,19 @@ async def get_or_create_scanner_config(db: AsyncSession) -> ScannerConfig:
     return config
 
 
+def resolve_fingerprint_model(config: ScannerConfig, ai_backend: str | None = None, fingerprint_backend: str | None = None) -> str:
+    """Model for fingerprint synthesis. On Ollama it reuses the investigation model.
+
+    Two different local models alternate per host, and every swap reloads the incoming model
+    while the outgoing one still holds VRAM, so Ollama runs it on the CPU.
+    """
+    ai_backend = ai_backend or _normalize_ai_backend(config.ai_backend, _normalize_ai_backend(settings.AI_BACKEND, "ollama"))
+    fingerprint_backend = fingerprint_backend or _normalize_ai_backend(config.fingerprint_ai_backend, ai_backend)
+    if settings.AI_SINGLE_LOCAL_MODEL and ai_backend == "ollama" and fingerprint_backend == "ollama":
+        return config.ai_model or _default_model_for_backend("ollama")
+    return config.fingerprint_ai_model or _default_model_for_backend(fingerprint_backend)
+
+
 def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerConfig:
     detected_targets = detect_local_ipv4_cidr() if config.auto_detect_targets else None
     effective_targets = (config.default_targets or "").strip() or detected_targets
@@ -513,7 +526,7 @@ def build_effective_scanner_config(config: ScannerConfig) -> EffectiveScannerCon
         snmp_v3_auth_protocol=config.snmp_v3_auth_protocol,
         snmp_v3_priv_protocol=config.snmp_v3_priv_protocol,
         fingerprint_ai_enabled=config.fingerprint_ai_enabled,
-        fingerprint_ai_model=config.fingerprint_ai_model or _default_model_for_backend(fingerprint_ai_backend),
+        fingerprint_ai_model=resolve_fingerprint_model(config, ai_backend, fingerprint_ai_backend),
         fingerprint_ai_min_confidence=config.fingerprint_ai_min_confidence,
         fingerprint_ai_prompt_suffix=config.fingerprint_ai_prompt_suffix,
         internet_lookup_enabled=config.internet_lookup_enabled,

@@ -4,9 +4,8 @@ import json
 from typing import Any
 
 import anthropic
-from openai import AsyncOpenAI
-
 from app.core.config import settings
+from app.scanner.ai_runtime import guarded_chat, make_openai_client
 
 PROMPT_VERSION = "v1"
 
@@ -93,8 +92,11 @@ async def synthesize_fingerprint(
     else:
         resolved_base_url = base_url or settings.OLLAMA_BASE_URL
         resolved_api_key = api_key or ("ollama" if backend_name == "ollama" else settings.OPENAI_API_KEY)
-        client = AsyncOpenAI(base_url=resolved_base_url, api_key=resolved_api_key)
-        response = await client.chat.completions.create(
+        client = make_openai_client(resolved_base_url, resolved_api_key)
+        response = await guarded_chat(
+            client,
+            backend=backend_name,
+            base_url=resolved_base_url,
             model=model,
             messages=[
                 {"role": "system", "content": SYSTEM_PROMPT},

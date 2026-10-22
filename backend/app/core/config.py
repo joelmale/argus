@@ -88,6 +88,22 @@ class Settings(BaseSettings):
     AI_MAX_STEPS: int = 5              # model calls per investigation before falling back to heuristics
     AI_REINVESTIGATE_DAYS: int = 7     # re-analyse a host with unchanged evidence after this long
     AI_SKIP_NO_EVIDENCE: bool = True   # skip hosts with no open ports and no successful probe
+    AI_REQUEST_TIMEOUT_SECONDS: int = 180   # one model call; local calls are never retried
+    AI_LOCAL_MODE: str = "single_shot"      # Ollama: "single_shot" (one JSON call) | "agent" (tool loop)
+    AI_SINGLE_LOCAL_MODEL: bool = True      # fingerprint synthesis reuses the investigation model on Ollama
+    # Investigations run on the "ai" Celery queue after a scan, one at a time, highest priority first.
+    AI_DEFERRED: bool = True
+    AI_QUEUE_MIN_INTERVAL_SECONDS: int = 20
+    AI_QUEUE_MAX_PER_HOUR: int = 60
+    # Circuit breaker: pause all AI calls after repeated failures, slow calls or model thrash.
+    AI_BREAKER_FAILURES: int = 3
+    AI_BREAKER_COOLDOWN_SECONDS: int = 900
+    AI_SLOW_CALL_SECONDS: int = 120
+    # Ollama placement guard: wait for another loaded model to go idle, trip on repeated swaps,
+    # and treat a model mostly spilled to CPU as degraded.
+    AI_MODEL_SWAP_WAIT_SECONDS: int = 60
+    AI_MODEL_SWAP_LIMIT_PER_HOUR: int = 6
+    AI_MIN_GPU_FRACTION: float = 0.5
 
     # Ollama settings (primary — uses your local RTX A2000)
     OLLAMA_BASE_URL: str = "http://host.docker.internal:11434/v1"

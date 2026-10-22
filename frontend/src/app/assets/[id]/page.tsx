@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react'
 import { AppShell } from '@/components/layout/AppShell'
 import { useCurrentUser } from '@/hooks/useAuth'
-import { useAddAssetNote, useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useRefreshAssetAiAnalysis, useRemoveAssetTag, useRestoreAssist, useRunAssetPortScan, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
+import { useAddAssetNote, useAddAssetTag, useAsset, useAssetFindings, useConfigBackupTarget, useConfigBackups, useDiffConfigBackup, useDownloadConfigBackup, useInvestigateAssetWithAi, useRemoveAssetTag, useRestoreAssist, useRunAssetPortScan, useTriggerConfigBackup, useUpdateAsset, useUpsertConfigBackupTarget, useWirelessClients } from '@/hooks/useAssets'
 import { useTriggerScan } from '@/hooks/useScans'
 import { StatusBadge, DeviceClassBadge, ConfidenceBadge } from '@/components/ui/Badge'
 import { Card, CardHeader, CardTitle, CardBody } from '@/components/ui/Card'
@@ -14,6 +14,29 @@ import { useParams, useRouter } from 'next/navigation'
 import type { Asset, AssetAutopsyStage, ConfigBackupTarget } from '@/types'
 import { cn } from '@/lib/utils'
 import { exportAssetJson, exportAssetCsv } from '@/lib/exportUtils'
+
+// Queues this asset at the front of the AI queue; the AI worker investigates it from stored evidence.
+function AiInvestigateButton({ assetId }: { assetId: string }) {
+  const { mutate, isPending, data, error } = useInvestigateAssetWithAi()
+  let note: string | null = null
+  if (error) note = getErrorDetail(error) ?? 'Could not queue the investigation.'
+  else if (data?.breaker_open) note = `Queued, but AI is paused: ${data.breaker_reason ?? 'cooling down'}.`
+  else if (data) note = data.queue_position === 1 ? 'Queued next. Refresh in a minute.' : `Queued at position ${data.queue_position ?? '?'}.`
+  return (
+    <div className="flex flex-col items-end gap-1">
+      <button
+        type="button"
+        onClick={() => mutate(assetId)}
+        disabled={isPending}
+        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
+      >
+        <Bot className="w-3.5 h-3.5" />
+        {isPending ? 'Queuing…' : 'Investigate with AI'}
+      </button>
+      {note && <span className="text-[11px] text-zinc-500 max-w-[16rem] text-right">{note}</span>}
+    </div>
+  )
+}
 
 const DEVICE_TYPE_OPTIONS = [
   'router',
@@ -727,7 +750,6 @@ export default function AssetDetailPage() {
   const { data: asset, isLoading, isError } = useAsset(assetId)
   const { data: currentUser } = useCurrentUser()
   const { mutate: runPortScan, isPending: isPortScanPending } = useRunAssetPortScan()
-  const { mutate: refreshAiAnalysis, isPending: isAiLookupPending } = useRefreshAssetAiAnalysis()
   const { mutate: triggerEnrichment, isPending: isEnrichmentPending } = useTriggerScan()
   const [showAutopsy, setShowAutopsy] = useState(false)
   const [enrichmentStatus, setEnrichmentStatus] = useState<string | null>(null)
@@ -989,17 +1011,7 @@ export default function AssetDetailPage() {
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Classification</CardTitle>
-                    {currentUser?.role === 'admin' && (
-                      <button
-                        type="button"
-                        onClick={() => refreshAiAnalysis(asset.id)}
-                        disabled={isAiLookupPending}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
-                      >
-                        <Bot className="w-3.5 h-3.5" />
-                        {isAiLookupPending ? 'Looking up…' : 'Lookup'}
-                      </button>
-                    )}
+                    {currentUser?.role === 'admin' && <AiInvestigateButton assetId={asset.id} />}
                   </div>
                 </CardHeader>
                 <CardBody className="space-y-3">
@@ -1116,17 +1128,7 @@ export default function AssetDetailPage() {
                 <CardHeader>
                   <div className="flex items-center justify-between gap-3">
                     <CardTitle><Bot className="w-4 h-4 inline mr-1.5 text-sky-500" />AI Analysis</CardTitle>
-                    {currentUser?.role === 'admin' && (
-                      <button
-                        type="button"
-                        onClick={() => refreshAiAnalysis(asset.id)}
-                        disabled={isAiLookupPending}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs border border-gray-200 dark:border-zinc-700"
-                      >
-                        <Bot className="w-3.5 h-3.5" />
-                        {isAiLookupPending ? 'Looking up…' : 'Lookup'}
-                      </button>
-                    )}
+                    {currentUser?.role === 'admin' && <AiInvestigateButton assetId={asset.id} />}
                   </div>
                 </CardHeader>
                 <CardBody>

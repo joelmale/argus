@@ -103,9 +103,29 @@ export const authApi = {
     api.post("/api/v1/system/inventory/reset", payload),
 };
 
+export interface AiInvestigateResponse {
+  status: string;
+  queue_position: number | null;
+  queue_depth: number;
+  breaker_open: boolean;
+  breaker_reason: string | null;
+}
+
+export interface AiRuntimeStatus {
+  breaker_open: boolean;
+  breaker_reason: string | null;
+  retry_after_seconds: number;
+  recent_failures: number;
+  model_swaps_last_hour: number;
+  queue_depth: number;
+  placement: { model: string; gpu_fraction: string; checked_at: string } | null;
+}
+
 export const systemApi = {
   operatorBrief: (windowHours = 24) =>
     api.get("/api/v1/system/operator-brief", { params: { window_hours: windowHours } }),
+  aiStatus: () => api.get<AiRuntimeStatus>("/api/v1/system/ai/status"),
+  resetAiBreaker: () => api.post("/api/v1/system/ai/breaker/reset"),
 };
 
 // ─── Asset endpoints ────────────────────────────────────────────
@@ -133,6 +153,7 @@ export const assetsApi = {
   runPortScan: (id: string) => api.post(`/api/v1/assets/${id}/port-scan`),
   refreshSnmp: (id: string) => api.post(`/api/v1/assets/${id}/snmp-refresh`),
   refreshAiAnalysis: (id: string) => api.post(`/api/v1/assets/${id}/ai-analysis/refresh`),
+  investigateWithAi: (id: string) => api.post<AiInvestigateResponse>(`/api/v1/assets/${id}/ai-analysis/investigate`),
   listNotes: (id: string) => api.get(`/api/v1/assets/${id}/notes`),
   addNote: (id: string, content: string) => api.post(`/api/v1/assets/${id}/notes`, { content }),
   getConfigBackupTarget: (id: string) => api.get(`/api/v1/assets/${id}/config-backup-target`),

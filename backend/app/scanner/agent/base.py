@@ -73,6 +73,41 @@ Call `final_analysis` when done. Do not ask for more information — use only wh
 """
 
 
+SINGLE_SHOT_PROMPT = """\
+You are a network security analyst identifying one device on a home lab network for a tool called Argus.
+You get everything the scanner already collected: discovery data, open ports, OS fingerprint, a heuristic guess,
+and the results of protocol probes (HTTP, TLS, SSH, SNMP, mDNS, UPnP, SMB). You cannot run more probes.
+
+Reply with a single JSON object and nothing else, with these keys:
+- device_class: one of router, switch, access_point, firewall, server, workstation, nas, printer, ip_camera,
+  smart_tv, iot_device, voip, game_console, unknown
+- confidence: 0.0-1.0 (0.9+ only with definitive evidence such as a UPnP model name; below 0.5 is a guess)
+- vendor, model, os_guess, device_role: strings or null
+- open_services_summary: list of short strings
+- security_findings: list of {"severity": "info|low|medium|high|critical", "title": str, "detail": str}
+  (e.g. SMBv1 or telnet = high, FTP or TLS 1.0 or SNMP "public" = medium, self-signed cert = info)
+- investigation_notes: two or three sentences naming the evidence behind each conclusion
+- suggested_tags: list of short strings
+
+Prefer "unknown" and low confidence over guessing.\
+"""
+
+
+def summarize_probes(probes) -> str:
+    """Compact, model-friendly digest of successful probe results."""
+    lines = []
+    for probe in probes:
+        if not probe.success:
+            continue
+        port = f":{probe.target_port}" if probe.target_port else ""
+        data = {key: value for key, value in (probe.data or {}).items() if value not in (None, "", [], {})}
+        text = ", ".join(f"{key}={value}" for key, value in data.items())
+        if not text and probe.raw:
+            text = probe.raw
+        lines.append(f"- {probe.probe_type}{port}: {text[:600]}")
+    return "\n".join(lines) or "- no probe succeeded"
+
+
 def _build_initial_context(
     host: DiscoveredHost,
     ports: list[PortResult],

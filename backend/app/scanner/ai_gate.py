@@ -24,6 +24,12 @@ from app.scanner.models import HostScanResult
 SKIP_NO_EVIDENCE = "no_evidence"
 SKIP_UNCHANGED = "unchanged"
 
+# Queue priorities (higher runs first). The heuristic's uncertainty adds up to 50 within a tier.
+PRIORITY_ON_DEMAND = 1000.0
+PRIORITY_NEW = 300.0
+PRIORITY_CHANGED = 200.0
+PRIORITY_STALE = 100.0
+
 
 def has_ai_evidence(result: HostScanResult) -> bool:
     return bool(result.open_ports) or any(p.success for p in result.probes)
@@ -52,6 +58,9 @@ class AIGate:
     reinvestigate_after: timedelta = timedelta(days=7)
     skip_no_evidence: bool = True
     max_concurrent: int = 1
+    # Deferred: queue hosts for the AI worker instead of investigating inside the scan.
+    deferred: bool = False
+    candidates: dict[str, tuple[float, str]] = field(default_factory=dict)  # ip -> (priority, signature)
     _semaphore: asyncio.Semaphore | None = None
 
     @property
@@ -72,3 +81,17 @@ class AIGate:
             if prev_signature == signature and now - analyzed_at < self.reinvestigate_after:
                 return SKIP_UNCHANGED
         return None
+
+    def priority(self, result: HostScanResult, signature: str) -> float:
+        """New hosts first, then hosts whose evidence changed, then stale re-checks; least certain first."""
+        from app.scanner.stages.fingerprint import classify
+
+        previous = self.prior.get(result.host.ip_address)
+        if previous is None:
+            base = PRIORITY_NEW
+        elif previous[0] != signature:
+            base = PRIORITY_CHANGED
+        else:
+            base = PRIORITY_STALE
+        hint = classify(result.host, result.ports, result.os_fingerprint, result.mac_vendor)
+        return base + round((1.0 - max(0.0, min(1.0, hint.confidence))) * 50, 2)

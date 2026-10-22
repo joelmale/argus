@@ -108,6 +108,12 @@ export function useRefreshAssetAiAnalysis() {
   })
 }
 
+export function useInvestigateAssetWithAi() {
+  return useMutation({
+    mutationFn: (id: string) => assetsApi.investigateWithAi(id).then((r) => r.data),
+  })
+}
+
 export function useAddAssetNote() {
   const qc = useQueryClient()
   return useMutation({

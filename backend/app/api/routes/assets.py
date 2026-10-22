@@ -509,6 +509,41 @@ async def run_asset_ai_refresh(
     return {"job_id": str(job.id), "status": "queued", "queue_position": job.queue_position}
 
 
+class AIInvestigateResponse(BaseModel):
+    status: str
+    queue_position: int | None = None
+    queue_depth: int
+    breaker_open: bool = False
+    breaker_reason: str | None = None
+
+
+@router.post("/{asset_id}/ai-analysis/investigate", response_model=AIInvestigateResponse, responses=ASSET_NOT_FOUND_RESPONSE)
+@limiter.limit("10/minute")
+async def investigate_asset_with_ai(
+    request: Request,
+    asset_id: UUID,
+    db: DBSession,
+    _: AdminUser,
+):
+    """Put this asset at the front of the AI queue, using the evidence already stored for it."""
+    from app.scanner.ai_gate import PRIORITY_ON_DEMAND
+    from app.scanner.ai_runtime import ai_runtime_status
+    from app.services import ai_queue
+
+    asset = await _load_asset(db, asset_id)
+    depth = await ai_queue.enqueue({str(asset.id): PRIORITY_ON_DEMAND})
+    position = await ai_queue.queue_position(str(asset.id))
+    ai_queue.kick()
+    runtime = await ai_runtime_status()
+    return {
+        "status": "queued",
+        "queue_position": position,
+        "queue_depth": depth,
+        "breaker_open": runtime["breaker_open"],
+        "breaker_reason": runtime["breaker_reason"],
+    }
+
+
 @router.post("/{asset_id}/snmp-refresh", response_model=JobSubmissionResponse, responses=ASSET_NOT_FOUND_RESPONSE)
 @limiter.limit("3/minute")
 async def run_asset_snmp_refresh(

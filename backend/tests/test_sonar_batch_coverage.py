@@ -2438,7 +2438,8 @@ async def test_scanner_config_bootstrap_create_update_and_effective_helpers(monk
     effective = scanner_config.build_effective_scanner_config(config)
     assert effective.detected_targets == "192.168.88.0/24"
     assert effective.effective_targets == "192.168.88.0/24"
-    assert effective.fingerprint_ai_model == "qwen-test"
+    # Both roles on Ollama share the investigation model, so Ollama never swaps between them.
+    assert effective.fingerprint_ai_model == effective.ai_model
     assert effective.snmp_v3_username == ""
 
     monkeypatch.setattr(scanner_config, "get_or_create_scanner_config", lambda db: _completed_task(config))
@@ -2791,6 +2792,8 @@ async def test_upsert_helper_ai_lookup_and_autopsy_paths(monkeypatch):
         fingerprint_ai_model="model-x",
         fingerprint_ai_prompt_suffix="suffix",
         fingerprint_ai_backend="ollama",
+        ai_backend="ollama",
+        ai_model="model-x",
         ollama_base_url="http://localhost:11434",
         openai_base_url=None,
         openai_api_key=None,
