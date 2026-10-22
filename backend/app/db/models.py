@@ -218,6 +218,8 @@ class AssetAIAnalysis(Base):
     ai_backend: Mapped[str] = mapped_column(String(32), default="none")
     model_used: Mapped[str | None] = mapped_column(String(128))
     agent_steps: Mapped[int] = mapped_column(Integer, default=0)
+    # Hash of the scan evidence this analysis saw; unchanged evidence skips re-investigation.
+    input_signature: Mapped[str | None] = mapped_column(String(64))
     analyzed_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow, onupdate=utcnow)
 
     asset: Mapped["Asset"] = relationship(back_populates="ai_analysis")
