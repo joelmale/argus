@@ -142,6 +142,7 @@ async def run_scan(
     # ── Stages 3–6: Per-host investigation (concurrent) ──────────────────────
     semaphore = asyncio.Semaphore(max(1, concurrent_hosts))
     analyst = None
+    ai_gate = None
     if _should_enable_ai(enable_ai, mode_behavior):
         from app.scanner.agent import get_analyst
         if db_session is not None:
@@ -150,6 +151,7 @@ async def run_scan(
             analyst = get_analyst(runtime_config)
         else:
             analyst = get_analyst()
+        ai_gate = await _build_ai_gate(db_session)
 
     tasks = _build_investigation_tasks(
         hosts,
@@ -161,6 +163,7 @@ async def run_scan(
         semaphore,
         broadcast_fn,
         job_id,
+        ai_gate=ai_gate,
     )
 
     total_hosts = len(tasks)
@@ -292,6 +295,7 @@ def _build_investigation_tasks(
     semaphore: asyncio.Semaphore,
     broadcast_fn,
     job_id: str,
+    ai_gate=None,
 ) -> list[asyncio.Task]:
     return [
         asyncio.create_task(
@@ -308,6 +312,7 @@ def _build_investigation_tasks(
                 semaphore=semaphore,
                 broadcast_fn=broadcast_fn,
                 job_id=job_id,
+                ai_gate=ai_gate,
             )
         )
         for host in hosts
@@ -641,6 +646,7 @@ async def _investigate_host(
     semaphore: asyncio.Semaphore,
     broadcast_fn,
     job_id: str,
+    ai_gate=None,
 ) -> HostScanResult:
     """Full per-host investigation pipeline (stages 3–5)."""
     async with semaphore:
@@ -681,7 +687,7 @@ async def _investigate_host(
             result.reverse_hostname = _resolve_hostname_from_probes(probe_results)
 
         # Stage 5: AI analysis
-        await _run_ai_investigation(analyst, result, broadcast_fn, job_id, ip)
+        await _run_ai_investigation(analyst, result, broadcast_fn, job_id, ip, ai_gate=ai_gate)
 
         result.scan_duration_ms = round((time.monotonic() - t0) * 1000, 1)
         return result
@@ -796,11 +802,55 @@ def _extract_probe_hostname(probe) -> str | None:
     return None
 
 
-async def _run_ai_investigation(analyst, result: HostScanResult, broadcast_fn, job_id: str, ip: str) -> None:
+async def _build_ai_gate(db_session):
+    """Gate with the evidence signature of each host's last AI analysis, so unchanged hosts are skipped."""
+    from datetime import timedelta
+
+    from app.core.config import settings
+    from app.scanner.ai_gate import AIGate
+
+    gate = AIGate(
+        reinvestigate_after=timedelta(days=max(0, settings.AI_REINVESTIGATE_DAYS)),
+        skip_no_evidence=settings.AI_SKIP_NO_EVIDENCE,
+        max_concurrent=settings.AI_MAX_CONCURRENT_HOSTS,
+    )
+    if db_session is None:
+        return gate
+    try:
+        from sqlalchemy import select
+
+        from app.db.models import Asset, AssetAIAnalysis
+
+        rows = await db_session.execute(
+            select(Asset.ip_address, AssetAIAnalysis.input_signature, AssetAIAnalysis.analyzed_at)
+            .join(AssetAIAnalysis, AssetAIAnalysis.asset_id == Asset.id)
+            .where(AssetAIAnalysis.input_signature.is_not(None))
+        )
+        gate.prior = {ip: (signature, analyzed_at) for ip, signature, analyzed_at in rows.all()}
+    except Exception as exc:
+        # Without history every host looks new; that only costs model time.
+        log.warning("Could not load prior AI analyses: %s", exc)
+    return gate
+
+
+async def _run_ai_investigation(analyst, result: HostScanResult, broadcast_fn, job_id: str, ip: str, ai_gate=None) -> None:
     if analyst is None:
         return
+    if ai_gate is not None:
+        from app.scanner.ai_gate import ai_input_signature
+
+        signature = ai_input_signature(result)
+        reason = ai_gate.skip_reason(result, signature)
+        if reason is not None:
+            log.info("AI investigation skipped for %s (%s)", ip, reason)
+            return
+        result.ai_input_signature = signature
     try:
-        ai_analysis = await analyst.investigate(result)
+        if ai_gate is not None:
+            async with ai_gate.semaphore:
+                ai_analysis = await analyst.investigate(result)
+        else:
+            ai_analysis = await analyst.investigate(result)
         result.ai_analysis = ai_analysis
         await _broadcast(broadcast_fn, {
             "event": "device_investigated",

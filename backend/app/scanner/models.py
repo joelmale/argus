@@ -278,6 +278,7 @@ class HostScanResult(BaseModel):
     reverse_hostname: str | None = None
     probes: list[ProbeResult] = Field(default_factory=list)
     ai_analysis: AIAnalysis | None = None
+    ai_input_signature: str | None = None   # evidence hash the AI analysis was based on
     scan_profile: ScanProfile = ScanProfile.BALANCED
     scan_duration_ms: float = 0.0
     scanned_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))

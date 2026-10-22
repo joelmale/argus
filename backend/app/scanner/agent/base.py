@@ -15,6 +15,8 @@ from __future__ import annotations
 import logging
 from abc import ABC, abstractmethod
 
+from app.core.config import settings
+
 from app.scanner.models import (
     AIAnalysis,
     DeviceClass,
@@ -153,7 +155,7 @@ def _parse_final_analysis(args: dict) -> AIAnalysis:
 class BaseAnalyst(ABC):
     """Abstract base for AI analyst backends."""
 
-    MAX_STEPS = 10  # Maximum tool calls before forcing final_analysis
+    MAX_STEPS = max(1, settings.AI_MAX_STEPS)  # model calls before falling back to heuristics
 
     @abstractmethod
     async def investigate(self, result: HostScanResult) -> AIAnalysis:

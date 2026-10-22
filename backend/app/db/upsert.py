@@ -913,6 +913,7 @@ async def _upsert_ai_analysis(db: AsyncSession, asset: Asset, result: HostScanRe
                 ai_backend=analysis.ai_backend,
                 model_used=analysis.model_used,
                 agent_steps=analysis.agent_steps,
+                input_signature=result.ai_input_signature,
                 analyzed_at=result.scanned_at,
             )
         )
@@ -931,4 +932,5 @@ async def _upsert_ai_analysis(db: AsyncSession, asset: Asset, result: HostScanRe
     existing.ai_backend = analysis.ai_backend
     existing.model_used = analysis.model_used
     existing.agent_steps = analysis.agent_steps
+    existing.input_signature = result.ai_input_signature
     existing.analyzed_at = result.scanned_at

@@ -84,7 +84,10 @@ class Settings(BaseSettings):
     # AI_BACKEND: "ollama" | "anthropic" | "none"
     AI_BACKEND: str = "ollama"
     AI_ENABLE_PER_SCAN: bool = True
-    AI_MAX_CONCURRENT_HOSTS: int = 5   # How many hosts the AI investigates in parallel
+    AI_MAX_CONCURRENT_HOSTS: int = 1   # AI investigations at once; a local model serves one request at a time
+    AI_MAX_STEPS: int = 5              # model calls per investigation before falling back to heuristics
+    AI_REINVESTIGATE_DAYS: int = 7     # re-analyse a host with unchanged evidence after this long
+    AI_SKIP_NO_EVIDENCE: bool = True   # skip hosts with no open ports and no successful probe
 
     # Ollama settings (primary — uses your local RTX A2000)
     OLLAMA_BASE_URL: str = "http://host.docker.internal:11434/v1"
