@@ -175,8 +175,10 @@ def run_scheduled_scan():
 @celery_app.task(name="app.workers.tasks.run_ai_queue", ignore_result=True)
 def run_ai_queue():
     """Investigate the next queued asset, then schedule the next look at the queue."""
+    from app.services.ai_queue import claim_followup
+
     outcome = asyncio.run(_run_ai_queue_async())
-    if outcome.next_run_in is not None:
+    if outcome.next_run_in is not None and claim_followup(outcome.next_run_in):
         run_ai_queue.apply_async(countdown=max(0, outcome.next_run_in))
 
 
