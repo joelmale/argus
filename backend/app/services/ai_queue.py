@@ -102,6 +102,25 @@ async def enqueue_scan_candidates(db: AsyncSession, candidates: dict[str, tuple[
     return depth
 
 
+FOLLOWUP_KEY = "argus:ai:followup"
+
+
+def claim_followup(countdown: int, client=None) -> bool:
+    """Allow one scheduled follow-up look at the queue at a time.
+
+    Every drain step schedules the next one, and beat kicks the queue every few minutes; without
+    this, each kick that lands while AI is paused starts another self-rescheduling chain.
+    """
+    import redis as sync_redis
+
+    conn = client or sync_redis.Redis.from_url(settings.REDIS_URL)
+    try:
+        return bool(conn.set(FOLLOWUP_KEY, "1", nx=True, ex=max(1, int(countdown))))
+    finally:
+        if client is None:
+            conn.close()
+
+
 def kick(countdown: int = 0) -> None:
     """Ask the AI worker to look at the queue."""
     from app.workers.tasks import run_ai_queue

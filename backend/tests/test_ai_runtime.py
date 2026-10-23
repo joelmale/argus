@@ -2,6 +2,7 @@
 single local model, single-shot mode, the deferred AI queue and on-demand investigation."""
 from __future__ import annotations
 
+import asyncio
 import json
 from datetime import datetime, timedelta, timezone
 from types import SimpleNamespace
@@ -481,3 +482,16 @@ async def test_drain_survives_an_analyst_crash(conn):
         outcome = await ai_queue.drain_one(db, analyst_factory=lambda: _Analyst(ValueError("bad model output")), conn=conn)
     assert outcome.status == "failed" and outcome.next_run_in == settings.AI_QUEUE_MIN_INTERVAL_SECONDS
     assert await conn.get(ai_queue.LOCK_KEY) is None
+
+
+@pytest.mark.asyncio
+async def test_only_one_followup_is_scheduled_at_a_time(conn, monkeypatch):
+    from app.workers import tasks
+
+    scheduled = []
+    monkeypatch.setattr(tasks, "_run_ai_queue_async", _async_return(ai_queue.DrainOutcome("paused", next_run_in=300)))
+    monkeypatch.setattr(tasks.run_ai_queue, "apply_async", lambda countdown: scheduled.append(countdown))
+    for _ in range(5):   # e.g. beat kicks landing while the breaker is open
+        await asyncio.to_thread(tasks.run_ai_queue)
+    assert scheduled == [300]
+    assert 0 < await conn.ttl(ai_queue.FOLLOWUP_KEY) <= 300
